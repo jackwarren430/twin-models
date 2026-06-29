@@ -1,0 +1,60 @@
+# Default research config. Heavier than tiny.yaml; expect minutes per iteration.
+model:
+  path: ~/.cache/lm-studio/models/mlx-community/Qwen3-8B-6bit
+  enable_thinking: false
+  max_kv_size: null
+
+lora:
+  num_layers: 16
+  rank: 16
+  scale: 20.0
+  dropout: 0.0
+  keys: null            # null => all linear layers in the last `num_layers` blocks
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+  top_p: 0.95
+  creator_max_tokens: 1024
+  solver_max_tokens: 768
+  oracle_max_tokens: 512
+
+game:
+  n_problems: 5         # N
+  creator_group: 4      # G_c
+  solver_attempts: 4    # K
+  domains: ["math", "coding"]
+
+rewards:
+  w_gradient: 1.0
+  w_consistency: 0.5
+  w_oracle: 0.1
+  w_valid: 0.1
+  w_solve: 1.0
+  w_oracle_solver: 0.05
+  mse_beta: 4.0
+  clip: 10.0
+
+oracle:
+  enabled: true
+  cost_per_query: 1.0
+  max_calls_per_turn: 4
+
+roles:
+  swap_interval: 100
+  warmup_iterations: 50
+  injection_rate: 0.0   # explicit cross-model LoRA blend; 0 = rotation-only (default)
+
+train:
+  iters: 1000
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  grad_accumulation_steps: 1
+  seed: 0
+  checkpoint_every: 100
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints
+  runs: runs

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "twin-models"
+version = "0.1.0"
+description = "Self-play RLVR with two LoRA adapters over one frozen MLX base (Qwen3-8B)"
+requires-python = ">=3.11"
+dependencies = [
+    "mlx>=0.30.0",
+    "mlx-lm>=0.28.0",
+    "numpy>=2.0",
+    "sympy>=1.13",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "model: tests that load the real MLX base model (slow, needs weights on disk)",
+]
