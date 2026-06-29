@@ -1,4 +1,4 @@
-"""Tests for the calc tool. Fast — no model, no subprocess."""
+"""Sprint 2 — calc tool. Fast: no model, no subprocess."""
 
 from twin.tools.calc import calc
 

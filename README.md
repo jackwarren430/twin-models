@@ -34,12 +34,20 @@ The base model is expected at `~/.cache/lm-studio/models/mlx-community/Qwen3-8B-
 
 ## Run
 
-```bash
-# fast unit tests (no model load)
-conda run -n twin-models python -m pytest -q
+Tests live one folder per sprint under `tests/` and are driven by a single
+runner, `scripts/run_tests.py` (see `tests/README.md` for the full layout):
 
-# heavy tests that load the real base
-TWIN_RUN_MODEL_TESTS=1 conda run -n twin-models python -m pytest -q -m model
+```bash
+# all fast tests (no model load) — the default
+conda run -n twin-models python scripts/run_tests.py
+
+conda run -n twin-models python scripts/run_tests.py --sprint 2 -v   # one sprint, verbose
+conda run -n twin-models python scripts/run_tests.py -k consistency  # filter by name
+conda run -n twin-models python scripts/run_tests.py --model         # include heavy model tests
+conda run -n twin-models python scripts/run_tests.py --help          # all options
+
+# plain pytest still works if you prefer it
+conda run -n twin-models python -m pytest
 
 # end-to-end Sprint-1 smoke test (loads ~6 GB, prints PASS/FAIL invariants)
 conda run -n twin-models python scripts/smoke_test.py
@@ -58,6 +66,8 @@ src/twin/
   tools/             calc, sandboxed python, taxed oracle, ReAct harness
   verifiers/         sympy math, sandboxed code exec, oracle-judge, dispatch
   rewards/engine.py  RewardEngine: creator/solver rewards (DESIGN §6)
-scripts/smoke_test.py
-tests/
+scripts/
+  smoke_test.py      end-to-end Sprint-1 invariants on the real model
+  run_tests.py       central test runner (per-sprint selection, verbosity, ...)
+tests/               one folder per sprint (sprint1..4) + conftest auto-markers
 ```

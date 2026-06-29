@@ -1,6 +1,6 @@
-"""Verifier tests: math (sympy), code (exec), judge (stub oracle), dispatch.
+"""Sprint 2 — verifiers: math (sympy), code (exec), judge (stub oracle), dispatch.
 
-Synthetic problems only; no model. The judge oracle is a deterministic stub."""
+Fast: synthetic problems only, no model. The judge oracle is a deterministic stub."""
 
 from twin.problems.schema import Problem
 from twin.verifiers import (

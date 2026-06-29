@@ -1,4 +1,4 @@
-"""Config loader tests (no model)."""
+"""Sprint 1 — config loader. Fast: no model."""
 
 import pytest
 

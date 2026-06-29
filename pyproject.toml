@@ -23,7 +23,10 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
 markers = [
     "model: tests that load the real MLX base model (slow, needs weights on disk)",
+    "sprint1: Sprint 1 — foundation (config, base, adapters, schema)",
+    "sprint2: Sprint 2 — scoring (tools, verifiers, rewards)",
+    "sprint3: Sprint 3 — RL loop (grpo, roles, trainer) [planned]",
+    "sprint4: Sprint 4 — scale & study [planned]",
 ]

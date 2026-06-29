@@ -1,4 +1,4 @@
-"""Reward engine tests (DESIGN.md §6). Pure arithmetic — no model."""
+"""Sprint 2 — reward engine (DESIGN.md §6). Fast: pure arithmetic, no model."""
 
 import math
 

@@ -1,7 +1,7 @@
-"""Sandbox execution tests. Spawn real subprocesses but stay fast (<~2s total).
+"""Sprint 2 — sandbox execution. Spawns real subprocesses but stays fast (<~2s).
 
-These are the security-critical paths, so we assert isolation behaviour
-(timeouts, crash capture, env minimization) explicitly."""
+No model. These are the security-critical paths, so we assert isolation
+behaviour (timeouts, crash capture, env minimization) explicitly."""
 
 from twin.tools.sandbox import run_python
 

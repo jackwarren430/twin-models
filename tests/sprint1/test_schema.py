@@ -1,4 +1,4 @@
-"""Schema + parsing tests. No model required — fast, run in CI/dev loop."""
+"""Sprint 1 — problem schema & parsing. Fast: no model."""
 
 import json
 

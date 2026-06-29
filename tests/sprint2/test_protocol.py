@@ -1,4 +1,4 @@
-"""Tool protocol + harness tests. Fast — calc/oracle are stubbed/cheap."""
+"""Sprint 2 — tool protocol & harness. Fast: no model (calc/oracle stubbed)."""
 
 from twin.tools import OracleTool, ToolHarness, calc, parse_tool_calls
 

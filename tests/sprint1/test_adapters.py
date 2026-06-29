@@ -1,8 +1,8 @@
-"""Adapter-swap invariants against the REAL base model.
+"""Sprint 1 — adapter-swap invariants against the REAL base model.
 
-Heavy (loads ~6 GB). Skipped unless TWIN_RUN_MODEL_TESTS=1, so the default
-`pytest` run stays fast. The standalone scripts/smoke_test.py covers the same
-ground for interactive use.
+Heavy: loads ~6 GB. Marked ``model`` and skipped unless TWIN_RUN_MODEL_TESTS=1
+(set automatically by ``scripts/run_tests.py --model``), so the default run stays
+fast. The standalone scripts/smoke_test.py covers the same ground interactively.
 """
 
 import os
