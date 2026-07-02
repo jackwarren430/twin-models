@@ -1,14 +1,27 @@
-# Sprint 4 tests — scale & study (planned)
+# Sprint 4 tests — scale & study
 
-Drop `test_*.py` files here when Sprint 4 lands (bigger configs, longer runs,
-curves, ablations — see DESIGN.md §11).
+Fast (model-free) tests for the Sprint-4 base loop:
 
-Convention (matches Sprint 1 & 2):
-- Any file in this folder is auto-tagged with the `sprint4` marker by
-  `tests/conftest.py` — no `pytestmark` boilerplate needed.
-- Start the module docstring with `"""Sprint 4 — <area>. <Fast: no model.>"""`.
-- Tests that load the real base must add `pytest.mark.model` + the
-  `TWIN_RUN_MODEL_TESTS` skipif (copy the header from
-  `tests/sprint1/test_adapters.py`).
+- `test_analysis.py` — `twin.analysis.curves` on synthetic iteration records:
+  time series, solve-rate-vs-difficulty curve, linearity (slope / Pearson r /
+  R² / ramp-MSE), sparklines, summary JSON, CSV/JSON round-trip.
+- `test_adapter_drift.py` — the pure tree maths behind `Adapters.global_norm` /
+  `drift_from` (`tree_global_norm`, `tree_l2_distance`) on synthetic trees.
+- `test_config_scale.py` — `base.yaml` turns thinking ON with bigger budgets;
+  `tiny.yaml` keeps it off (DESIGN §12 Q4).
+- `test_thinking_parsing.py` — the creator/solver parsers survive a Qwen3
+  `<think>…</think>` prefix.
 
-Run them with `python scripts/run_tests.py --sprint 4`.
+Model-gated (loads ~6 GB; the "separate e2e suite"):
+
+- `test_e2e_model.py` — a 2-iteration real-base loop: the new metrics are
+  logged, the analysis module consumes the produced log, the frozen base is
+  untouched, and thinking mode runs with bounded KL. Marked `model` + skipped
+  unless `TWIN_RUN_MODEL_TESTS=1`.
+
+Run:
+- fast: `python scripts/run_tests.py --sprint 4`
+- e2e:  `python scripts/run_tests.py --only-model --sprint 4`
+
+Convention: files here are auto-tagged `sprint4` by `tests/conftest.py`; model
+tests add `pytest.mark.model` + the `TWIN_RUN_MODEL_TESTS` skipif.

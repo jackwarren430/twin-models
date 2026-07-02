@@ -1,24 +1,30 @@
-# Default research config. Heavier than tiny.yaml; expect minutes per iteration.
+# Default research / Sprint-4 scale config. Heavier than tiny.yaml; expect
+# minutes per iteration. Thinking mode is ON here (DESIGN.md §12 Q4: off for v1
+# to bring the loop up, back on at scale since better reasoning is the point) —
+# the generation budgets below are sized to leave the <think> block room.
 model:
   path: ~/.cache/lm-studio/models/mlx-community/Qwen3-8B-6bit
-  enable_thinking: false
+  enable_thinking: true
   max_kv_size: null
 
 lora:
   num_layers: 16
-  rank: 16
-  scale: 20.0
+  rank: 64
+  alpha: 128.0          # effective mlx-lm scale = alpha / rank = 2.0
   dropout: 0.0
-  keys: null            # null => all linear layers in the last `num_layers` blocks
+  # keys omitted => all 7 linear projections (q,k,v,o,gate,up,down);
+  # see twin.config.DEFAULT_LORA_KEYS. Set `keys: null` for mlx-lm auto-discovery.
 
 gen:
   creator_temp: 0.9
   solver_temp: 0.8
   oracle_temp: 0.2
   top_p: 0.95
-  creator_max_tokens: 1024
-  solver_max_tokens: 768
-  oracle_max_tokens: 512
+  # Budgets sized for thinking mode: the <think> block consumes tokens before
+  # the creator's JSON / solver's ANSWER line, so these are larger than tiny.yaml.
+  creator_max_tokens: 2048
+  solver_max_tokens: 1536
+  oracle_max_tokens: 1024
 
 game:
   n_problems: 5         # N
@@ -40,6 +46,12 @@ oracle:
   enabled: true
   cost_per_query: 1.0
   max_calls_per_turn: 4
+
+tools:                  # creator inline CAS tool (ReAct); untaxed creator aid
+  creator_tools: ["solve", "calc"]
+  creator_max_tool_calls: 4
+  creator_tool_rounds: 4
+  cas_timeout_s: 3.0
 
 roles:
   swap_interval: 100

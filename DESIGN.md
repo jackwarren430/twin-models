@@ -53,9 +53,9 @@ shipping nonsense with fake answers).
 ```
 Weights (resident once):
   Qwen3-8B 6-bit base .................. ~6.2 GB
-  LoRA adapter A (rank 16, attn+mlp) ... ~10–40 MB
-  LoRA adapter B ....................... ~10–40 MB
-  AdamW state for the adapter training . ~2× adapter (tiny)
+  LoRA adapter A (rank 64, α=128, all 7 proj × 16 blocks ≈ 78 M params) ~0.15–0.3 GB
+  LoRA adapter B ....................... same
+  AdamW state for the adapter training . ~2× adapter
 Transient:
   KV cache @ 4k ctx .................... ~0.5–0.7 GB
   Fwd/bwd activations (1 seq, LoRA) .... low hundreds of MB
@@ -153,10 +153,12 @@ committed mechanism; this blend stays off and exists only for the Sprint-4 ablat
 
 Let the current assignment be **creator = C**, **solver = S** (each is A or B).
 
-1. **Creator rollout.** C is prompted with a theme/domain and the suite contract. It emits `G_c`
-   candidate suites (a GRPO group). Each suite = `N` problems, each with `{statement, reference_solution,
-   stated_answer, claimed_difficulty, domain}`. Tool calls (oracle / code-exec) allowed inline; oracle
-   calls are counted.
+1. **Creator rollout (inline ReAct).** C is prompted with a theme/domain and the suite contract. It emits
+   `G_c` candidate suites (a GRPO group). Each suite = `N` problems, each with `{statement,
+   reference_solution, stated_answer, claimed_difficulty, domain}`. C may call the untaxed `solve` CAS
+   mid-rollout to compute exact answers (it generates → `<tool>solve(…)</tool>` → harness runs it →
+   `<obs>…</obs>` is spliced back → C continues); the injected obs tokens are masked out of the GRPO loss
+   (§8, §9). Any oracle calls the policy *writes* are still counted/taxed.
 2. **Consistency check (creator's own solutions).** For each problem, an **external verifier** checks the
    creator's `reference_solution`/`stated_answer` against ground truth it can compute itself
    (run the code, evaluate the math). Output per problem: `consistent ∈ {0,1}` (+ a continuous score).
@@ -186,7 +188,11 @@ Let the current assignment be **creator = C**, **solver = S** (each is A or B).
 ## 6. Rewards
 
 Notation: suite has problems `i = 1..N` ordered by `claimed_difficulty`; realized solve rate `p_i ∈ [0,1]`;
-target curve `t_i` = linear ramp from `~1.0` down to `~0.0` across the `N` problems.
+target curve `t_i` = linear ramp from `target_hi` down to `target_lo` across the `N` problems
+(config `rewards.target_hi/lo`, default `1.0 → 0.0`). The default endpoints make the extreme ranks'
+solver K-groups zero-variance by design at creator-optimum (all-solved / all-failed); an **interior band**
+like `0.9 → 0.1` keeps outcome variance at every rank. The band changes the game's incentives, so
+non-default bands run as measured ablations (§11 Sprint 6; mini-02 is the first).
 
 ### 6.1 Creator reward (per candidate suite)
 
@@ -208,11 +214,19 @@ R_creator = w_grad · R_gradient + w_cons · R_consistency − w_oracle · n_ora
 ### 6.2 Solver reward (per attempt)
 
 ```
-R_solver = w_solve · solved − w_oracle_s · n_oracle_calls   (solved ∈ {0,1} from the verifier)
+R_solver = w_solve · solved + w_brevity · (1 − L/L_max) · solved − w_oracle_s · n_oracle_calls
+           (solved ∈ {0,1} from the verifier; L = completion tokens, L_max = gen.solver_max_tokens)
 ```
 
-Keep it blunt for v1: reward correctness, lightly tax oracle use. (The original spec's "efficiency / fewer
-steps" bonus is deferred — it invites reward-hacky truncation before the base behavior is stable.)
+Keep it blunt for v1: reward correctness, lightly tax oracle use. The original spec's "efficiency" bonus
+— deferred until the base loop was validated (mini-01) — is now the **brevity term**: correct attempts
+earn up to `w_brevity` extra, linearly more the shorter the completion. Two guards against the
+reward-hacky-truncation worry that deferred it: it is **gated on `solved`** (a wrong short answer earns
+nothing, so truncating into wrongness is strictly unprofitable), and it is **capped at `w_brevity`**
+(keep `w_brevity < w_solve` so the worst correct answer still out-scores the best incorrect one).
+`w_brevity` defaults to **0.0** (off) — like the target band, it changes the game's incentives (with
+thinking ON it also pressures the length of the `<think>` block), so it runs as an explicit per-run
+ablation, never a silent default.
 
 ### 6.3 Practical guards
 
@@ -261,7 +275,8 @@ We implement the simplest correct GRPO directly in MLX (no TRL/torch). For a gro
 prompt with scalar rewards `R_1..R_G`:
 
 ```
-advantage A_g = (R_g − mean(R)) / (std(R) + eps)
+advantage A_g = R_g − mean(R)                    (Dr.GRPO-style mean baseline, the default)
+              = (R_g − mean(R)) / (std(R) + eps) (legacy standardized form, train.adv_mode="std")
 per-token policy loss (one gradient step, so ratio≈1, no clipping needed):
     L_pg = − mean over tokens [ A_g · logπ_θ(token) ]
 KL-to-reference penalty (k3 estimator, ref = zeroed-adapter base):
@@ -269,8 +284,21 @@ KL-to-reference penalty (k3 estimator, ref = zeroed-adapter base):
 loss = L_pg + β · kl
 ```
 
+**Why the mean baseline (Sprint 6).** For the small groups this project runs (G_c 2-4, K=4) the classic
+÷std is degenerate: any non-tied group maps to ±1, so a 0.015 reward gap (solve-rate noise) trains exactly
+as hard as a 2.6 one, and ties give 0. Mean-centering preserves magnitude — near-tie groups yield
+near-zero gradients, real gaps proportionally strong ones. The standardized form is kept as an ablation
+arm (`train.adv_mode: std`). Relatedly, a **fully tied batch (every advantage zero) skips the GRPO update
+entirely** — reference pass, policy pass and backward — since the PG term vanishes exactly and the pure-KL
+gradient is ≈0 right after the reference pass; mini-01 paid minutes per saturated 4096-token iteration for
+that no-op (logged as `skipped_zero_adv`).
+
 - `logπ_θ` from a grad-enabled forward over `prompt+response` (mask out prompt tokens), via
   `mx.value_and_grad` w.r.t. the active adapter tree only.
+- **Loss masking for inline tool use:** a trajectory may carry a per-token `loss_mask` marking injected
+  tool-observation (`<obs>`) tokens with 0. Those positions still condition the forward pass but are
+  index-selected *out* of both the PG and KL sums (and out of the token-count normalizer) before reducing
+  — a clean differentiable gather that also dodges the `inf·0 → nan` a `k3·mask` multiply would hit.
 - `logπ_ref` from a no-grad forward with the zero adapter (the frozen base) — same weights, no extra RAM.
 - One optimizer step per group-batch ⇒ `π_new == π_old` at update time ⇒ the PPO ratio is 1 and the clip is
   inactive. This is a standard, stable simplification for the on-policy single-epoch regime and removes a
@@ -290,10 +318,21 @@ across chat templates and trivial to parse/sandbox; we can switch to Qwen3 nativ
 - `oracle(question) -> str` — base-only generation; **counted and taxed**.
 - `python(code) -> str` — sandboxed subprocess execution (also powers the code verifier).
 - `calc(expr) -> str` — SymPy evaluate (cheap, untaxed; reduces oracle temptation for arithmetic).
+- `solve(expr_or_eq[, var[, sel]]) -> str` — **creator-only**, untaxed SymPy computer-algebra
+  ("Wolfram-Alpha-like") tool: solve equations/systems, evaluate, or run calculus (`integrate`/`diff`/
+  `factor`/… via `.doit()`). It lets the creator compute *exact* answers while building a suite, so it
+  one-shots correct `(problem, answer, solution)` tuples instead of hallucinating answers that become
+  void problems. Distinct from the verifier/judge, which only *checks* a proposed answer. Both `solve`
+  and `calc` parse with a **locked-down namespace** (`__builtins__` emptied) so `parse_expr` cannot be
+  used for code execution (e.g. `__import__`). *(The older `calc`/`math_verifier` parsers still use the
+  raw namespace — flagged for a follow-up hardening.)*
 - (`search` from the original spec is **dropped** for v1 — no network in the loop, and it muddies the
   "self-reliance vs oracle" story.)
 
-Each tool call has a per-turn cap (`max_tool_calls`) to bound rollout length.
+Each tool call has a per-turn cap (`max_tool_calls`) to bound rollout length. **Inline execution is live
+for the creator**: it generates ReAct-style, the harness runs `solve`/`calc` mid-rollout, and the injected
+`<obs>...</obs>` tokens are spliced into the completion (so the forward pass conditions on them) but
+carry `loss_mask=0` so GRPO ignores them (§8). The solver path stays single-turn in v1.
 
 ---
 
@@ -315,16 +354,19 @@ twin-models/
 │   │   └── adapters.py            # Adapters: θ_A/θ_B/zero, swap, save/load     [Sprint 1]
 │   ├── problems/
 │   │   └── schema.py              # Problem, ProblemSuite, parse/validate       [Sprint 1]
-│   ├── tools/                     # oracle, python sandbox, calc               [Sprint 2]
+│   ├── tools/                     # oracle, python sandbox, calc, cas(solve)    [Sprint 2/3.5]
 │   ├── verifiers/                 # sympy math, exec code, judge fallback       [Sprint 2]
 │   ├── rewards/engine.py          # creator/solver rewards                      [Sprint 2]
 │   ├── roles/manager.py           # role assignment, swap, optional blend       [Sprint 3]
 │   ├── rl/grpo.py                 # advantages, logprobs, loss, step            [Sprint 3]
 │   ├── train/loop.py              # SelfPlayTrainer                             [Sprint 3]
 │   ├── prompts/                   # creator/solver/judge templates             [Sprint 3]
-│   └── log/jsonl.py               # local run logging                          [Sprint 3]
+│   ├── log/jsonl.py               # local run logging                          [Sprint 3]
+│   └── analysis/curves.py         # run curves: solve-rate/linearity/KL/drift  [Sprint 4]
 ├── scripts/
-│   └── smoke_test.py              # load base + attach LoRA + swap + generate   [Sprint 1]
+│   ├── smoke_test.py              # load base + attach LoRA + swap + generate   [Sprint 1]
+│   └── analyze_run.py             # JSONL -> curves (CSV/JSON/report/plots)     [Sprint 4]
+├── EXPERIMENTS.md                 # run log: launch/analyze + entry template + backlog
 ├── tests/                         # pytest                                      [each sprint]
 ├── checkpoints/                   # adapter trees (git-ignored)
 └── runs/                          # JSONL logs, suite samples (git-ignored)
@@ -351,13 +393,160 @@ fallback; `verify_answer`/`check_consistency` dispatch by type→domain). `rewar
 clip). 47 new fast tests (72 total) pass with synthetic suites; address-space rlimit is Linux-only (macOS
 bounds memory via CPU+wall instead).
 
-**Sprint 3 — RL loop.** `token_logprobs` (grad + ref), GRPO step, role manager, prompt templates, the
-`SelfPlayTrainer` loop, JSONL logging. Run `tiny.yaml` end-to-end for a few iterations on CPU-cheap toy
-domains; confirm rewards move and KL stays bounded.
+**Sprint 3 — RL loop. ✅ DONE & VERIFIED.** `TwinBase.completion_logprobs` (grad-enabled per-token
+log-probs; `generate` now captures the *true* sampled ids via `stream_generate`, fixing the Sprint-1
+re-encode approximation), `rl/grpo.py` (group advantages, k3 KL to the zeroed-adapter base, single-step
+`grpo_update` with global-norm clip; per-adapter AdamW so A/B moments don't bleed), `roles/manager.py`
+(rotation + warmup, off-by-default cross-model blend), `prompts/` (creator/solver templates + themes),
+`train/extract.py` (final-answer + oracle-call count), `log/jsonl.py`, and `train/loop.py`
+(`SelfPlayTrainer`: creator group → consistency → solver groups → realized solve-rate curve → rewards →
+group-relative advantages → two sequential GRPO updates, each with a base-KL reference pass). Void
+problems are dropped from the creator's gradient curve (`RewardEngine.creator_reward(scored_mask=…)`) so
+they can't be farmed as "hard", but still drag `R_consistency`. 27 new fast tests (99 total) pass,
+including a real `grpo_update` step on a toy LM that confirms the `value_and_grad`→`optimizer.update` path
+moves log-probs in the advantage direction. `scripts/smoke_test_sprint_3.py` runs the loop end-to-end on
+the real base for two iters: rewards finite and moving (parse-gate −1.0 → +0.74 once a suite parsed with a
+clean ramp; solver +1.0), KL to base bounded (~2e-4), and the zeroed ('base') adapter still reproduces
+base log-probs exactly (maxdiff 0) after training A/B. The solver rollout is single-turn; the **creator
+rollout is inline ReAct** (see below).
 
-**Sprint 4 — Scale & study.** Bigger config, longer runs, curves (solve-rate-vs-difficulty linearity,
-oracle usage over time, KL, adapter drift). Ablations: oracle on/off, consistency on/off, rotation vs
-explicit blend, solver-as-judge vs oracle-judge.
+**Sprint 3.5 — Creator CAS tool (inline ReAct). ✅ DONE & VERIFIED.** `tools/cas.py` (`solve`, the
+creator-only untaxed SymPy CAS, with a locked-down parse namespace that closes the `parse_expr` code-exec
+hole), `TwinBase.generate_react` (segmented generation that pauses on `</tool>`, splices the harness's
+`<obs>…</obs>`, and resumes — with a `loss_mask` over the spliced completion), `Trajectory.loss_mask` +
+mask-aware `grpo_update` (index-selects trained tokens out of PG/KL and the normalizer; nan-safe),
+`ToolsConfig`, and the creator prompt's ReAct protocol. The trainer builds a fresh `ToolHarness` per
+creator rollout. 28 new fast tests (127 total) — including a toy-LM test proving injected `<obs>` positions
+contribute zero to PG/KL — plus `scripts/smoke_test_creator_cas.py` (real base): a tool call fires, the
+result splices in, mask 0/1 partitions correctly, and the frozen base is unchanged by the masked update.
+This is the masking machinery the Sprint-4 inline-oracle work will reuse.
+
+**Sprint 4 — Scale & study (base loop). ✅ LANDED; ablations deferred.** The scale config (`base.yaml`)
+now runs the **bigger loop with thinking ON** (16 LoRA layers; N=5, G_c=4, K=4; `enable_thinking: true`
+with token budgets sized for the `<think>` block — §12 Q4). The trainer logs per-iteration **curve
+instrumentation**: oracle usage (`creator_oracle_calls`/`solver_oracle_calls`), CAS tool usage
+(`creator_tool_calls`), curve-fit quality (`r_gradient_mean`), and **adapter magnitude/drift**
+(`adapter_norm`/`adapter_drift` = L2 of each LoRA tree and its distance from the init snapshot, via
+`Adapters.global_norm`/`snapshot`/`drift_from`). The new **`twin.analysis.curves`** module turns a run's
+JSONL into the study curves — `solve_rate_curve` + `linearity` (slope / Pearson r / R² / MSE-to-ramp),
+`time_series`, `summarize_run`, ASCII `sparkline`/`report_text`, and optional matplotlib `render_plots`
+(no-op without matplotlib). `scripts/analyze_run.py` drives it (CSV + JSON + terminal report). The output
+parsers were confirmed thinking-safe (`extract_final_answer` takes the last `ANSWER:`; `parse_suite` scans
+for the JSON object — a `<think>` prefix is skipped). `tests/sprint4/` adds fast coverage (analysis curves,
+adapter-drift tree maths, scale-config, thinking-aware parsing) plus a **model-gated short-e2e suite**
+(`test_e2e_model.py`, `--only-model`): a 2-iteration real-base loop that checks the new metrics, feeds the
+produced log through the analysis module, and verifies the frozen base is untouched and thinking mode runs
+with bounded KL. Runs are recorded in **`EXPERIMENTS.md`** (lab notebook + template + ablation backlog).
+
+**Held-out benchmark (absolute capability).** The curves above are *creator-relative* — solve-rate is
+measured against the creator's own moving distribution, so they can look healthy while absolute skill
+stalls or both policies collude. The **`twin.bench`** package + **`scripts/benchmark.py`** add the absolute
+counterpart: a fixed, hand-verified item set spanning **math** (SymPy `verify_math`), **coding** (sandboxed
+`verify_code`), **knowledge** (multiple-choice + normalized short-answer) and **reasoning**, scored against
+the frozen base and/or the trained A/B adapters. Prompting and grading are keyed on each item's
+`verification.type` and reuse the trainer's own solver path + verifiers, so the benchmark grades exactly as
+training does. Generation is greedy (`temp=0`) for reproducibility; the CLI prints a base-vs-A-vs-B accuracy
+table (with per-category deltas vs base) and writes a JSON report. The core is a pure `solve_fn`/grader
+seam, unit-tested with a fake solver (no weights). **Run the base bar once, re-run at each checkpoint:**
+rising accuracy *relative to base* is the proof that self-play produced real capability rather than
+curve-fitting. Two tiers: a hand-authored **core** set (`data/bench/*.json`) the 8B base already aces
+(100% — a cheap regression floor), and a **hard** tier (`data/bench/hard/`) that is the real progress
+signal. `scripts/build_hard_bench.py` adapts open benchmarks into the hard tier — **MATH-500** (numeric,
+level≥3), **MBPP** (assert tests), **MMLU-Pro** (10-way MCQ), **BIG-Bench-Hard** (logical deduction /
+dates / boolean / counting) — pulled dependency-free via the HF datasets-server JSON API and converted to
+the same schema/graders (used to evaluate our model, not train on; GPQA excluded for its gating/canary).
+The frozen base lands at **66%** on the hard tier (math 70 / coding 50 / knowledge 60 / reasoning 85),
+leaving headroom in both directions.
+
+**Sprint 4 — remaining (deferred).** Ablations: oracle on/off, consistency on/off, rotation vs explicit
+blend, solver-as-judge vs oracle-judge, thinking on/off. Scaling levers: gradient accumulation / batched
+scoring in `grpo_update` (`grad_accumulation_steps` field exists, unused). Remaining inline-ReAct work:
+extend execution to the **solver/oracle** path (the creator path and its `<obs>` masking already exist).
+These are queued in `EXPERIMENTS.md`; the inaugural `base.yaml` baseline run goes first.
+
+**Sprint 5 — mini-01 audit fixes. ✅ DONE & VERIFIED.** An audit of the inaugural `mini-01` run
+(EXPERIMENTS.md) found three exploitable/broken mechanisms; this sprint closes them.
+
+1. **Gradient reward scaled by scored fraction** (`rewards/engine.py`). The curve fit is measured over
+   the *consistent-only* subset against a re-stretched target ramp, so a suite with ONE consistent easy
+   problem fit its `[1.0]` target perfectly (`r_gradient=1.0`, total 1.27) and a `[1.0, 0.0]`
+   easy+impossible pair scored 1.43 — nearly out-earning the honest 3-problem ideal (1.6). mini-01's
+   own reward table showed mostly-void suites beating fully-consistent ones. `r_gradient` is now
+   multiplied by `n_scored/n`, making voided problems strictly unprofitable (§6.3 amendment).
+2. **Math verification certificates** (`verification.check` + `verification.symbol`) replace the LLM
+   judge as the *primary* consistency check for math. The creator contract (`prompts.creator_user`, math
+   domains only) now requires each problem to carry a certificate that **recomputes the answer from the
+   problem's quantities** — e.g. statement "Tickets cost $4; how many for $20?" → `check: "4*x = 20"`.
+   `check_predicate` (math_verifier) was hardened to accept what models actually write: `"a = b"`,
+   Python-style `"a == b"`, `"Eq(a, b)"`, bare vanish-at-answer expressions, comma-separated relation
+   systems with multi-symbol tuples (`symbol: "x, y"`, answer `"(6, 4)"`), and tolerance on `Eq`
+   (compared via `lhs−rhs` so floats don't hard-fail). Self-certifying checks (`"x = <answer>"`,
+   a literal number/fraction against a bare symbol) are **rejected as trivial** — otherwise a
+   wrong-answer problem could bless itself, poison the solver's grades (sympy grades against
+   `problem.answer`), and farm fake "hardness". `judge_consistency` remains the fallback for
+   cert-less problems (a starvation safety net while the creator learns the format — the prompt claims
+   cert-less problems are discarded, pushing the policy toward always certifying). Known limitations:
+   a structured-but-colluding cert (`"x = 12 + 0"`) still passes the triviality tripwire, and a creator
+   could *omit* certs to reach the softer judge fallback; the per-suite `n_cert` coverage the trainer
+   now logs plus the consistency-vs-solve curves are the watchdogs — if cert coverage stalls or drops,
+   harden the fallback to void.
+   All parses of model text (`check_predicate`, `verify_math`, `calc`) now share `cas.py`'s locked
+   `SAFE_GLOBAL_DICT` namespace — sympy's parser `eval`s transformed source, so builtins must be
+   unreachable everywhere, not just in `solve`.
+3. **Reproducible sampling.** `train.seed` seeded only the Python RNG (domain/theme schedule); MLX's
+   sampler RNG was never seeded, so no two "identical" runs generated the same tokens.
+   `SelfPlayTrainer.__init__` now seeds `mx.random` too. (A `--resume-step` run reseeds from the start
+   — its stream matches a fresh run's schedule, not the interrupted run's mid-stream state.)
+
+**Advantage degeneracy — diagnosis (fixes landed in Sprint 6 below).** mini-01's silent iterations
+(creator `pg==0` in 15/30, solver `pg==0` in 9/15 solver-active iters, ~60% of solver rollout compute
+gradient-free) trace to three stacked causes, in order of weight:
+
+* **Minimal group sizes × coarse rewards.** With G_c=2 a std-normalized advantage is ±1 or 0 — 0
+  whenever the two suites tie. 12/15 creator ties were the (structural, constant-0.1) coding iters,
+  but 3 were math ties from reward quantization: K=4 quantizes solve rates to quarters and
+  r_consistency to thirds, so distinct suites often map to the same scalar. When suites *don't* tie,
+  ±1 discards magnitude: a 0.7889-vs-0.7738 gap (solve-rate noise) trained as hard as 1.6-vs-−1.0.
+* **Target-curve endpoints.** The ramp asks for p=1.0 at rank 0 and p=0.0 at rank N−1; realized
+  groups at those rates are all-identical (zero variance), so at creator-optimum 2/3 of solver
+  K-groups are gradient-free **by design**. Bigger K only helps marginally (P(all solve | p=0.9) is
+  0.66 at K=4, 0.43 at K=8); the band placement is the real lever.
+* **Sampling is a minor factor.** Parse failures were budget truncation mid-`<think>` (fixed at
+  4096); creator temp 0.9 beat 0.6 empirically; solver temp 0.8 is fine. Manufacturing outcome
+  variance via hotter solver sampling would corrupt the solve-rate measurement the creator reward
+  depends on — rejected.
+
+**Sprint 6 — advantage-degeneracy fixes. ✅ CODE DONE — the `mini-02` run (configs/mini2.yaml) is the
+measured ablation vs mini-01.** The four queued fixes, as landed:
+
+1. **G_c 2→4** (`configs/mini2.yaml` only, no code). Creator rollouts are the cheap generation term
+   (+2 ReAct generations ≈ +5–9 min/iter); 4-point groups sharply cut the all-tie probability and give
+   the creator advantage real gradation. *Cost caveat:* the solver term also scales with consistent
+   problems across all 4 suites (`G_c·N·K`), so consistency-heavy math iters can approach 2× mini-01
+   late-run times — budget the run's wall-clock accordingly.
+2. **Mean-baseline advantages** (`rl/grpo.py::group_advantages`, config `train.adv_mode`, default
+   `"mean"`). A = R − mean(R), Dr.GRPO-style, no ÷std — near-tie suites get near-zero gradients instead
+   of ±1 and real gaps proportionally strong ones (§8 amendment). `"std"` kept as the ablation arm.
+   This is a fix (new default everywhere), not an opt-in.
+3. **Interior target curve** (`schema.py::target_curve(n, hi, lo)`, config `rewards.target_hi/lo`,
+   default `1.0/0.0`). mini2.yaml sets `0.9/0.1` so every rank keeps outcome variance and solver groups
+   stay informative at creator-optimum (§6.1 amendment). Because it changes the game's incentives the
+   default stays `1→0` — the band is an explicit per-run ablation knob, never a silent swap.
+4. **Zero-advantage skip** (`loop.py::_grpo`). A fully tied batch returns a `skipped_zero_adv` no-op
+   *before* the reference pass — mini-01 paid reference+policy+backward minutes per saturated math iter
+   for a ≈0 pure-KL gradient. Longer-term idea recorded: rank-adaptive K (fewer attempts on ranks
+   expected to saturate).
+
+Tests: `tests/sprint6/` (+ updated `tests/sprint3/test_grpo.py`), 254 fast tests green. Analysis note:
+`twin.analysis.curves` still plots/fits against the default `1→0` ramp — pearson/slope are unaffected by
+a linear re-band, and keeping one fixed reference ramp makes `ramp_mse` comparable across runs.
+
+Deferred from the same audit (tracked in EXPERIMENTS.md): the **coding domain is structurally dead**
+(the creator contract never asks for `verification.tests`/`solution_code`, so `check_consistency` fails
+every coding problem with "no tests supplied", and the solver path has no code branch) — next sprint;
+and **wiring the oracle** (OracleTool is never instantiated in the loop; the tax currently taxes
+nothing). Tests: `tests/sprint5/` + updated `tests/sprint3/test_rewards_scored_mask.py` (236 fast
+tests green).
 
 ---
 

@@ -86,16 +86,26 @@ class ProblemSuite:
         return sorted(self.problems, key=lambda p: p.difficulty)
 
     @staticmethod
-    def target_curve(n: int) -> list[float]:
-        """Target realised solve-rate at each rank, easy->hard: linear 1 -> 0.
+    def target_curve(n: int, hi: float = 1.0, lo: float = 0.0) -> list[float]:
+        """Target realised solve-rate at each rank, easy->hard: linear hi -> lo.
 
-        For n==1 returns [1.0]. This is what the creator's gradient reward is
-        measured against (DESIGN.md §6.1)."""
+        For n==1 returns [hi]. This is what the creator's gradient reward is
+        measured against (DESIGN.md §6.1).
+
+        The default 1 -> 0 ramp asks for a certainly-solved problem at rank 0
+        and a never-solved one at rank n-1 — ranks where the realized solver
+        K-group has zero outcome variance and therefore zero gradient, *by
+        design*, once the creator is on-target. An interior band (e.g.
+        0.9 -> 0.1 via ``rewards.target_hi``/``target_lo``) keeps every rank's
+        outcomes stochastic so solver groups stay informative at
+        creator-optimum. Changing the band changes the game's incentives, so
+        treat a non-default band as a measured ablation (DESIGN.md §11
+        Sprint 6)."""
         if n <= 0:
             return []
         if n == 1:
-            return [1.0]
-        return list(np.linspace(1.0, 0.0, n))
+            return [hi]
+        return list(np.linspace(hi, lo, n))
 
     # ----- validation ------------------------------------------------------
     def validate(self, *, min_n: int = 2, max_n: int = 20) -> list[str]:

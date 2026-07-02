@@ -30,12 +30,12 @@ Reference answer (ground truth):
 Candidate answer:
 {candidate}
 
-Think briefly, then end your reply with exactly one line:
+Use the solve(...) tool to work the problem yourself, then check the candidate \
+answer against your tool-computed result and the reference. End with exactly one line:
 VERDICT: CORRECT   or   VERDICT: INCORRECT"""
 
-_CONSISTENCY_PROMPT = """You are checking whether a problem's stated solution is \
-internally correct — does the worked solution actually solve the problem and \
-yield the stated answer?
+_CONSISTENCY_PROMPT = """You are checking whether a problem's stated answer is \
+correct — does the problem, solved properly, actually yield the stated answer?
 
 Problem:
 {statement}
@@ -43,10 +43,11 @@ Problem:
 Stated answer:
 {answer}
 
-Worked solution:
+Worked solution (may contain mistakes — do NOT trust it):
 {solution}
 
-Think briefly, then end your reply with exactly one line:
+Independently solve the problem using the solve(...) tool, then compare your \
+tool-computed result to the stated answer. End with exactly one line:
 VERDICT: CORRECT   or   VERDICT: INCORRECT"""
 
 

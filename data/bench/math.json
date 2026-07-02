@@ -1,0 +1,21 @@
+{
+  "category": "math",
+  "description": "Closed-form arithmetic/algebra/number-theory items, graded by SymPy (verify_math).",
+  "items": [
+    {"id": "math-001", "subcategory": "arithmetic", "prompt": "Compute 17 * 23.", "answer": "391", "verification": {"type": "math_numeric"}},
+    {"id": "math-002", "subcategory": "arithmetic", "prompt": "What is 144 / 16?", "answer": "9", "verification": {"type": "math_numeric"}},
+    {"id": "math-003", "subcategory": "algebra", "prompt": "Solve for x: 3x + 7 = 22. Give x.", "answer": "5", "verification": {"type": "math_numeric"}},
+    {"id": "math-004", "subcategory": "algebra", "prompt": "Solve x^2 - 5x + 6 = 0 and give the larger root.", "answer": "3", "verification": {"type": "math_numeric"}},
+    {"id": "math-005", "subcategory": "sequences", "prompt": "What is the sum of the first 10 positive integers?", "answer": "55", "verification": {"type": "math_numeric"}},
+    {"id": "math-006", "subcategory": "fractions", "prompt": "Simplify (2/3) + (1/6) to a single fraction in lowest terms.", "answer": "5/6", "verification": {"type": "math_numeric"}},
+    {"id": "math-007", "subcategory": "exponents", "prompt": "What is 2^10?", "answer": "1024", "verification": {"type": "math_numeric"}},
+    {"id": "math-008", "subcategory": "geometry", "prompt": "A rectangle has width 4 and length 9. What is its area?", "answer": "36", "verification": {"type": "math_numeric"}},
+    {"id": "math-009", "subcategory": "number-theory", "prompt": "What is the greatest common divisor of 48 and 36?", "answer": "12", "verification": {"type": "math_numeric"}},
+    {"id": "math-010", "subcategory": "arithmetic", "prompt": "Evaluate 7! / 5!.", "answer": "42", "verification": {"type": "math_numeric"}},
+    {"id": "math-011", "subcategory": "roots", "prompt": "What is the square root of 196?", "answer": "14", "verification": {"type": "math_numeric"}},
+    {"id": "math-012", "subcategory": "fractions", "prompt": "Convert 0.75 to a fraction in lowest terms.", "answer": "3/4", "verification": {"type": "math_numeric"}},
+    {"id": "math-013", "subcategory": "geometry", "prompt": "A triangle has base 10 and height 6. What is its area?", "answer": "30", "verification": {"type": "math_numeric"}},
+    {"id": "math-014", "subcategory": "percentages", "prompt": "What is 15% of 200?", "answer": "30", "verification": {"type": "math_numeric"}},
+    {"id": "math-015", "subcategory": "number-theory", "prompt": "What is the least common multiple of 4 and 6?", "answer": "12", "verification": {"type": "math_numeric"}}
+  ]
+}

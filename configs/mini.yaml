@@ -1,0 +1,90 @@
+# First real run — "mini" (thinking ON). Sized to the actual hardware: measured
+# decode is ~16.4 tok/s for Qwen3-8B-6bit on this M5, so the full base.yaml
+# (G_c4 N5 K4, 1000 iters) is ~2 months of wall-clock. This run keeps thinking
+# ON (DESIGN §12 Q4: better reasoning is the point) but shrinks the combinatorial
+# knobs so a meaningful number of iterations fits ONE overnight window (~12-14h,
+# ~30 iters). Its job: exercise the real thinking codepath end-to-end and show
+# the loop is stable (rewards move, KL bounded, drift smooth, no collapse).
+#
+# Deltas vs base.yaml (cost only, not new mechanics):
+#   - G_c 4->2, N 5->3                       (cuts the dominant solver term G_c*N*K)
+#   - warmup 50->5, swap_interval 100->8     (so ROTATION fires ~3x; the base
+#     schedule never swaps in a <150-iter run -> A would create the whole time)
+#   - iters 1000->30, checkpoint_every 100->5 (resume granularity ~2h)
+# Token budgets, LoRA (16 layers), rewards, oracle tax, CAS tools, judge all
+# identical to base.yaml — thinking budgets kept generous so <think> isn't
+# truncated mid-trace (truncation silently corrupts the output).
+model:
+  path: ~/.cache/lm-studio/models/mlx-community/Qwen3-8B-6bit
+  enable_thinking: true
+  max_kv_size: null
+
+lora:
+  num_layers: 16
+  rank: 64
+  alpha: 128.0          # effective mlx-lm scale = alpha / rank = 2.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+  top_p: 0.95
+  # Sized for thinking: the <think> block consumes tokens before the answer.
+  # MEASURED: at 2048 the creator hit the cap mid-<think> ~50% of the time and
+  # never emitted JSON (parse_ok=0.5); at 3072 parse recovered to ~87% (temp 0.9;
+  # lowering temp to 0.6 made it WORSE). Set to 4096 for all roles to leave ample
+  # room as chains of thought lengthen on harder problems (the cap only bites on
+  # the longest thinkers; most generations close on EOS well before it).
+  creator_max_tokens: 4096
+  solver_max_tokens: 4096
+  oracle_max_tokens: 4096
+
+game:
+  n_problems: 3         # N  (3-point difficulty curve = enough to fit a slope)
+  creator_group: 2      # G_c
+  solver_attempts: 4    # K  (GRPO group per problem)
+  domains: ["math", "coding"]
+
+rewards:
+  w_gradient: 1.0
+  w_consistency: 0.5
+  w_oracle: 0.1
+  w_valid: 0.1
+  w_solve: 1.0
+  w_oracle_solver: 0.05
+  mse_beta: 4.0
+  clip: 10.0
+
+oracle:
+  enabled: true
+  cost_per_query: 1.0
+  max_calls_per_turn: 4
+
+tools:                  # creator inline CAS tool (ReAct); untaxed creator aid
+  creator_tools: ["solve", "calc"]
+  creator_max_tool_calls: 4
+  creator_tool_rounds: 4
+  cas_timeout_s: 3.0
+
+roles:
+  swap_interval: 8
+  warmup_iterations: 5
+  injection_rate: 0.0   # rotation-only (the headline mechanism)
+
+train:
+  iters: 30
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  grad_accumulation_steps: 1
+  grpo_microbatch: 1    # score 1 trajectory per backward chunk (accumulate grads,
+                        # one step) — bounds peak memory so 4096-token rollouts
+                        # don't OOM the 32GB box. mini-01 run0 was SIGKILLed at
+                        # iter 5 with the whole batch in one graph (~12 x 4096 tok).
+  seed: 0
+  checkpoint_every: 5
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints
+  runs: runs

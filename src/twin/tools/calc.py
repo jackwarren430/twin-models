@@ -12,12 +12,19 @@ from sympy.parsing.sympy_parser import (
     standard_transformations,
 )
 
+from twin.tools.cas import SAFE_GLOBAL_DICT
+
 _TRANSFORMS = standard_transformations + (implicit_multiplication_application,)
 
 
 def evaluate(expr: str):
-    """Parse and evaluate ``expr``, returning a SymPy object. Raises on bad input."""
-    return parse_expr(expr, transformations=_TRANSFORMS, evaluate=True)
+    """Parse and evaluate ``expr``, returning a SymPy object. Raises on bad input.
+
+    Uses the locked ``SAFE_GLOBAL_DICT`` namespace: ``parse_expr`` ultimately
+    ``eval``s the transformed source, so builtins must be unreachable."""
+    return parse_expr(
+        expr, transformations=_TRANSFORMS, global_dict=SAFE_GLOBAL_DICT, evaluate=True
+    )
 
 
 def calc(expr: str) -> str:

@@ -4,13 +4,24 @@ Used two ways (DESIGN.md §7):
   * **solver scoring** — compare the solver's answer to the creator's reference
     answer (``verify_math``);
   * **creator consistency** — check the creator's own answer satisfies a
-    machine-checkable predicate the creator supplied (``check_predicate``).
+    machine-checkable **certificate** the creator supplied (``check_predicate``:
+    ``verification.check`` + ``verification.symbol``, Sprint 5). Accepted check
+    forms: ``"2*x + 3 = 11"``, ``"4*x == 20"``, ``"Eq(x**2, 9)"``, a bare
+    expression that must vanish, or several comma-separated relations for
+    multi-unknown answers (``symbol: "x, y"``, ``check: "x + y = 10, x - y = 2"``).
+    A check that merely restates the answer (``"x = 12"``) is rejected as
+    trivial — it would certify anything.
 
-Both parse model text with ``parse_expr`` (not ``eval``/``sympify``) so no
-arbitrary Python executes here.
+All parsing goes through ``parse_expr`` with the locked ``SAFE_GLOBAL_DICT``
+namespace (see ``twin.tools.cas``): SymPy's parser ultimately ``eval``s the
+transformed source, so this is what keeps model-written text from reaching
+builtins.
 """
 
-from sympy import Eq, simplify
+import re
+
+from sympy import Eq, Matrix, simplify
+from sympy.core.containers import Tuple
 from sympy.core.relational import Relational
 from sympy.parsing.sympy_parser import (
     implicit_multiplication_application,
@@ -18,14 +29,40 @@ from sympy.parsing.sympy_parser import (
     standard_transformations,
 )
 
+from twin.tools.cas import (
+    SAFE_GLOBAL_DICT,
+    normalize_eq_ops,
+    split_top_level_commas,
+    split_top_level_eq,
+)
 from twin.verifiers.result import VerificationResult
 
 _TRANSFORMS = standard_transformations + (implicit_multiplication_application,)
 _METHOD = "sympy"
 
+# LaTeX the solver sometimes wraps answers in (e.g. "$\left(\frac{28}{11}, ...\right)$").
+# We strip it to a plain expression so ordered pairs / fractions parse — see
+# DESIGN.md §7 and the e2e finding that LaTeX-wrapped tuples never verified.
+_BOXED_RE = re.compile(r"\\boxed\s*\{([^{}]*)\}")
+_FRAC_RE = re.compile(r"\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}")
+
+
+def _strip_latex(s: str) -> str:
+    s = _BOXED_RE.sub(r"(\1)", s)
+    prev = None
+    while prev != s:  # collapse possibly-repeated \frac{a}{b} -> ((a)/(b))
+        prev = s
+        s = _FRAC_RE.sub(r"((\1)/(\2))", s)
+    s = s.replace("\\left", "").replace("\\right", "")
+    s = s.replace("\\cdot", "*").replace("\\times", "*")
+    for tok in ("\\,", "\\;", "\\:", "\\!", "\\quad", "\\qquad"):
+        s = s.replace(tok, " ")
+    s = s.replace("\\\\", " ").replace("\\ ", " ")
+    return s.replace("{", "(").replace("}", ")")
+
 
 def _normalize(s: str) -> str:
-    s = (s or "").strip()
+    s = _strip_latex((s or "").strip())
     # Take the right-hand side if the model wrote "answer = <value>".
     if s.count("=") == 1 and not any(op in s for op in ("==", "<=", ">=", "!=")):
         s = s.split("=", 1)[1].strip()
@@ -35,67 +72,190 @@ def _normalize(s: str) -> str:
 
 
 def _parse(s: str):
-    return parse_expr(_normalize(s), transformations=_TRANSFORMS, evaluate=True)
+    return parse_expr(
+        _normalize(s), transformations=_TRANSFORMS,
+        global_dict=SAFE_GLOBAL_DICT, evaluate=True,
+    )
+
+
+def _parse_raw(s: str):
+    """Parse without ``_normalize``'s take-the-RHS-of-'=' step (which would eat
+    an equation-form certificate). LaTeX still stripped; namespace locked."""
+    return parse_expr(
+        _strip_latex((s or "").strip()), transformations=_TRANSFORMS,
+        global_dict=SAFE_GLOBAL_DICT, evaluate=True,
+    )
+
+
+def _is_seq(obj) -> bool:
+    """Ordered-pair / vector answer: a list/tuple/Matrix, not a scalar."""
+    return isinstance(obj, (tuple, list, Tuple, Matrix))
+
+
+def _as_list(obj) -> list:
+    return list(obj)
+
+
+def _scalar_equal(c, e, tolerance: float) -> bool:
+    """Symbolic equality, then a closed-form numeric compare within ``tolerance``."""
+    try:
+        if simplify(c - e) == 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    try:
+        if not (c.free_symbols or e.free_symbols):
+            return abs(float(c.evalf()) - float(e.evalf())) <= tolerance
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return False
 
 
 def verify_math(candidate: str, expected: str, *, tolerance: float = 1e-6) -> VerificationResult:
     """True iff ``candidate`` equals ``expected`` symbolically or numerically.
 
-    Falls back to a normalized string compare when neither side parses (e.g. the
+    Handles scalars, ordered pairs / vectors (compared element-wise, so
+    ``(3, 2)``, ``[3, 2]`` and ``$\\left(\\tfrac31,\\tfrac21\\right)$`` all unify),
+    and degrades to a normalized string compare when neither side parses (e.g. the
     answer is a word, not an expression)."""
     cand_raw, exp_raw = (candidate or "").strip(), (expected or "").strip()
+
+    # Cheap exact match on the normalized text — also the safety net for
+    # sequence answers whose elements are byte-identical (e.g. "(3, 2)").
+    if _normalize(cand_raw) and _normalize(cand_raw) == _normalize(exp_raw):
+        return VerificationResult.ok(_METHOD, f"exact match: {cand_raw!r}")
+
     try:
         c, e = _parse(cand_raw), _parse(exp_raw)
     except Exception:  # noqa: BLE001 - not parseable as math; degrade to text
         same = _normalize(cand_raw).lower() == _normalize(exp_raw).lower()
         return _binary(same, f"string compare: {cand_raw!r} vs {exp_raw!r}")
 
-    # Symbolic equality.
-    try:
-        if simplify(c - e) == 0:
-            return VerificationResult.ok(_METHOD, f"symbolic match: {c} == {e}")
-    except (TypeError, ValueError):
-        pass
-    # Numeric fallback (closed-form only).
-    try:
-        if not (c.free_symbols or e.free_symbols):
-            cn, en = float(c.evalf()), float(e.evalf())
-            if abs(cn - en) <= tolerance:
-                return VerificationResult.ok(_METHOD, f"numeric match: {cn} ~= {en}")
-            return VerificationResult.fail(_METHOD, f"numeric mismatch: {cn} != {en}")
-    except (TypeError, ValueError):
-        pass
+    # Ordered pairs / vectors: same length and element-wise equal.
+    if _is_seq(c) or _is_seq(e):
+        if not (_is_seq(c) and _is_seq(e)):
+            return VerificationResult.fail(_METHOD, f"shape mismatch: {c} vs {e}")
+        cl, el = _as_list(c), _as_list(e)
+        if len(cl) != len(el):
+            return VerificationResult.fail(_METHOD, f"length {len(cl)} != {len(el)}")
+        if all(_scalar_equal(ci, ei, tolerance) for ci, ei in zip(cl, el)):
+            return VerificationResult.ok(_METHOD, f"elementwise match: {c} == {e}")
+        return VerificationResult.fail(_METHOD, f"elementwise mismatch: {c} != {e}")
+
+    # Scalar.
+    if _scalar_equal(c, e, tolerance):
+        return VerificationResult.ok(_METHOD, f"match: {c} == {e}")
     return VerificationResult.fail(_METHOD, f"no match: {c} != {e}")
+
+
+# A bare numeric literal (int / decimal / simple fraction, optional sign). Used
+# to reject trivial certificates like "x = 12" or "x = 7/2" — a check that just
+# restates the answer certifies anything, so the creator must recompute the
+# answer from the problem's quantities ("4*x = 20", "x = 0.15*80", ...).
+_NUM_LITERAL = re.compile(
+    r"^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?(\s*/\s*\d+(\.\d*)?)?$"
+)
+_EQ_CALL = re.compile(r"^\s*Eq\s*\((.*)\)\s*$", re.DOTALL)
+
+
+def _check_sides(part: str) -> tuple[str, str] | None:
+    """The (lhs, rhs) of one certificate part, for ``a = b`` / ``a == b`` /
+    ``Eq(a, b)`` forms; ``None`` for bare expressions / inequalities."""
+    eq = split_top_level_eq(normalize_eq_ops(part))
+    if eq is not None:
+        return eq[0].strip(), eq[1].strip()
+    m = _EQ_CALL.match(part)
+    if m:
+        args = split_top_level_commas(m.group(1))
+        if len(args) == 2:
+            return args[0].strip(), args[1].strip()
+    return None
+
+
+def _is_trivial_part(part: str, symbol_names: set[str]) -> bool:
+    """True for ``<symbol> = <numeric literal>`` (either order) — a
+    self-certifying check that must be rejected."""
+    sides = _check_sides(part)
+    if sides is None:
+        return False
+    for a, b in (sides, sides[::-1]):
+        if a in symbol_names and _NUM_LITERAL.match(b):
+            return True
+    return False
+
+
+def _parse_relation(part: str):
+    """Parse one certificate part into an ``Eq``/``Relational``/bare expression."""
+    sides = _check_sides(part)
+    if sides is not None:
+        return Eq(_parse_raw(sides[0]), _parse_raw(sides[1]), evaluate=False)
+    return _parse_raw(part)
+
+
+def _vanishes(expr, tolerance: float) -> bool:
+    """``expr`` is 0, exactly or numerically within ``tolerance``."""
+    s = simplify(expr)
+    if s == 0:
+        return True
+    if not s.free_symbols:
+        try:
+            return abs(complex(s.evalf())) <= tolerance
+        except (TypeError, ValueError):
+            return False
+    return False
 
 
 def check_predicate(check: str, symbol: str, value: str, *, tolerance: float = 1e-6) -> VerificationResult:
     """Substitute ``value`` for ``symbol`` in ``check`` and test it holds.
 
-    ``check`` is a creator-supplied certificate: either a relational
-    (``Eq(x**2-5*x+6, 0)``) or a bare expression that should evaluate to 0 when
-    the answer is correct. Lets math problems be verified *without* an
-    independent solver or an LLM judge."""
+    ``check`` is the creator's certificate (see module docstring for the
+    accepted forms); ``symbol`` may name several unknowns (``"x, y"``) with
+    ``value`` a matching tuple. Every comma-separated relation in ``check``
+    must hold. Lets math problems be verified *without* an independent solver
+    or an LLM judge."""
+    check = (check or "").strip()
+    symbol = (symbol or "").strip()
+    if not check or not symbol:
+        return VerificationResult.fail(_METHOD, "empty predicate/symbol")
+
+    sym_parts = split_top_level_commas(symbol)
     try:
-        sym = parse_expr(symbol, transformations=_TRANSFORMS)
+        syms = [_parse_raw(s) for s in sym_parts]
+        if not all(getattr(s, "is_Symbol", False) for s in syms):
+            return VerificationResult.fail(_METHOD, f"bad symbol spec: {symbol!r}")
         val = _parse(value)
-        expr = parse_expr(check, transformations=_TRANSFORMS, evaluate=True)
+        vals = list(val) if (len(syms) > 1 and _is_seq(val)) else [val]
+        if len(vals) != len(syms):
+            return VerificationResult.fail(
+                _METHOD, f"{len(syms)} symbols but {len(vals)} values")
+        parts = split_top_level_commas(normalize_eq_ops(check))
+        if any(_is_trivial_part(p, set(sym_parts)) for p in parts):
+            return VerificationResult.fail(
+                _METHOD,
+                "trivial certificate (restates the answer); the check must "
+                "recompute the answer from the problem's quantities",
+            )
+        relations = [_parse_relation(p) for p in parts]
     except Exception as e:  # noqa: BLE001
         return VerificationResult.fail(_METHOD, f"predicate parse error: {e}")
 
-    substituted = expr.subs(sym, val)
+    pairs = list(zip(syms, vals))
     try:
-        if isinstance(substituted, (Relational, Eq)) or isinstance(expr, (Relational, Eq)):
-            holds = bool(simplify(substituted) == True)  # noqa: E712 - sympy truth
-            return _binary(holds, f"predicate {expr} with {sym}={val} -> {holds}")
-        # Bare expression: correct when it simplifies to ~0.
-        s = simplify(substituted)
-        if s == 0:
-            return VerificationResult.ok(_METHOD, f"predicate {expr}=0 with {sym}={val}")
-        if not s.free_symbols:
-            close = abs(float(s.evalf())) <= tolerance
-            return _binary(close, f"predicate {expr}={float(s.evalf())} with {sym}={val}")
-        return VerificationResult.fail(_METHOD, f"predicate did not vanish: {s}")
-    except (TypeError, ValueError) as e:
+        for rel in relations:
+            if isinstance(rel, Eq):
+                # Compare via lhs-rhs so `tolerance` applies (Eq.subs would
+                # auto-evaluate two numbers to a hard boolean).
+                holds = _vanishes((rel.lhs - rel.rhs).subs(pairs), tolerance)
+            elif isinstance(rel, Relational):
+                holds = bool(simplify(rel.subs(pairs)) == True)  # noqa: E712 - sympy truth
+            else:  # bare expression: must vanish at the answer
+                holds = _vanishes(rel.subs(pairs), tolerance)
+            if not holds:
+                return VerificationResult.fail(
+                    _METHOD, f"predicate {rel} fails at {dict(pairs)}")
+        return VerificationResult.ok(
+            _METHOD, f"predicate holds at {dict(pairs)}: {check}")
+    except (TypeError, ValueError, AttributeError) as e:
         return VerificationResult.fail(_METHOD, f"predicate eval error: {e}")
 
 

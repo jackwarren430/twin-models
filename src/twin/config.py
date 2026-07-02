@@ -29,13 +29,39 @@ class ModelConfig:
     max_kv_size: int | None = None
 
 
+# Every linear projection in a Qwen3 transformer block, by module path relative
+# to the block. Adapting all 7 (attention q/k/v/o + MLP gate/up/down) is the
+# "full" LoRA target set; this is also what mlx-lm's auto-discovery (keys=None)
+# selects, but we name them explicitly so the target set is visible and locked.
+DEFAULT_LORA_KEYS = [
+    "self_attn.q_proj",
+    "self_attn.k_proj",
+    "self_attn.v_proj",
+    "self_attn.o_proj",
+    "mlp.gate_proj",
+    "mlp.up_proj",
+    "mlp.down_proj",
+]
+
+
 @dataclass
 class LoraConfig:
     num_layers: int = 16          # convert the last N transformer blocks
-    rank: int = 16
-    scale: float = 20.0           # LoRA alpha-equivalent (mlx-lm uses `scale`)
+    rank: int = 64                # LoRA rank r
+    alpha: float = 128.0          # LoRA alpha; effective mlx-lm scale = alpha / rank
     dropout: float = 0.0
-    keys: list[str] | None = None  # None => all linear layers in those blocks
+    # Which projections to adapt. Default = all 7 (DEFAULT_LORA_KEYS). Set to
+    # `null` in YAML to fall back to mlx-lm auto-discovery (same 7 for Qwen3).
+    keys: list[str] | None = field(default_factory=lambda: list(DEFAULT_LORA_KEYS))
+    # Raw mlx-lm scale override. Leave null to use the PEFT-standard alpha/rank;
+    # set a number only if you want to bypass alpha and pin the scale directly.
+    scale: float | None = None
+
+    @property
+    def effective_scale(self) -> float:
+        """The multiplier mlx-lm applies to the LoRA delta (``y + scale·BA·x``).
+        PEFT convention: ``alpha / rank``, unless a raw ``scale`` is pinned."""
+        return self.scale if self.scale is not None else self.alpha / self.rank
 
 
 @dataclass
@@ -66,8 +92,21 @@ class RewardsConfig:
     w_valid: float = 0.1
     w_solve: float = 1.0
     w_oracle_solver: float = 0.05  # solver oracle tax (per call)
+    # Brevity bonus for CORRECT solver attempts only: w_brevity * (1 - L/L_max)
+    # where L = completion tokens, L_max = gen.solver_max_tokens. Gated on
+    # solved so it can never reward truncating into a wrong answer, and capped
+    # at w_brevity so a correct answer always out-scores an incorrect one.
+    # Default 0.0 (off) — enable per-run as a measured ablation (DESIGN §6.2).
+    w_brevity: float = 0.0
     mse_beta: float = 4.0         # sharpness of exp(-beta*MSE) gradient reward
     clip: float = 10.0
+    # Target solve-rate ramp endpoints (easy rank -> hard rank). The default
+    # 1.0 -> 0.0 ramp makes the endpoint ranks' solver K-groups zero-variance
+    # (all-solved / all-failed) at creator-optimum; an interior band like
+    # 0.9 -> 0.1 keeps outcome variance at every rank. Changing the band
+    # changes the game's incentives — run it as an ablation (DESIGN §11 S6).
+    target_hi: float = 1.0
+    target_lo: float = 0.0
 
 
 @dataclass
@@ -75,6 +114,24 @@ class OracleConfig:
     enabled: bool = True
     cost_per_query: float = 1.0   # counted; multiplied by reward weight elsewhere
     max_calls_per_turn: int = 4
+
+
+@dataclass
+class ToolsConfig:
+    """Inline tool use for the CREATOR rollout (DESIGN.md §9). The creator may
+    call these tools mid-generation (ReAct); results are spliced back as <obs>
+    and masked out of the GRPO loss. The solver path has no inline tools in v1.
+
+    The JUDGE (verifier fallback, frozen base) also gets the CAS tool so it can
+    recompute answers instead of eyeballing them — judge tool use is untaxed and
+    never scored (it's a verification activity, not a trained rollout)."""
+    creator_tools: list[str] = field(default_factory=lambda: ["solve", "calc"])
+    creator_max_tool_calls: int = 4   # ToolHarness budget per creator rollout
+    creator_tool_rounds: int = 4      # max ReAct rounds (generate->tool->continue)
+    cas_timeout_s: float = 3.0        # best-effort wall-clock guard for `solve`
+    judge_tools: list[str] = field(default_factory=lambda: ["solve", "calc"])
+    judge_max_tool_calls: int = 4     # ToolHarness budget per judge call
+    judge_tool_rounds: int = 4        # max ReAct rounds for the judge
 
 
 @dataclass
@@ -89,7 +146,22 @@ class TrainConfig:
     iters: int = 1000
     learning_rate: float = 1.0e-5
     kl_beta: float = 0.02
+    grad_clip: float = 1.0        # global-norm gradient clip per GRPO step (0 = off)
     grad_accumulation_steps: int = 1
+    # Max trajectories scored per GRPO backward chunk; grads are accumulated
+    # across chunks for one optimizer step (identical math, bounded peak memory).
+    # 0 = whole batch in one graph (fine for tiny configs / short token budgets).
+    # Set >0 when long token budgets * many trajectories would OOM the backward
+    # pass — a 4096-token completion alone materializes a ~2.5GB [T,V] logits
+    # tensor, so a dozen at once blows past 32GB.
+    grpo_microbatch: int = 0
+    # Group-advantage normalization (twin.rl.group_advantages). "mean" (the
+    # default) is Dr.GRPO-style A = R − mean(R): for the small groups this
+    # project runs (G_c 2-4, K=4) the classic ÷std maps ANY non-tie to ±1 —
+    # a 0.015 reward gap (solve-rate noise) trains as hard as a 2.6 one —
+    # while "mean" preserves magnitude (near-ties -> near-zero gradients).
+    # "std" is the legacy standardized form, kept for ablation.
+    adv_mode: str = "mean"
     seed: int = 0
     checkpoint_every: int = 100
     log_every: int = 1
@@ -109,6 +181,7 @@ class Config:
     game: GameConfig = field(default_factory=GameConfig)
     rewards: RewardsConfig = field(default_factory=RewardsConfig)
     oracle: OracleConfig = field(default_factory=OracleConfig)
+    tools: ToolsConfig = field(default_factory=ToolsConfig)
     roles: RolesConfig = field(default_factory=RolesConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)

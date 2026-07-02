@@ -1,0 +1,492 @@
+{
+  "category": "knowledge",
+  "description": "HARD tier — MMLU-Pro (TIGER-Lab), MIT license — 10-way multiple-choice, graduate level.",
+  "items": [
+    {
+      "id": "mmlupro-6495",
+      "subcategory": "health",
+      "prompt": "A 42-year-old man comes to the physician for a follow-up examination. Four months ago, he underwent repair of a Dupuytren contracture. Physical examination shows decreased range of motion in the affected hand. The patient is upset that his hand has not fully healed, and he files a malpractice suit against the physician. Which of the following is the most likely precipitating factor in this patient's decision to file a malpractice suit?",
+      "choices": [
+        "The patient's perception that the physician is incompetent",
+        "The patient's perception that the physician is uncaring",
+        "The patient's socioeconomic status",
+        "The physician's amount of experience in the medical field"
+      ],
+      "answer": "B",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "health"
+      }
+    },
+    {
+      "id": "mmlupro-6546",
+      "subcategory": "health",
+      "prompt": "A 52-year-old man is admitted to the hospital because of severe dyspnea and cough productive of tenacious, brownishyellow sputum for the past 3 weeks. He has a 15-year career history of sandblasting old buildings. He has smoked two packs of cigarettes daily for the past 30 years. The patient is 168 cm (5 ft 6 in) tall and weighs 59 kg (130 lb); BMI is 21 kg/m2 . Vital signs are temperature 36.8°C (98.2°F), pulse 94/min, and blood pressure 150/92 mm Hg. Pulse oximetry on room air shows an oxygen saturation of 70%. On physical examination he is in moderately severe distress with pursed lips and cyanotic nail beds. Chest has an increased anteroposterior diameter. Auscultation of the chest discloses scattered wheezes and rhonchi over all lung fields. Cardiac examination discloses muffled heart sounds and an S4. Fingers are clubbed. Chest x-ray shows hyperinflated lungs, flattened diaphragm, large, irregular opacities in the upper lobes, and eggshell calcifications of the hilar lymph nodes. In addition to antibiotic therapy, which of the following is the most appropriate intervention?",
+      "choices": [
+        "Lung transplantation",
+        "Continuous humidified oxygen",
+        "Daily chest physiotherapy",
+        "Pulmonary rehabilitation",
+        "Azathioprine therapy",
+        "Bronchoscopy",
+        "Corticosteroid therapy",
+        "Nocturnal continuous positive airway pressure (CPAP)"
+      ],
+      "answer": "B",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "health"
+      }
+    },
+    {
+      "id": "mmlupro-92",
+      "subcategory": "business",
+      "prompt": "During a riot, Mr. Winter's car was overturned causing $346.50 in damage.Mr. Winter had $50-deductible col-lision insurance, but no comprehensive coverage. How much will theinsurance company pay Mr. Winter?",
+      "choices": [
+        "$296.50",
+        "$50",
+        "Two-thirds of the cost of the damages",
+        "$150",
+        "not pay him anything",
+        "$200",
+        "$346.50",
+        "$246.50",
+        "full coverage of damage",
+        "Half the cost of the damages"
+      ],
+      "answer": "E",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "business"
+      }
+    },
+    {
+      "id": "mmlupro-6536",
+      "subcategory": "health",
+      "prompt": "It is currently estimated that there are ______ human protein-coding genes although this estimate may be reduced over time.",
+      "choices": [
+        "29,000–30,000",
+        "10,000–15,000",
+        "50,000–60,000",
+        "75,000–80,000",
+        "19,000–20,000",
+        "90,000–95,000",
+        "100,000",
+        "120,000–130,000",
+        "150,000–200,000",
+        "1,000–2,000"
+      ],
+      "answer": "E",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "health"
+      }
+    },
+    {
+      "id": "mmlupro-6508",
+      "subcategory": "health",
+      "prompt": "A 35-year-old male presents to the office for the result of an HIV test, and he is informed that the result is positive. The patient resists disclosure to his wife because he has not told her about his extramarital sexual partners. The physician informs the patient that his wife's right to know is paramount because she could also be HIV positive. Which of the following relationships best describes the rationale for the physician's recommendation that the patient inform his wife of his condition rather than withhold this information?",
+      "choices": [
+        "beneficence is equal to justice",
+        "autonomy overrides justice",
+        "autonomy is equal to nonmaleficence",
+        "autonomy overrides beneficence",
+        "justice overrides beneficence",
+        "beneficence overrides justice",
+        "justice overrides autonomy",
+        "beneficence overrides autonomy",
+        "nonmaleficence overrides autonomy",
+        "nonmaleficence overrides beneficence"
+      ],
+      "answer": "I",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "health"
+      }
+    },
+    {
+      "id": "mmlupro-163",
+      "subcategory": "business",
+      "prompt": "Ringling Brothers Circus recently purchased a new tiger cagefor $1,950. The accountants have decided to depreciatethe cage using the declining balance method with arate of 15%. What will be the book value of the cage in3 years?",
+      "choices": [
+        "$1,113.45",
+        "$1,300.21",
+        "$1,197.54",
+        "$1,408.87",
+        "$1,750.00",
+        "$1,657.50",
+        "$950.00",
+        "$531.36",
+        "$1,002.59",
+        "$1,527.20"
+      ],
+      "answer": "C",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "business"
+      }
+    },
+    {
+      "id": "mmlupro-168",
+      "subcategory": "business",
+      "prompt": "A water bed sells for $330 cash or $40 down and $10.50 a month for 36 months. Find the annual interest rate charged.",
+      "choices": [
+        "14.9%",
+        "16.3%",
+        "18.2%",
+        "19.7%",
+        "21.4%",
+        "15.5%",
+        "23.6%",
+        "22.3%",
+        "20.5%",
+        "17.8%"
+      ],
+      "answer": "D",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "business"
+      }
+    },
+    {
+      "id": "mmlupro-6552",
+      "subcategory": "health",
+      "prompt": "A 64-year-old man with non-Hodgkin lymphoma comes to the physician because of a 3-week history of progressive numbness in his hands and feet and weakness in his legs when he stands. He received his third course of chemotherapy 4 weeks ago. Physical examination shows areflexia. Which of the following drugs is the most likely cause of these adverse effects?",
+      "choices": [
+        "Doxorubicin",
+        "Fluorouracil",
+        "Methotrexate",
+        "Vincristine"
+      ],
+      "answer": "D",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "health"
+      }
+    },
+    {
+      "id": "mmlupro-128",
+      "subcategory": "business",
+      "prompt": "The extent to which a service envelops a product varies according to a number of factors. Which of the following is NOT one of the factors?",
+      "choices": [
+        "The CEO of the company producing the product",
+        "The number of competitors in the market",
+        "Variations in supply and demand.",
+        "The time of year the product is sold",
+        "The retail location where the product is sold",
+        "The level of tangibility associated with the type of product.",
+        "The age of the product designer",
+        "The color of the product packaging",
+        "The way in which the service is delivered.",
+        "Performance-value."
+      ],
+      "answer": "J",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "business"
+      }
+    },
+    {
+      "id": "mmlupro-164",
+      "subcategory": "business",
+      "prompt": "The assessed valuation of the taxable property in the town of Smithville is $52,384,600. The taxes to be raised are $123,475 for a new local project, $931,442.75 for educational purposes, and $319,878 for health and welfare needs. Find the town's tax rate (a) to thousandths of a percent, (b) in mills per $1 of assessed value (c) in cents per $100 of assessed value, and (d) in mills per $1,000 of assessed value.",
+      "choices": [
+        "2.424%, 24.24 mills per $1, 242.4 cents per $100, 24,240 mills per $1000",
+        "2.624%, 26.24 mills per $1, 262.4 cents per $100, 26,240 mills per $1000",
+        "2.124%, 21.24 mills per $1, 212.4 cents per $100, 21,240 mills per $1000",
+        "2.324%, 23.24 mills per $1, 232.4 cents per $100, 23,240 mills per $1000",
+        "1.824%, 18.24 mills per $1, 182.4 cents per $100, 18,240 mills per $1000",
+        "2.724%, 27.24 mills per $1, 272.4 cents per $100, 27,240 mills per $1000",
+        "3.124%, 31.24 mills per $1, 312.4 cents per $100, 31,240 mills per $1000",
+        "2.224%, 22.24 mills per $1, 222.4 cents per $100, 22,240 mills per $1000",
+        "2.024%, 20.24 mills per $1, 202.4 cents per $100, 20,240 mills per $1000",
+        "1.624%, 16.24 mills per $1, 162.4 cents per $100, 16,240 mills per $1000"
+      ],
+      "answer": "B",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "business"
+      }
+    },
+    {
+      "id": "mmlupro-76",
+      "subcategory": "business",
+      "prompt": "Pine and Gilmore (1999) derive four distinct realms of experience, based on two dimensions. What are these dimensions?",
+      "choices": [
+        "Customer participation and environmental acquisition.",
+        "Environmental acquisition and environmental relationship.",
+        "Customer retention and environmental relationship.",
+        "Customer participation and environmental relationship.",
+        "Customer acquisition and customer retention.",
+        "Customer participation and customer relationship.",
+        "Customer acquisition and environmental participation.",
+        "Environmental participation and customer relationship.",
+        "Customer retention and customer relationship.",
+        "Customer acquisition and environmental relationship."
+      ],
+      "answer": "D",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "business"
+      }
+    },
+    {
+      "id": "mmlupro-141",
+      "subcategory": "business",
+      "prompt": "Mr. Norman Schwartz, age 30, wants to take out a $15,000 insurance policy. What will be his difference in annual premiums between a 20-payment life policy and an ordinary life paid-up-at 65 policy? If he dies at age 62, how much will he have paid in for each policy?",
+      "choices": [
+        "$30.55",
+        "$29.55",
+        "$34.55",
+        "$32.55",
+        "$33.55",
+        "$28.55",
+        "$27.55",
+        "$26.55",
+        "$31.55",
+        "$25.55"
+      ],
+      "answer": "B",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "business"
+      }
+    },
+    {
+      "id": "mmlupro-6470",
+      "subcategory": "health",
+      "prompt": "Which of the following is NOT one of the most rewarding aspects of being a grandparent as reported by grandparents?",
+      "choices": [
+        "Sharing wisdom and life experiences",
+        "Having a second chance at parenting",
+        "Watching grandchildren grow and develop",
+        "Having others to wait on you",
+        "Reliving their own childhood through their grandchildren",
+        "Having an excuse to indulge in childish activities",
+        "Spoiling the grandchildren",
+        "Feelings of immortality",
+        "Being able to spend quality time with family",
+        "Remembering when they were grandchildren"
+      ],
+      "answer": "D",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "health"
+      }
+    },
+    {
+      "id": "mmlupro-139",
+      "subcategory": "business",
+      "prompt": "Suppose the demand curve for oPads is given by $p=\\frac{500-x}{10}, What is the elasticity value of this demand function.",
+      "choices": [
+        "0.0",
+        "-0.75",
+        "-2.5",
+        "-3.0",
+        "2.5",
+        "-2.0",
+        "1.0",
+        "1.5",
+        "-1.5",
+        "-0.5"
+      ],
+      "answer": "I",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "business"
+      }
+    },
+    {
+      "id": "mmlupro-6517",
+      "subcategory": "health",
+      "prompt": "Severe acute malnutrition in young children is defined as:",
+      "choices": [
+        "Weight-for-age Z score <-2 and oedema",
+        "Height-for-age Z score <-2 or weight-for-height Z score <-2 and oedema",
+        "Height-for-age Z score <-3 and oedema",
+        "Weight-for-age Z score <-2 or height-for-age Z score <-2 or oedema",
+        "Height-for-age Z score <-3 or weight-for-age Z score <-3 and oedema",
+        "Height-for-age Z score <-3 or weight-for-height Z score <-3 or oedema",
+        "Weight-for-age Z score <-3 and height-for-age Z score <-2",
+        "Weight-for-age Z score <-3",
+        "Weight-for-height Z score <-3 and oedema",
+        "Height-for-age Z score <-3 or weight-for-age Z score <-3 or oedema"
+      ],
+      "answer": "F",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "health"
+      }
+    },
+    {
+      "id": "mmlupro-6532",
+      "subcategory": "health",
+      "prompt": "Within the United States, which location has the longest life expectancy?",
+      "choices": [
+        "Washington",
+        "Florida",
+        "Mississippi",
+        "Oregon",
+        "Texas",
+        "Arizona",
+        "Alaska",
+        "Hawaii",
+        "California",
+        "New York"
+      ],
+      "answer": "H",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "health"
+      }
+    },
+    {
+      "id": "mmlupro-6544",
+      "subcategory": "health",
+      "prompt": "A 25-year-old man comes to the emergency department because he developed chest pain and shortness of breath 1 hour ago, shortly after snorting cocaine for the first time. He rates the chest pain as a 7 on a 10-point scale and notes that the pain is radiating down his left arm. Medical history is unremarkable and the patient takes no medications or any other illicit drugs. He is 178 cm (5 ft 10 in) tall and weighs 70 kg (154 lb); BMI is 22 kg/m2 . The patient is diaphoretic. Vital signs are temperature 37.5°C (99.5°F), pulse 110/min, respirations 16/min, and blood pressure 200/100 mm Hg. Pulse oximetry on room air shows an oxygen saturation of 95%. Pupils are equal, round, and reactive to light and accommodation. Lungs are clear to auscultation and percussion. Auscultation of the heart discloses an audible S1 and S2. There is no edema, cyanosis, or clubbing of the digits. The patient is fully oriented. He is treated with supplemental oxygen, a 325-mg aspirin tablet, and intravenous nitroglycerin and lorazepam. Despite therapy, he continues to have chest pain and shortness of breath. ECG shows sinus tachycardia with no ST-segment or T-wave abnormalities. Which of the following is the most appropriate additional pharmacotherapy to initiate at this time?",
+      "choices": [
+        "Nitroprusside",
+        "Verapamil",
+        "Alteplase",
+        "Furosemide",
+        "Phentolamine",
+        "Atorvastatin",
+        "Carvedilol",
+        "Metoprolol",
+        "Lisinopril",
+        "Warfarin"
+      ],
+      "answer": "E",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "health"
+      }
+    },
+    {
+      "id": "mmlupro-6564",
+      "subcategory": "health",
+      "prompt": "After being severely beaten and sustaining a gunshot wound to the abdomen, a 42-year-old woman undergoes resection of a perforated small bowel. During the operation, plastic reconstruction of facial fractures, and open reduction and internal fixation of the left femur are also done. Thirty-six hours postoperatively, she is awake but not completely alert. She is receiving intravenous morphine via a patient-controlled pump. She says that she needs the morphine to treat her pain, but she is worried that she is becoming addicted. She has no history of substance use disorder. She drinks one to two glasses of wine weekly. Which of the following initial actions by the physician is most appropriate?",
+      "choices": [
+        "Encourage the patient to endure the pain without medication to prevent addiction",
+        "Reassure the patient that her chance of becoming addicted to narcotics is minuscule",
+        "Administer methadone as an alternative to morphine",
+        "Increase the dose of morphine to relieve her anxiety",
+        "Suggest biofeedback therapy to control pain",
+        "Switch the patient to oral acetaminophen as soon as she can take medication orally",
+        "Maintain the morphine, but periodically administer intravenous naloxone",
+        "Recommend a consultation with a psychiatrist to address her fears of addiction",
+        "Switch the patient to intramuscular lorazepam",
+        "Advise her to drink more wine to help with the pain"
+      ],
+      "answer": "B",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "health"
+      }
+    },
+    {
+      "id": "mmlupro-99",
+      "subcategory": "business",
+      "prompt": "HarryHyppeis paid a straight wage of $2.89 (1/2) per hour. If he works 9 hours a day in a six-day week, how much will he be paid?",
+      "choices": [
+        "$168.21",
+        "$150.48",
+        "$156.33",
+        "$174.96",
+        "$192.78",
+        "$180.54",
+        "$165.00",
+        "$139.23",
+        "$198.72",
+        "$142.05"
+      ],
+      "answer": "C",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "business"
+      }
+    },
+    {
+      "id": "mmlupro-116",
+      "subcategory": "business",
+      "prompt": "Which of the following would yield the greatest net return to acorporation in the 50% tax bracket A) 5% certificate of deposit B) 5% government bond C) 5% corporate bond D) 5%treasurybond E) 4% municipal bond",
+      "choices": [
+        "4.5% treasury bond with lower liquidity",
+        "3.5% municipal bond with additional state taxes",
+        "5% government bond",
+        "6% corporate bond with a high risk of default",
+        "6% certificate of deposit with a 2% penalty for early withdrawal",
+        "5% corporate bond",
+        "5.5% government bond with additional state taxes",
+        "5% certificate of deposit",
+        "3% corporate bond with tax-deductible expenses",
+        "4% municipal bond"
+      ],
+      "answer": "J",
+      "verification": {
+        "type": "mcq"
+      },
+      "metadata": {
+        "source": "MMLU-Pro",
+        "category": "business"
+      }
+    }
+  ]
+}

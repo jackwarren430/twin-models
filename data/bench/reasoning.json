@@ -1,0 +1,18 @@
+{
+  "category": "reasoning",
+  "description": "Word problems, simple deduction and pattern items. Re-uses the deterministic graders: numeric answers via SymPy (math_numeric), short text answers via normalized exact match.",
+  "items": [
+    {"id": "reas-001", "subcategory": "word-problem", "prompt": "Tom has 3 apples. He then buys 2 bags that each contain 4 apples. How many apples does he have now?", "answer": "11", "verification": {"type": "math_numeric"}},
+    {"id": "reas-002", "subcategory": "rates", "prompt": "A train travels 60 miles in 1.5 hours. What is its average speed in miles per hour?", "answer": "40", "verification": {"type": "math_numeric"}},
+    {"id": "reas-003", "subcategory": "word-problem", "prompt": "Sarah is twice as old as Tom. Tom is 7 years old. How old is Sarah?", "answer": "14", "verification": {"type": "math_numeric"}},
+    {"id": "reas-004", "subcategory": "patterns", "prompt": "What is the next number in the sequence 2, 4, 8, 16, ...?", "answer": "32", "verification": {"type": "math_numeric"}},
+    {"id": "reas-005", "subcategory": "word-problem", "prompt": "A shirt costs $20 and is discounted by 25%. What is the sale price in dollars?", "answer": "15", "verification": {"type": "math_numeric"}},
+    {"id": "reas-006", "subcategory": "calendar", "prompt": "If today is Wednesday, what day of the week will it be in 3 days? Give the day name.", "answer": "Saturday", "verification": {"type": "exact"}},
+    {"id": "reas-007", "subcategory": "deduction", "prompt": "All cats are mammals. Is a cat a mammal? Answer yes or no.", "answer": "yes", "verification": {"type": "exact"}},
+    {"id": "reas-008", "subcategory": "deduction", "prompt": "All bloops are razzies, and all razzies are lazzies. Are all bloops lazzies? Answer yes or no.", "answer": "yes", "verification": {"type": "exact"}},
+    {"id": "reas-009", "subcategory": "counting", "prompt": "A box contains 3 red balls and 2 blue balls. How many balls are in the box in total?", "answer": "5", "verification": {"type": "math_numeric"}},
+    {"id": "reas-010", "subcategory": "comparison", "prompt": "Which is larger, 3/4 or 2/3? Answer with the larger fraction.", "answer": "3/4", "verification": {"type": "math_numeric"}},
+    {"id": "reas-011", "subcategory": "ordering", "prompt": "John is taller than Mary, and Mary is taller than Sue. Who is the shortest of the three?", "answer": "Sue", "verification": {"type": "exact"}},
+    {"id": "reas-012", "subcategory": "geometry", "prompt": "How many sides does a hexagon have?", "answer": "6", "verification": {"type": "math_numeric"}}
+  ]
+}

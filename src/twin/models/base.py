@@ -16,9 +16,10 @@ the desired adapter via ``Adapters`` before calling generate()/logprobs().
 
 import os
 from dataclasses import dataclass
+from typing import Callable, Optional
 
 import mlx.core as mx
-from mlx_lm import generate, load
+from mlx_lm import load, stream_generate
 from mlx_lm.sample_utils import make_sampler
 
 
@@ -27,6 +28,34 @@ class GenResult:
     text: str
     prompt_tokens: list[int]
     completion_tokens: list[int]
+
+
+@dataclass
+class ReactResult:
+    """A multi-turn (ReAct) rollout: the model's text interleaved with injected
+    tool observations, plus the token bookkeeping GRPO needs. ``completion_tokens``
+    is the FULL spliced sequence (policy tokens + injected ``<obs>`` tokens), so
+    the forward pass conditions on the observations; ``loss_mask`` marks which of
+    those are policy-sampled (1) vs injected (0)."""
+
+    text: str
+    prompt_tokens: list[int]
+    completion_tokens: list[int]
+    loss_mask: list[int]
+    n_rounds: int = 0
+    n_tool_calls: int = 0
+
+
+def assemble_react(segments: list[tuple[list[int], bool]]) -> tuple[list[int], list[int]]:
+    """Flatten ``(tokens, is_policy)`` segments into ``(completion_ids,
+    loss_mask)``. Pure bookkeeping, factored out so the masking is unit-testable
+    without loading the model."""
+    ids: list[int] = []
+    mask: list[int] = []
+    for tokens, is_policy in segments:
+        ids.extend(tokens)
+        mask.extend([1 if is_policy else 0] * len(tokens))
+    return ids, mask
 
 
 class TwinBase:
@@ -71,29 +100,124 @@ class TwinBase:
         seed: int | None = None,
     ) -> GenResult:
         """Sample a completion from the model with the *currently active*
-        adapter. Returns text plus the prompt/completion token ids (useful for
-        log-prob scoring without re-tokenising)."""
+        adapter. Returns text plus the prompt/completion token ids.
+
+        The completion ids are the **exact** token ids that were sampled
+        (captured from ``stream_generate``), NOT a re-encoding of the decoded
+        text — so GRPO (Sprint 3) scores the true trajectory it generated. The
+        EOS that ends generation is included if the model emitted it."""
         if seed is not None:
             mx.random.seed(seed)
         sampler = make_sampler(temp=temp, top_p=top_p)
         prompt_tokens = self.tokenizer.encode(prompt)
-        text = generate(
+        completion_tokens: list[int] = []
+        pieces: list[str] = []
+        for resp in stream_generate(
             self.model,
             self.tokenizer,
-            prompt,
+            prompt_tokens,
             max_tokens=max_tokens,
             sampler=sampler,
-            verbose=False,
-        )
-        # NOTE: this re-encodes the decoded text, which is an *approximation* of
-        # the exact ids that were sampled (detokenize->encode is not always a
-        # round-trip). Fine for Sprint 1. Sprint 3's GRPO will capture the true
-        # sampled ids via stream_generate to score the exact trajectory.
-        completion_tokens = self.tokenizer.encode(text)
+        ):
+            completion_tokens.append(int(resp.token))
+            pieces.append(resp.text)
         return GenResult(
-            text=text,
+            text="".join(pieces),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+        )
+
+    # ----- inline ReAct generation (tool use mid-rollout) ------------------
+    def _encode_no_special(self, text: str) -> list[int]:
+        """Encode ``text`` as raw continuation tokens (no BOS/special added) so
+        injected observations splice cleanly into an in-progress completion."""
+        try:
+            return self.tokenizer.encode(text, add_special_tokens=False)
+        except TypeError:
+            ids = self.tokenizer.encode(text)
+            bos = getattr(self.tokenizer, "bos_token_id", None)
+            if bos is not None and ids and ids[0] == bos:
+                ids = ids[1:]
+            return ids
+
+    def _gen_segment(self, seq: list[int], sampler, budget: int, stop: str):
+        """Sample one segment from ``seq`` (full token context), stopping after
+        ``stop`` appears in the segment text, on EOS, or at ``budget`` tokens.
+        Returns ``(tokens, text, hit_stop, hit_eos)``."""
+        tokens: list[int] = []
+        text = ""
+        hit_stop = False
+        for resp in stream_generate(
+            self.model, self.tokenizer, seq, max_tokens=budget, sampler=sampler
+        ):
+            tokens.append(int(resp.token))
+            text += resp.text
+            if stop and stop in text:
+                hit_stop = True
+                break
+        # Ended without our stop string and short of budget => the model emitted
+        # EOS (its own natural stop). At/over budget it was truncated.
+        hit_eos = (not hit_stop) and len(tokens) < budget
+        return tokens, text, hit_stop, hit_eos
+
+    def generate_react(
+        self,
+        prompt: str,
+        *,
+        tool_runner: Callable[[str], Optional[str]],
+        max_tokens: int = 1024,
+        temp: float = 0.7,
+        top_p: float = 0.95,
+        max_rounds: int = 4,
+        stop: str = "</tool>",
+        seed: int | None = None,
+    ) -> ReactResult:
+        """Generate with inline tool use under the *currently active* adapter.
+
+        The model generates until it emits ``stop`` (the close of a
+        ``<tool>...</tool>`` call); ``tool_runner(segment_text)`` then returns the
+        observation text to splice in (or ``None`` to finish). Injected tokens
+        are recorded with mask 0 so GRPO ignores them. ``max_tokens`` bounds the
+        *model-generated* tokens across all rounds; injected obs tokens are free.
+        The whole exchange is one logical completion scored as one trajectory."""
+        if seed is not None:
+            mx.random.seed(seed)
+        sampler = make_sampler(temp=temp, top_p=top_p)
+        prompt_tokens = self.tokenizer.encode(prompt)
+        seq = list(prompt_tokens)
+        segments: list[tuple[list[int], bool]] = []
+        pieces: list[str] = []
+        remaining = max_tokens
+        n_tool_calls = 0
+        rounds = 0
+        while rounds < max_rounds and remaining > 0:
+            rounds += 1
+            seg_tokens, seg_text, hit_stop, hit_eos = self._gen_segment(
+                seq, sampler, remaining, stop
+            )
+            segments.append((seg_tokens, True))
+            pieces.append(seg_text)
+            seq.extend(seg_tokens)
+            remaining -= len(seg_tokens)
+            if hit_eos or not hit_stop or remaining <= 0:
+                break
+            obs = tool_runner(seg_text)
+            if obs is None:
+                break
+            n_tool_calls += 1
+            obs_tokens = self._encode_no_special(obs)
+            segments.append((obs_tokens, False))
+            pieces.append(obs)
+            seq.extend(obs_tokens)
+
+        completion_tokens, loss_mask = assemble_react(segments)
+        return ReactResult(
+            text="".join(pieces),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            loss_mask=loss_mask,
+            n_rounds=rounds,
+            n_tool_calls=n_tool_calls,
         )
 
     # ----- scoring (used by GRPO in Sprint 3) ------------------------------
@@ -112,13 +236,36 @@ class TwinBase:
         chosen = mx.take_along_axis(logp[:-1], targets, axis=-1)[:, 0]  # [T-1]
         return chosen
 
+    def completion_logprobs(
+        self, prompt_tokens: list[int], completion_tokens: list[int]
+    ) -> mx.array:
+        """Per-token log-probs of ``completion_tokens`` given ``prompt_tokens``
+        under the *currently active* adapter. Returns shape
+        ``[len(completion_tokens)]`` where element t is
+        ``log p(completion_tokens[t] | prompt_tokens + completion_tokens[:t])``.
+
+        This is the GRPO scoring primitive (DESIGN.md §8): one forward pass,
+        **differentiable w.r.t. the active LoRA tree** (the only trainable
+        params), so it works both for the grad-enabled policy pass and the
+        no-grad reference pass (base adapter). ``token_logprobs`` returns *all*
+        positions; this slices to the completion region without summing, which
+        GRPO needs for its per-token policy-gradient and KL terms."""
+        n = len(completion_tokens)
+        if n == 0:
+            return mx.zeros((0,))
+        seq = list(prompt_tokens) + list(completion_tokens)
+        ids = mx.array(seq)[None]                  # [1, T]
+        logits = self.model(ids)[0].astype(mx.float32)   # [T, V]
+        logp = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
+        start = len(prompt_tokens) - 1             # logits[start] predicts completion[0]
+        sel = logp[start : start + n]              # [n, V]
+        targets = mx.array(list(completion_tokens))[:, None]  # [n, 1]
+        return mx.take_along_axis(sel, targets, axis=-1)[:, 0]  # [n]
+
     def sequence_logprob(self, prompt_tokens: list[int], completion_tokens: list[int]) -> mx.array:
         """Total log-prob of ``completion_tokens`` given ``prompt_tokens``
         under the active adapter (sum over the completion region)."""
-        seq = list(prompt_tokens) + list(completion_tokens)
-        per_tok = self.token_logprobs(seq)         # [len(seq)-1]
-        start = len(prompt_tokens) - 1             # first completion target index
-        return per_tok[start:].sum()
+        return self.completion_logprobs(prompt_tokens, completion_tokens).sum()
 
     # ----- oracle ----------------------------------------------------------
     def oracle(self, question: str, *, max_tokens: int = 512, temp: float = 0.2) -> str:

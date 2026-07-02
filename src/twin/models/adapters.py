@@ -28,6 +28,25 @@ def _copy_tree(tree):
     return tree_map(lambda a: mx.array(a), tree)
 
 
+def tree_global_norm(tree) -> float:
+    """L2 norm of a flattened parameter tree (float32 accumulation)."""
+    total = mx.array(0.0)
+    for _, v in tree_flatten(tree):
+        total = total + mx.sum(v.astype(mx.float32) ** 2)
+    return float(total) ** 0.5
+
+
+def tree_l2_distance(a, b) -> float:
+    """L2 distance between two parameter trees with identical structure."""
+    fa = dict(tree_flatten(a))
+    fb = dict(tree_flatten(b))
+    total = mx.array(0.0)
+    for k, va in fa.items():
+        d = va.astype(mx.float32) - fb[k].astype(mx.float32)
+        total = total + mx.sum(d ** 2)
+    return float(total) ** 0.5
+
+
 class Adapters:
     NAMES = ("A", "B")
 
@@ -65,6 +84,21 @@ class Adapters:
 
         self.active: str | None = None
         self.activate("A")
+
+    @classmethod
+    def from_config(cls, model, lora_cfg) -> "Adapters":
+        """Build adapters from a ``LoraConfig`` — the single place the PEFT-style
+        ``alpha``/``rank`` is resolved to mlx-lm's raw ``scale`` (via
+        ``lora_cfg.effective_scale``) and the explicit projection ``keys`` are
+        applied. Use this everywhere instead of passing fields by hand."""
+        return cls(
+            model,
+            num_layers=lora_cfg.num_layers,
+            rank=lora_cfg.rank,
+            scale=lora_cfg.effective_scale,
+            dropout=lora_cfg.dropout,
+            keys=lora_cfg.keys,
+        )
 
     # ----- activation ------------------------------------------------------
     def activate(self, name: str) -> None:
@@ -122,3 +156,21 @@ class Adapters:
     # ----- introspection ---------------------------------------------------
     def num_params(self, name: str = "A") -> int:
         return sum(v.size for _, v in tree_flatten(self.trees[name]))
+
+    def _tree(self, name: str):
+        return self._zero if name == "base" else self.trees[name]
+
+    def global_norm(self, name: str = "A") -> float:
+        """L2 norm of adapter ``name``'s parameter tree. 'base' (the zero tree)
+        is 0. Logged per iteration to watch overall adapter magnitude."""
+        return tree_global_norm(self._tree(name))
+
+    def snapshot(self, name: str):
+        """A detached deep copy of adapter ``name``'s current tree — e.g. the
+        init reference for measuring drift over a run."""
+        return _copy_tree(self.trees[name])
+
+    def drift_from(self, name: str, ref_tree) -> float:
+        """L2 distance of adapter ``name`` from a previously taken ``snapshot``
+        (the adapter-drift curve: how far the LoRA weights have moved)."""
+        return tree_l2_distance(self.trees[name], ref_tree)

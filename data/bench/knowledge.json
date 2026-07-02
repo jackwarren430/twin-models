@@ -1,0 +1,21 @@
+{
+  "category": "knowledge",
+  "description": "Factual recall across geography, science, history and the arts. Multiple-choice items (graded on the chosen letter) and short-answer items (graded by normalized exact match against an accepted-answer set).",
+  "items": [
+    {"id": "know-001", "subcategory": "geography", "prompt": "What is the capital of Australia?", "choices": ["Sydney", "Melbourne", "Canberra", "Perth"], "answer": "C", "verification": {"type": "mcq"}},
+    {"id": "know-002", "subcategory": "science", "prompt": "Which planet is known as the Red Planet?", "choices": ["Venus", "Mars", "Jupiter", "Saturn"], "answer": "B", "verification": {"type": "mcq"}},
+    {"id": "know-003", "subcategory": "literature", "prompt": "Who wrote the play 'Romeo and Juliet'?", "choices": ["Charles Dickens", "William Shakespeare", "Mark Twain", "Jane Austen"], "answer": "B", "verification": {"type": "mcq"}},
+    {"id": "know-004", "subcategory": "science", "prompt": "What is the chemical symbol for gold?", "choices": ["Go", "Gd", "Au", "Ag"], "answer": "C", "verification": {"type": "mcq"}},
+    {"id": "know-005", "subcategory": "history", "prompt": "In which year did World War II end?", "choices": ["1943", "1945", "1947", "1950"], "answer": "B", "verification": {"type": "mcq"}},
+    {"id": "know-006", "subcategory": "science", "prompt": "Which gas do plants primarily absorb from the atmosphere for photosynthesis?", "choices": ["Oxygen", "Nitrogen", "Carbon dioxide", "Hydrogen"], "answer": "C", "verification": {"type": "mcq"}},
+    {"id": "know-007", "subcategory": "geography", "prompt": "What is the largest ocean on Earth?", "choices": ["Atlantic", "Indian", "Arctic", "Pacific"], "answer": "D", "verification": {"type": "mcq"}},
+    {"id": "know-008", "subcategory": "geography", "prompt": "How many continents are there on Earth?", "choices": ["5", "6", "7", "8"], "answer": "C", "verification": {"type": "mcq"}},
+    {"id": "know-009", "subcategory": "science", "prompt": "Approximately how fast does light travel in a vacuum?", "choices": ["300 km/s", "3,000 km/s", "300,000 km/s", "3,000,000 km/s"], "answer": "C", "verification": {"type": "mcq"}},
+    {"id": "know-010", "subcategory": "science", "prompt": "Which of these is the hardest known natural material?", "choices": ["Gold", "Iron", "Diamond", "Quartz"], "answer": "C", "verification": {"type": "mcq"}},
+    {"id": "know-011", "subcategory": "geography", "prompt": "What is the capital of Japan?", "answer": "Tokyo", "verification": {"type": "exact"}},
+    {"id": "know-012", "subcategory": "science", "prompt": "What is the chemical formula for water?", "answer": "H2O", "verification": {"type": "exact", "aliases": ["h2o", "h_2o", "h₂o"]}},
+    {"id": "know-013", "subcategory": "science", "prompt": "What organelle is known as the powerhouse of the cell?", "answer": "mitochondria", "verification": {"type": "exact", "aliases": ["mitochondrion", "the mitochondria"]}},
+    {"id": "know-014", "subcategory": "art", "prompt": "Who painted the Mona Lisa?", "answer": "Leonardo da Vinci", "verification": {"type": "exact", "aliases": ["da vinci", "leonardo", "leonardo davinci"]}},
+    {"id": "know-015", "subcategory": "science", "prompt": "What is the largest planet in our solar system?", "answer": "Jupiter", "verification": {"type": "exact"}}
+  ]
+}

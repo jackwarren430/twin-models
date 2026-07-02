@@ -1,0 +1,306 @@
+{
+  "category": "coding",
+  "description": "HARD tier — MBPP (Austin et al.), CC-BY-4.0 — Python function tasks graded by hidden assert tests.",
+  "items": [
+    {
+      "id": "mbpp-442",
+      "subcategory": "mbpp",
+      "prompt": "Write a function to find the ration of positive numbers in an array of integers.\n\nName the function `positive_count`.",
+      "entry_point": "positive_count",
+      "verification": {
+        "type": "code",
+        "tests": "assert positive_count([0, 1, 2, -1, -5, 6, 0, -3, -2, 3, 4, 6, 8])==0.54\nassert positive_count([2, 1, 2, -1, -5, 6, 4, -3, -2, 3, 4, 6, 8])==0.69\nassert positive_count([2, 4, -6, -9, 11, -12, 14, -5, 17])==0.56",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 442
+      }
+    },
+    {
+      "id": "mbpp-492",
+      "subcategory": "mbpp",
+      "prompt": "Write a function to search an element in the given array by using binary search.\n\nName the function `binary_search`.",
+      "entry_point": "binary_search",
+      "verification": {
+        "type": "code",
+        "tests": "assert binary_search([1,2,3,5,8], 6) == False\nassert binary_search([7, 8, 9, 10, 13], 10) == True\nassert binary_search([11, 13, 14, 19, 22, 36], 23) == False",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 492
+      }
+    },
+    {
+      "id": "mbpp-33",
+      "subcategory": "mbpp",
+      "prompt": "Write a python function to convert a decimal number to binary number.\n\nName the function `decimal_To_Binary`.",
+      "entry_point": "decimal_To_Binary",
+      "verification": {
+        "type": "code",
+        "tests": "assert decimal_To_Binary(10) == 1010\nassert decimal_To_Binary(1) == 1\nassert decimal_To_Binary(20) == 10100",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 33
+      }
+    },
+    {
+      "id": "mbpp-483",
+      "subcategory": "mbpp",
+      "prompt": "Write a python function to find the first natural number whose factorial is divisible by x.\n\nName the function `first_Factorial_Divisible_Number`.",
+      "entry_point": "first_Factorial_Divisible_Number",
+      "verification": {
+        "type": "code",
+        "tests": "assert first_Factorial_Divisible_Number(10) == 5\nassert first_Factorial_Divisible_Number(15) == 5\nassert first_Factorial_Divisible_Number(5) == 4",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 483
+      }
+    },
+    {
+      "id": "mbpp-455",
+      "subcategory": "mbpp",
+      "prompt": "Write a function to check whether the given month number contains 31 days or not.\n\nName the function `check_monthnumb_number`.",
+      "entry_point": "check_monthnumb_number",
+      "verification": {
+        "type": "code",
+        "tests": "assert check_monthnumb_number(5)==True\nassert check_monthnumb_number(2)==False\nassert check_monthnumb_number(6)==False",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 455
+      }
+    },
+    {
+      "id": "mbpp-103",
+      "subcategory": "mbpp",
+      "prompt": "Write a function to find eulerian number a(n, m).\n\nName the function `eulerian_num`.",
+      "entry_point": "eulerian_num",
+      "verification": {
+        "type": "code",
+        "tests": "assert eulerian_num(3, 1) == 4\nassert eulerian_num(4, 1) == 11\nassert eulerian_num(5, 3) == 26",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 103
+      }
+    },
+    {
+      "id": "mbpp-108",
+      "subcategory": "mbpp",
+      "prompt": "Write a function to merge multiple sorted inputs into a single sorted iterator using heap queue algorithm.\n\nName the function `merge_sorted_list`.",
+      "entry_point": "merge_sorted_list",
+      "verification": {
+        "type": "code",
+        "tests": "assert merge_sorted_list([25, 24, 15, 4, 5, 29, 110],[19, 20, 11, 56, 25, 233, 154],[24, 26, 54, 48])==[4, 5, 11, 15, 19, 20, 24, 24, 25, 25, 26, 29, 48, 54, 56, 110, 154, 233]\nassert merge_sorted_list([1, 3, 5, 6, 8, 9], [2, 5, 7, 11], [1, 4, 7, 8, 12])==[1, 1, 2, 3, 4, 5, 5, 6, 7, 7, 8, 8, 9, 11, 12]\nassert merge_sorted_list([18, 14, 10, 9, 8, 7, 9, 3, 2, 4, 1],[25, 35, 22, 85, 14, 65, 75, 25, 58],[12, 74, 9, 50, 61, 41])==[1, 2, 3, 4, 7, 8, 9, 9, 9, 10, 12, 14, 14, 18, 22, 25, 25, 35, 41, 50, 58, 61, 65, 74, 75, 85]",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 108
+      }
+    },
+    {
+      "id": "mbpp-498",
+      "subcategory": "mbpp",
+      "prompt": "Write a python function to find gcd of two positive integers.\n\nName the function `gcd`.",
+      "entry_point": "gcd",
+      "verification": {
+        "type": "code",
+        "tests": "assert gcd(12, 17) == 1\nassert gcd(4,6) == 2\nassert gcd(2,9) == 1",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 498
+      }
+    },
+    {
+      "id": "mbpp-69",
+      "subcategory": "mbpp",
+      "prompt": "Write a function to check whether a list contains the given sublist or not.\n\nName the function `is_sublist`.",
+      "entry_point": "is_sublist",
+      "verification": {
+        "type": "code",
+        "tests": "assert is_sublist([2,4,3,5,7],[3,7])==False\nassert is_sublist([2,4,3,5,7],[4,3])==True\nassert is_sublist([2,4,3,5,7],[1,6])==False",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 69
+      }
+    },
+    {
+      "id": "mbpp-104",
+      "subcategory": "mbpp",
+      "prompt": "Write a function to sort each sublist of strings in a given list of lists using lambda function.\n\nName the function `sort_sublists`.",
+      "entry_point": "sort_sublists",
+      "verification": {
+        "type": "code",
+        "tests": "assert sort_sublists(([\"green\", \"orange\"], [\"black\", \"white\"], [\"white\", \"black\", \"orange\"]))==[['green', 'orange'], ['black', 'white'], ['black', 'orange', 'white']]\nassert sort_sublists(([\" red \",\"green\" ],[\"blue \",\" black\"],[\" orange\",\"brown\"]))==[[' red ', 'green'], [' black', 'blue '], [' orange', 'brown']]\nassert sort_sublists(([\"zilver\",\"gold\"], [\"magnesium\",\"aluminium\"], [\"steel\", \"bronze\"]))==[['gold', 'zilver'],['aluminium', 'magnesium'], ['bronze', 'steel']]",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 104
+      }
+    },
+    {
+      "id": "mbpp-17",
+      "subcategory": "mbpp",
+      "prompt": "Write a function to find the perimeter of a square.\n\nName the function `square_perimeter`.",
+      "entry_point": "square_perimeter",
+      "verification": {
+        "type": "code",
+        "tests": "assert square_perimeter(10)==40\nassert square_perimeter(5)==20\nassert square_perimeter(4)==16",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 17
+      }
+    },
+    {
+      "id": "mbpp-81",
+      "subcategory": "mbpp",
+      "prompt": "Write a function to zip the two given tuples.\n\nName the function `zip_tuples`.",
+      "entry_point": "zip_tuples",
+      "verification": {
+        "type": "code",
+        "tests": "assert zip_tuples((7, 8, 4, 5, 9, 10),(1, 5, 6) ) == [(7, 1), (8, 5), (4, 6), (5, 1), (9, 5), (10, 6)]\nassert zip_tuples((8, 9, 5, 6, 10, 11),(2, 6, 7) ) == [(8, 2), (9, 6), (5, 7), (6, 2), (10, 6), (11, 7)]\nassert zip_tuples((9, 10, 6, 7, 11, 12),(3, 7, 8) ) == [(9, 3), (10, 7), (6, 8), (7, 3), (11, 7), (12, 8)]",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 81
+      }
+    },
+    {
+      "id": "mbpp-417",
+      "subcategory": "mbpp",
+      "prompt": "Write a function to find common first element in given list of tuple.\n\nName the function `group_tuples`.",
+      "entry_point": "group_tuples",
+      "verification": {
+        "type": "code",
+        "tests": "assert group_tuples([('x', 'y'), ('x', 'z'), ('w', 't')]) == [('x', 'y', 'z'), ('w', 't')]\nassert group_tuples([('a', 'b'), ('a', 'c'), ('d', 'e')]) == [('a', 'b', 'c'), ('d', 'e')]\nassert group_tuples([('f', 'g'), ('f', 'g'), ('h', 'i')]) == [('f', 'g', 'g'), ('h', 'i')]",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 417
+      }
+    },
+    {
+      "id": "mbpp-79",
+      "subcategory": "mbpp",
+      "prompt": "Write a python function to check whether the length of the word is odd or not.\n\nName the function `word_len`.",
+      "entry_point": "word_len",
+      "verification": {
+        "type": "code",
+        "tests": "assert word_len(\"Hadoop\") == False\nassert word_len(\"great\") == True\nassert word_len(\"structure\") == True",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 79
+      }
+    },
+    {
+      "id": "mbpp-464",
+      "subcategory": "mbpp",
+      "prompt": "Write a function to check if all values are same in a dictionary.\n\nName the function `check_value`.",
+      "entry_point": "check_value",
+      "verification": {
+        "type": "code",
+        "tests": "assert check_value({'Cierra Vega': 12, 'Alden Cantrell': 12, 'Kierra Gentry': 12, 'Pierre Cox': 12},10)==False\nassert check_value({'Cierra Vega': 12, 'Alden Cantrell': 12, 'Kierra Gentry': 12, 'Pierre Cox': 12},12)==True\nassert check_value({'Cierra Vega': 12, 'Alden Cantrell': 12, 'Kierra Gentry': 12, 'Pierre Cox': 12},5)==False",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 464
+      }
+    },
+    {
+      "id": "mbpp-479",
+      "subcategory": "mbpp",
+      "prompt": "Write a python function to find the first digit of a given number.\n\nName the function `first_Digit`.",
+      "entry_point": "first_Digit",
+      "verification": {
+        "type": "code",
+        "tests": "assert first_Digit(123) == 1\nassert first_Digit(456) == 4\nassert first_Digit(12) == 1",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 479
+      }
+    },
+    {
+      "id": "mbpp-490",
+      "subcategory": "mbpp",
+      "prompt": "Write a function to extract all the pairs which are symmetric in the given tuple list.\n\nName the function `extract_symmetric`.",
+      "entry_point": "extract_symmetric",
+      "verification": {
+        "type": "code",
+        "tests": "assert extract_symmetric([(6, 7), (2, 3), (7, 6), (9, 8), (10, 2), (8, 9)] ) == {(8, 9), (6, 7)}\nassert extract_symmetric([(7, 8), (3, 4), (8, 7), (10, 9), (11, 3), (9, 10)] ) == {(9, 10), (7, 8)}\nassert extract_symmetric([(8, 9), (4, 5), (9, 8), (11, 10), (12, 4), (10, 11)] ) == {(8, 9), (10, 11)}",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 490
+      }
+    },
+    {
+      "id": "mbpp-510",
+      "subcategory": "mbpp",
+      "prompt": "Write a function to find the number of subsequences having product smaller than k for the given non negative array.\n\nName the function `no_of_subsequences`.",
+      "entry_point": "no_of_subsequences",
+      "verification": {
+        "type": "code",
+        "tests": "assert no_of_subsequences([1,2,3,4], 10) == 11\nassert no_of_subsequences([4,8,7,2], 50) == 9\nassert no_of_subsequences([5,6,7,8], 15) == 4",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 510
+      }
+    },
+    {
+      "id": "mbpp-40",
+      "subcategory": "mbpp",
+      "prompt": "Write a function to find frequency of the elements in a given list of lists using collections module.\n\nName the function `freq_element`.",
+      "entry_point": "freq_element",
+      "verification": {
+        "type": "code",
+        "tests": "assert freq_element([[1, 2, 3, 2], [4, 5, 6, 2], [7, 1, 9, 5]])==({2: 3, 1: 2, 5: 2, 3: 1, 4: 1, 6: 1, 7: 1, 9: 1})\nassert freq_element([[1,2,3,4],[5,6,7,8],[9,10,11,12]])==({1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 8: 1, 9: 1, 10: 1, 11: 1, 12: 1})\nassert freq_element([[15,20,30,40],[80,90,100,110],[30,30,80,90]])==({30: 3, 80: 2, 90: 2, 15: 1, 20: 1, 40: 1, 100: 1, 110: 1})",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 40
+      }
+    },
+    {
+      "id": "mbpp-57",
+      "subcategory": "mbpp",
+      "prompt": "Write a python function to find the largest number that can be formed with the given digits.\n\nName the function `find_Max_Num`.",
+      "entry_point": "find_Max_Num",
+      "verification": {
+        "type": "code",
+        "tests": "assert find_Max_Num([1,2,3],3) == 321\nassert find_Max_Num([4,5,6,1],4) == 6541\nassert find_Max_Num([1,2,3,9],4) == 9321",
+        "setup": ""
+      },
+      "metadata": {
+        "source": "MBPP",
+        "task_id": 57
+      }
+    }
+  ]
+}

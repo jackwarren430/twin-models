@@ -62,14 +62,7 @@ def main():
           detail=out.text.strip()[:80].replace("\n", " "))
 
     print("\n== attach two LoRA adapters over one base ==")
-    ad = Adapters(
-        base.model,
-        num_layers=cfg.lora.num_layers,
-        rank=cfg.lora.rank,
-        scale=cfg.lora.scale,
-        dropout=cfg.lora.dropout,
-        keys=cfg.lora.keys,
-    )
+    ad = Adapters.from_config(base.model, cfg.lora)
     nparams = ad.num_params("A")
     check("adapter has trainable params", nparams > 0, detail=f"{nparams:,} params/adapter")
 

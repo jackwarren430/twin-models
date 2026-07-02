@@ -5,10 +5,11 @@ model:
   enable_thinking: false
 
 lora:
-  num_layers: 4        # only the last 4 blocks -> tiny adapter, fast training
-  rank: 8
-  scale: 16.0
+  num_layers: 4        # only the last 4 blocks -> fast training
+  rank: 64
+  alpha: 128.0         # effective mlx-lm scale = alpha / rank = 2.0
   dropout: 0.0
+  # keys omitted => all 7 linear projections (q,k,v,o,gate,up,down)
 
 gen:
   creator_max_tokens: 768
@@ -20,6 +21,11 @@ game:
   creator_group: 2     # G_c
   solver_attempts: 2   # K
   domains: ["math"]
+
+tools:                 # creator inline CAS tool (ReAct); small budgets for speed
+  creator_tools: ["solve", "calc"]
+  creator_max_tool_calls: 2
+  creator_tool_rounds: 2
 
 roles:
   swap_interval: 20

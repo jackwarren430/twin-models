@@ -7,6 +7,7 @@ from twin.verifiers import (
     check_consistency,
     check_predicate,
     judge_answer,
+    judge_consistency,
     verify_answer,
     verify_code,
     verify_math,
@@ -35,6 +36,30 @@ def test_math_wrong_answer():
     r = verify_math("4", "3")
     assert not r.correct
     assert r.method == "sympy"
+
+
+def test_math_ordered_pairs_unify_across_formats():
+    # The e2e finding: ordered-pair answers must verify regardless of brackets,
+    # parens, or LaTeX wrapping (previously even identical tuples failed).
+    assert verify_math("(3, 2)", "(3, 2)").correct          # byte-identical
+    assert verify_math("(3, 2)", "[3, 2]").correct          # parens vs brackets
+    assert verify_math("[3, 2]", "(3, 2)").correct
+    assert verify_math("(20/11, 14/11)", "[20/11, 14/11]").correct
+    assert verify_math(r"$\left(\frac{28}{11}, \frac{24}{11}\right)$",
+                       "(28/11, 24/11)").correct            # LaTeX-wrapped tuple
+    assert verify_math("(-1, 5)", "[-1, 5]").correct        # negatives
+
+
+def test_math_ordered_pairs_reject_mismatches():
+    assert not verify_math("(3, 2)", "(2, 3)").correct      # order matters
+    assert not verify_math("(3, 2)", "(3, 2, 1)").correct   # length mismatch
+    assert not verify_math("(3, 2)", "5").correct           # tuple vs scalar
+    assert not verify_math("3", "(3, 2)").correct
+
+
+def test_math_latex_scalar_unwraps():
+    assert verify_math(r"$\frac{7}{2}$", "7/2").correct
+    assert verify_math(r"\boxed{40}", "40").correct
 
 
 # ----- predicate (consistency certificate) ----------------------------------
@@ -75,6 +100,23 @@ def test_judge_parses_verdict():
 def test_judge_ambiguous_is_not_correct():
     vague = lambda q: "I am not sure about this one."
     assert not judge_answer("Q", "a", "a", vague).correct
+
+
+def test_judge_prompts_instruct_tool_use():
+    # The grading prompts must direct the (tool-augmented) judge to recompute
+    # with solve(...) instead of trusting the shown solution.
+    seen: dict[str, str] = {}
+
+    def capture(prompt: str) -> str:
+        seen["p"] = prompt
+        return "VERDICT: CORRECT"
+
+    judge_consistency("Solve x+1=3", "2", "x = 2", capture)
+    assert "solve(" in seen["p"]
+    assert "do NOT trust" in seen["p"] or "do not trust" in seen["p"].lower()
+
+    judge_answer("Solve x+1=3", "2", "2", capture)
+    assert "solve(" in seen["p"]
 
 
 # ----- dispatch: solver scoring ---------------------------------------------

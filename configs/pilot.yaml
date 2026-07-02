@@ -1,0 +1,80 @@
+# First real run — "pilot". Sized to the actual hardware: measured decode is
+# ~16.4 tok/s for Qwen3-8B-6bit on this M5, which makes the full base.yaml
+# (thinking ON, G_c4 N5 K4, 1000 iters) ~2 months of wall-clock. This config
+# instead targets a single overnight window (~10-12h, ~100 iters) whose job is
+# to PROVE THE LOOP LEARNS at real scale before we spend days on base.yaml.
+#
+# Deltas vs base.yaml (all to fit the throughput budget, not new mechanics):
+#   - thinking OFF        (biggest lever: ~3-5x fewer tokens/gen; same tok/s)
+#   - G_c 4->2, N 5->3    (cuts the dominant solver term G_c*N*K)
+#   - token budgets tightened (safety caps; non-thinking gens hit EOS well below)
+#   - warmup 50->10, swap_interval 100->20  (so ROTATION actually fires: with the
+#     base schedule a <150-iter run never swaps -> A creates the whole time)
+#   - iters 1000->100, checkpoint_every 100->20  (lose <=20 iters on a crash)
+# Everything else (LoRA 16 layers, rewards, oracle tax, CAS tools, judge) is
+# identical to base.yaml so this is a faithful small-scale dress rehearsal.
+model:
+  path: ~/.cache/lm-studio/models/mlx-community/Qwen3-8B-6bit
+  enable_thinking: false
+  max_kv_size: null
+
+lora:
+  num_layers: 16
+  rank: 64
+  alpha: 128.0          # effective mlx-lm scale = alpha / rank = 2.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+  top_p: 0.95
+  # Non-thinking outputs are short; these are caps on pathological runaways.
+  creator_max_tokens: 1024
+  solver_max_tokens: 512
+  oracle_max_tokens: 512
+
+game:
+  n_problems: 3         # N  (3-point difficulty curve = enough to fit a slope)
+  creator_group: 2      # G_c
+  solver_attempts: 4    # K  (GRPO group per problem; cheap with thinking off)
+  domains: ["math", "coding"]
+
+rewards:
+  w_gradient: 1.0
+  w_consistency: 0.5
+  w_oracle: 0.1
+  w_valid: 0.1
+  w_solve: 1.0
+  w_oracle_solver: 0.05
+  mse_beta: 4.0
+  clip: 10.0
+
+oracle:
+  enabled: true
+  cost_per_query: 1.0
+  max_calls_per_turn: 4
+
+tools:                  # creator inline CAS tool (ReAct); untaxed creator aid
+  creator_tools: ["solve", "calc"]
+  creator_max_tool_calls: 4
+  creator_tool_rounds: 4
+  cas_timeout_s: 3.0
+
+roles:
+  swap_interval: 20
+  warmup_iterations: 10
+  injection_rate: 0.0   # rotation-only (the headline mechanism)
+
+train:
+  iters: 100
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  grad_accumulation_steps: 1
+  seed: 0
+  checkpoint_every: 20
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints
+  runs: runs

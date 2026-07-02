@@ -1,38 +1,51 @@
 #!/usr/bin/env python
 """Central test runner for twin-models.
 
-One entry point for the whole suite, which is organized one folder per sprint
-(``tests/sprint1`` … ``tests/sprint4``). Thin wrapper over pytest: it builds the
-marker expression and verbosity flags for you, then hands everything else
-straight through to pytest.
+One entry point for the whole suite. Tests are organized one folder per sprint
+(``tests/sprint1`` … ``tests/sprint4``); the heavy end-to-end tests that load the
+real base model are marked ``model`` and exposed here as the ``e2e`` suite. This
+is a thin wrapper over pytest: it builds the marker expression, verbosity flags,
+and (for e2e) raw-text logging for you, then hands the rest straight to pytest.
 
-Examples
---------
-    # all fast tests (model tests excluded) — the default
+Selecting suites
+----------------
+    # all fast tests — the default (every sprint, model/e2e excluded)
     python scripts/run_tests.py
 
-    # just Sprint 2, verbose
-    python scripts/run_tests.py --sprint 2 -v
+    # one or more quick sprints
+    python scripts/run_tests.py --suite 1
+    python scripts/run_tests.py --suite 1 2 3
 
-    # Sprints 1 and 2
-    python scripts/run_tests.py --sprint 1 2
+    # the heavy end-to-end suite (loads the real base, ~6 GB, generates)
+    python scripts/run_tests.py --suite e2e
 
-    # filter by name within the selection
-    python scripts/run_tests.py --sprint 2 -k consistency
+    # a quick sprint AND e2e together
+    python scripts/run_tests.py --suite 4 e2e
 
-    # include the heavy model tests (loads the real base)
-    python scripts/run_tests.py --model
-    python scripts/run_tests.py --only-model            # ONLY those
+    # everything quick (alias for the default)
+    python scripts/run_tests.py --suite all
 
-    # a specific file or node id (any pytest target works)
-    python scripts/run_tests.py tests/sprint2/test_rewards.py
-    python scripts/run_tests.py tests/sprint2/test_calc.py::test_integer_arithmetic
+Verbosity
+---------
+    python scripts/run_tests.py --suite 2 -v      # show test names
+    python scripts/run_tests.py --suite 2 -vv     # very verbose
+    python scripts/run_tests.py --suite 2 -q      # quiet
 
-    # list what would run, without running it
-    python scripts/run_tests.py --sprint 2 --list
+Raw-text logging (e2e only)
+---------------------------
+    # write everything the models emit (creator suites, solver attempts, judge
+    # Q&A, per-iteration update summaries) to a readable transcript. Implies the
+    # e2e suite. With no path, defaults to runs/e2e-<timestamp>.log.
+    python scripts/run_tests.py --log
+    python scripts/run_tests.py --log runs/my-e2e.log
+    python scripts/run_tests.py --suite 3 e2e --log     # run sprint3 + e2e, log e2e
 
-    # rerun only last-failed
-    python scripts/run_tests.py --failed
+Other
+-----
+    python scripts/run_tests.py --suite 2 -k consistency   # filter by name
+    python scripts/run_tests.py --suite 2 --list           # collect-only, don't run
+    python scripts/run_tests.py --failed                   # rerun last-failed
+    python scripts/run_tests.py tests/sprint2/test_rewards.py   # any pytest target
 
 Anything after a literal ``--`` (or any unrecognized flag) is forwarded to
 pytest unchanged, e.g. ``run_tests.py -- --durations=10``.
@@ -43,12 +56,15 @@ Run it inside the project env:  ``conda run -n twin-models python scripts/run_te
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
+RUNS_DIR = REPO_ROOT / "runs"
 
-ALL_SPRINTS = (1, 2, 3, 4)
+ALL_SPRINTS = (1, 2, 3, 4, 5, 6)
+SUITE_TOKENS = "1 2 3 4 5 6 e2e all"  # for help/error text
 
 
 def _available_sprints() -> list[int]:
@@ -64,22 +80,21 @@ def _available_sprints() -> list[int]:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="run_tests.py",
-        description="Run the twin-models test suite by sprint, with verbosity and selection options.",
+        description="Run the twin-models test suite by sprint or e2e, with "
+                    "verbosity, selection, and raw-text logging options.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     p.add_argument("targets", nargs="*",
                    help="specific pytest targets (files / node ids); default: the whole selection")
-    p.add_argument("--sprint", "-s", nargs="+", type=int, choices=ALL_SPRINTS, metavar="N",
-                   help="restrict to these sprint(s); default: all sprints that have tests")
+    p.add_argument("--suite", nargs="+", metavar="SUITE",
+                   help=f"which suite(s) to run; tokens: {SUITE_TOKENS} "
+                        "(default: all quick sprints, e2e excluded)")
     p.add_argument("-k", dest="keyword", metavar="EXPR",
                    help="only tests matching this pytest -k expression")
-
-    model = p.add_mutually_exclusive_group()
-    model.add_argument("--model", action="store_true",
-                       help="also run heavy model tests (sets TWIN_RUN_MODEL_TESTS=1)")
-    model.add_argument("--only-model", action="store_true",
-                       help="run ONLY the heavy model tests")
+    p.add_argument("--log", nargs="?", const="", default=None, metavar="PATH",
+                   help="e2e only: write a raw-text transcript of all model output; "
+                        "implies the e2e suite. Default path: runs/e2e-<timestamp>.log")
 
     verb = p.add_mutually_exclusive_group()
     verb.add_argument("-q", "--quiet", action="store_true", help="quiet output")
@@ -94,19 +109,95 @@ def build_parser() -> argparse.ArgumentParser:
                    help="report the N slowest tests")
     p.add_argument("--dry-run", action="store_true",
                    help="print the pytest args that would run, then exit")
+
+    # Back-compat aliases for the pre-suite interface.
+    compat = p.add_argument_group("deprecated aliases (prefer --suite)")
+    compat.add_argument("--sprint", "-s", nargs="+", type=int, choices=ALL_SPRINTS,
+                        metavar="N", help="alias for --suite N ...")
+    compat.add_argument("--model", action="store_true",
+                        help="alias for adding e2e to the default quick suites")
+    compat.add_argument("--only-model", action="store_true",
+                        help="alias for --suite e2e")
     return p
 
 
-def _marker_expr(args) -> str:
-    pieces: list[str] = []
+class Selection:
+    """Resolved suite selection: which quick sprints, whether e2e is included,
+    and the e2e transcript path (if logging)."""
+
+    def __init__(self):
+        self.quick_sprints: set[int] = set()  # empty + quick => all sprints
+        self.quick = False                    # any quick tests wanted
+        self.e2e = False                      # the model/e2e suite wanted
+        self.log_path: Path | None = None
+        self.notes: list[str] = []
+
+    def marker_expr(self) -> str:
+        quick_part = None
+        if self.quick:
+            if self.quick_sprints and set(self.quick_sprints) != set(ALL_SPRINTS):
+                names = " or ".join(f"sprint{n}" for n in sorted(self.quick_sprints))
+                quick_part = f"({names}) and not model"
+            else:
+                quick_part = "not model"
+        e2e_part = "model" if self.e2e else None
+        if quick_part and e2e_part:
+            return f"({quick_part}) or {e2e_part}"
+        return quick_part or e2e_part or ""
+
+    def describe(self) -> str:
+        bits = []
+        if self.quick:
+            bits.append("sprints " + (",".join(map(str, sorted(self.quick_sprints)))
+                                      if self.quick_sprints else "all"))
+        if self.e2e:
+            bits.append("e2e")
+        return " + ".join(bits) if bits else "none"
+
+
+def resolve_selection(args) -> Selection:
+    sel = Selection()
+
+    if args.suite:
+        for tok in args.suite:
+            t = tok.lower()
+            if t in ("e2e", "model"):
+                sel.e2e = True
+            elif t == "all":
+                sel.quick = True
+                sel.quick_sprints |= set(ALL_SPRINTS)
+            elif t.isdigit() and int(t) in ALL_SPRINTS:
+                sel.quick = True
+                sel.quick_sprints.add(int(t))
+            else:
+                raise SystemExit(
+                    f"run_tests.py: unknown --suite token {tok!r}; use one of: {SUITE_TOKENS}")
+
+    # Deprecated aliases fold into the same selection.
     if args.sprint:
-        names = " or ".join(f"sprint{n}" for n in sorted(set(args.sprint)))
-        pieces.append(f"({names})")
+        sel.quick = True
+        sel.quick_sprints |= set(args.sprint)
     if args.only_model:
-        pieces.append("model")
-    elif not args.model:
-        pieces.append("not model")  # default: skip the slow ones
-    return " and ".join(pieces)
+        sel.e2e = True
+    elif args.model:
+        sel.e2e = True
+        sel.quick = True  # historically "also run model tests" on top of all quick
+
+    # --log is an e2e feature; asking for it selects e2e.
+    if args.log is not None:
+        if not sel.e2e:
+            sel.notes.append("--log selects the e2e suite (raw-text logging is e2e-only)")
+        sel.e2e = True
+        if args.log == "":
+            sel.log_path = RUNS_DIR / f"e2e-{time.strftime('%Y%m%d-%H%M%S')}.log"
+        else:
+            sel.log_path = Path(args.log)
+
+    # Default: nothing chosen => all quick sprints, e2e excluded.
+    if not sel.quick and not sel.e2e:
+        sel.quick = True
+
+    return sel
 
 
 def _verbosity_flags(args) -> list[str]:
@@ -119,9 +210,9 @@ def _verbosity_flags(args) -> list[str]:
     return []
 
 
-def build_pytest_args(args, passthrough: list[str]) -> list[str]:
+def build_pytest_args(args, sel: Selection, passthrough: list[str]) -> list[str]:
     argv: list[str] = []
-    expr = _marker_expr(args)
+    expr = sel.marker_expr()
     if expr:
         argv += ["-m", expr]
     argv += _verbosity_flags(args)
@@ -146,14 +237,25 @@ def main(argv: list[str] | None = None) -> int:
         print("No test files found under tests/sprintN/.", file=sys.stderr)
         return 1
 
-    # Model tests are gated by this env var (see tests/sprint1/test_adapters.py).
-    if args.model or args.only_model:
-        os.environ["TWIN_RUN_MODEL_TESTS"] = "1"
+    sel = resolve_selection(args)
 
-    pytest_args = build_pytest_args(args, passthrough)
+    # The e2e/model tests are gated on this env var (see tests/sprint4/test_e2e_model.py).
+    if sel.e2e:
+        os.environ["TWIN_RUN_MODEL_TESTS"] = "1"
+    # Raw-text transcript path the e2e suite reads (tests/sprint4 transcript fixture).
+    if sel.log_path is not None:
+        sel.log_path.parent.mkdir(parents=True, exist_ok=True)
+        os.environ["TWIN_E2E_LOG"] = str(sel.log_path.resolve())
+
+    pytest_args = build_pytest_args(args, sel, passthrough)
 
     os.chdir(REPO_ROOT)  # so testpaths + relative config paths resolve
     print(f"available sprints: {_available_sprints()}")
+    print(f"selection: {sel.describe()}")
+    for note in sel.notes:
+        print(f"note: {note}")
+    if sel.log_path is not None:
+        print(f"raw-text transcript: {sel.log_path}")
     print(f"pytest {' '.join(pytest_args)}\n")
     if args.dry_run:
         return 0
