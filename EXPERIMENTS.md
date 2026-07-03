@@ -5,14 +5,20 @@ A running log of self-play training runs and what we learned. One entry per run
 add a follow-up entry instead. The point is that six months from now we can see
 *why* a config was chosen, not just what it was.
 
-See **[DESIGN.md](DESIGN.md)** for the system; this file is the lab notebook.
+See **[DESIGN_V2.md](DESIGN_V2.md)** for the current system spec
+([DESIGN.md](DESIGN.md) is kept for sprint-by-sprint history); this file is
+the lab notebook.
 
 ## How to run
 
 ```bash
-# launch a run (logs one JSON record per iter to runs/<run-name>.jsonl)
-conda run -n twin-models python scripts/train.py --config configs/base.yaml \
-    --iters 1000 --run-name 2026-06-29-scale-01
+# launch a run (logs one JSON record per iter to runs/<run-name>.jsonl).
+# --no-capture-output + python -u are REQUIRED for live logs (plain `conda
+# run` buffers stdout until exit); caffeinate -i because a suspended laptop
+# inflates wall-clock enormously; transcript stays ON (no --no-transcript).
+caffeinate -i conda run --no-capture-output -n twin-models python -u \
+    scripts/train.py --config configs/mini4.yaml --run-name <date>-mini-04 \
+    > runs/<date>-mini-04.out 2>&1 &
 
 # tiny/dev loop (fast, thinking off)
 conda run -n twin-models python scripts/train.py --config configs/tiny.yaml --iters 20
@@ -220,7 +226,7 @@ Copy this block for each run.
   probe kl_beta/LR for the KL creep, then (c) a longer run and/or the thinking-off
   pilot.yaml ablation. mini-01 is the baseline all of these compare against.
 
-### 2026-07-01 — (queued) mini-02 — advantage-degeneracy ablation
+### 2026-07-01 — mini-02 — advantage-degeneracy ablation — DONE, analyzed 2026-07-02
 
 - **Config:** configs/mini2.yaml (= mini.yaml + Sprint-6 fixes: **G_c 2→4**,
   **rewards.target_hi/lo 1,0→0.9,0.1** (interior target ramp), **train.adv_mode:
@@ -246,9 +252,142 @@ Copy this block for each run.
   ~always-solvable rank-2 problems to hit 0.1 "hardness" cheaply); coding domain
   is STILL dead (pipeline unbuilt) — coding iters remain constant-reward, but
   now they cost nothing at update time (skipped) instead of a pure-KL backward.
-- **Status:** config + code ready (254 fast tests green), not yet launched.
+- **RESULT (30/30 iters, ~10.7h wall, 2026-07-01 18:42 → 07-02 05:23; artifacts
+  runs/2026-07-01-mini-02.{jsonl,_series.csv,_summary.json}):**
+  - solve-rate curve [0.952, 0.908, 0.821] — pearson_r=−0.982, r2=0.965,
+    slope=−0.065. Monotonic BUT **ceiling-compressed**: the band asked for
+    [0.9, 0.5, 0.1] and the creator delivered ~[0.95, 0.91, 0.82] — its
+    "hard" problems barely dent the solver. (ramp_mse=0.281 is vs the fixed
+    1→0 reference ramp; not comparable to the band, read the curve values.)
+  - **Coding domain measured DEAD: 0/141 parsed coding problems consistent**
+    (math: 57/150) → 15 of 30 iterations produced zero solver rollouts —
+    half the wall-clock bought parse-gate-only creator signal.
+  - **Solver starved: 4 real solver updates in 30 iters.** 88% of scored math
+    problems had K-group solve rate exactly 0 or 1 (7/57 interior), so groups
+    tied and the zero-adv skip (correctly) fired — the fixes moved waste from
+    the update step to the generation step, but saturation is a *problem
+    difficulty* issue the Sprint-6 knobs can't fix. Creator side better:
+    pg==0 in 7/30 (vs mini-01's 15/30) — G_c=4 + mean baseline worked.
+  - Math cert-pass ~38% noisy-flat across the run (NOT degrading — decomposed
+    by the mini-03a transcript, see next entry). KL bounded (mean c 0.005 /
+    s 0.0006), drift smooth (A 2.04 / B 0.97), oracle calls 0.
+- **Decision / next:** (a) drop coding from `game.domains` until its pipeline
+  sprint (user-confirmed 2026-07-02); (b) attack solver starvation from the
+  problem-difficulty side (w_brevity tie-break + a recalibrated difficulty
+  prompt) → mini-03; (c) memory probe (probe_memory.py) measured the GRPO
+  backward worst case at **55GB@4096 / 132GB@8192 budgets** → budgets stay
+  4096, grpo_microbatch stays 1, longer contexts need a chunked
+  completion_logprobs backward first.
+
+### 2026-07-02 — mini-03a — ABORTED at iter 10/30 (prompt-induced think-spiral)
+
+- **Config:** configs/mini3.yaml (= mini2.yaml + **domains ["math"]** only,
+  **w_brevity 0.15**, transcript ON, and a code-side recalibrated creator
+  difficulty prompt: "stump a strong expert solver").
+- **Commit / seed:** uncommitted / seed=0
+- **Iters / wall time:** 10 of 30 (killed) / ~4.7h
+- **What happened:** the new difficulty language sent the thinking creator
+  into an in-`<think>` design-deliberation spiral (draft → find flaw →
+  backtrack → repeat) that blew the whole 4096 budget before any JSON:
+  parse_ok [0.5, 0, 0.5, 1.0, 0.5] iters 0-4 → [0.25, 0, 0.25, 0.25, 0]
+  iters 5-9; Rc mean −0.53 overall, **−0.84 over iters 5-9**; the solver got
+  nothing in the back half. Killed at the iter-10 checkpoint.
+- **What worked anyway:** **w_brevity fixed solver starvation** — the solver
+  took a real update on 4/4 eligible iterations (mini-02: 4/30 overall), the
+  token-length spread breaking all-solved ties exactly as intended. And the
+  first-ever transcript **paid for itself immediately**: it decomposed
+  mini-02's ~38% cert-pass mystery into (1) correct problems VOIDED by answer
+  format (`"x = 2, y = 1"` vs spec'd `(2, 1)` — a predicate parse error, NOT
+  a wrong answer), (2) literal-restatement certs on probability problems
+  (trivial-rejected by design), (3) genuinely wrong answers.
+- **Fixes out of the audit:** `_normalize_named_value` in
+  `src/twin/verifiers/math_verifier.py` (rewrites named-assignment answers
+  into symbol order before parsing; +5 tests) closes bucket 1; the difficulty
+  prompt rewritten to keep the structural-hardness push but add "design
+  decisively / commit to the first workable idea / deliberation gets you
+  truncated" (the mini-03a lesson: aspirational difficulty language makes a
+  thinking model deliberate, and deliberation IS truncation at 4096).
+- **Artifacts:** runs/2026-07-02-mini-03a-aborted.{jsonl,out,transcript.txt}
+
+### 2026-07-02 — mini-03b — STOPPED by user at iter 4/30 (superseded by Sprint 7)
+
+- **Config:** configs/mini3.yaml + the decisive-design prompt rewrite +
+  CREATOR_SYSTEM output-budget warning + the answer-format normalizer.
+- **Commit / seed:** uncommitted / seed=0
+- **Iters / wall time:** 4 of 30 (stopped) / ~1.9h (~28 min/iter — heavier
+  than mini-02's average because every iter is math and consistency was high)
+- **Early signals (all 4 iters):** parse_ok 1.0 / 0.25 / 1.0 / 1.0 — the
+  decisive-design rewrite fixed the truncation spiral. Rc +0.64 / −0.64 /
+  +0.57 / +0.46; Rs ≈ +1.13 on solver-active iters. BUT solve% saturated at
+  1.0 on 3 of 4 iters — the softened prompt gave back the difficulty push
+  (ceiling compression again).
+- **Why stopped: `creator_tool_calls` = 0 on every iteration.** The
+  transcript shows the creator *simulating* the CAS tool inside `<think>`
+  ("The tool would return x=3, y=2") — planning calls, hallucinating the
+  observations, never emitting a single real `<tool>` call. The legacy ReAct
+  text protocol is a format Qwen3 was never trained on; with thinking ON the
+  model reasons *about* the tool instead of calling it. That (plus the
+  wasted-thinking and difficulty problems above) motivated **Sprint 7**
+  (DESIGN_V2.md): native Qwen3 function calling, per-problem creator
+  generation, personas, and the strict tool gate — run as mini-04 below.
+  No checkpoints were saved (first save at iter 5; the `checkpoints/`
+  step5-30 files predate this run).
+- **Artifacts:** runs/2026-07-02-mini-03b.{jsonl,out,transcript.txt}
+
+### 2026-07-03 — (queued) mini-04 — Sprint-7 run (native tools, per-problem creator, personas)
+
+- **Config:** configs/mini4.yaml (= mini3.yaml + Sprint 7: **tools.protocol
+  native**, **game.creator_mode per_problem** (+ condition_on_previous),
+  **game.personas true**, **N 3→5**, **K 4→8**, **w_brevity 0.15→0.25**;
+  require_tool_use stays FALSE — log-first). Solver temp stays 0.8 (decision
+  2026-07-03: outcome variance comes from harder problems + brevity, not
+  hotter sampling, which would redefine the solve-rate measurement).
+- **Commit / seed:** TBD / seed=0
+- **Iters / wall time:** 30 / TBD — **budget generously**: max solver
+  generations/iter is G_c·N·K = 160 vs mini-03's 48 (~3.3×), partially offset
+  by per-problem creator rollouts finishing early (EOS after one problem's
+  JSON) and w_brevity-shortened solver attempts. Batched solver generation is
+  the Sprint-8 lever if this is too slow. `caffeinate -i` +
+  `conda run --no-capture-output … python -u`, transcript ON.
+- **Hypothesis:** (1) native protocol makes the creator actually CALL the CAS
+  tool — `creator_tool_ok` > 0 from iter 0 and `creator_answer_in_obs`
+  climbing toward N per suite (mini-03b: zero real calls, hallucinated obs);
+  (2) with real tool answers, consistency (cert-pass) climbs well above
+  mini-02's ~38% flatline; (3) per-problem generation holds parse_ok ≈ 1.0
+  while allowing real thinking per problem (no truncation spiral);
+  (4) N=5 + K=8 + interior band yields interior solve rates (K-groups no
+  longer 88% saturated → solver updates most iterations);
+  (5) personas/competition framing doesn't reintroduce the mini-03a
+  deliberation spiral (watch creator token counts).
+- **Watch:** `creator_answer_in_obs` low while consistency high = the creator
+  still fakes tool grounding → flip `game.require_tool_use: true` for the
+  next run. Per-problem conditioning blocks growing too long (prompt carries
+  k−1 JSONs). Wall-clock per iter vs mini-03b's measured ~28 min/iter (at
+  N=3/K=4 with high consistency — mini-04's 160-gen worst case will be
+  slower still; consider trimming iters if >1h/iter).
+- **Status:** code + config ready (309 fast tests green), not launched.
 
 ---
+
+## Backlog — Sprint 8 (queued 2026-07-03, from the Sprint-7 discussion)
+
+- [ ] **Batched solver generation** — K=8 attempts are identical prompts, no
+      tools: batch them through mlx-lm batch generation (~2-3× per the earlier
+      probe; sampling per row is independent so outputs differ automatically).
+      This is the wall-clock lever that funds any further K/N growth.
+- [ ] **Per-problem creator credit decomposition** — replace broadcast with
+      per-trajectory reward = own-rank fit (|p_i − t_i|²) + own consistency +
+      shared suite-level term (distinctness/ordering don't decompose). Sharper
+      credit than broadcast; run as a measured ablation against mini-04.
+- [ ] **CAS session state** — per-rollout namespace so tool calls can define
+      intermediates (`a = solve(...)` then reuse `a`), or multi-statement
+      calls. Ergonomics for creative multi-step problems; pointless until the
+      model reliably calls the tool at all (verify in mini-04 first).
+- [ ] **Judge → native protocol** — the judge shares the legacy-ReAct failure
+      mode (it's the same base model); migrate it to native tool calling once
+      mini-04 validates the protocol on the creator path.
+- [ ] **Strict tool gate on** (`game.require_tool_use: true`) — if mini-04's
+      `answer_in_obs` shows the creator still faking tool grounding.
 
 ## Backlog — planned experiments (deferred from Sprint 4)
 

@@ -2,8 +2,9 @@
 
 Self-play RLVR with **two LoRA adapters over one frozen MLX base** (Qwen3-8B, 6-bit), on a 32 GB
 Apple-Silicon Mac. Two model instances A and B alternate as problem **creator** and **solver**, trained
-with **GRPO** on a difficulty-gradient reward + a consistency check + an oracle tax. See **[DESIGN.md](DESIGN.md)**
-for the full specification and rationale.
+with **GRPO** on a difficulty-gradient reward + a consistency check + an oracle tax. See
+**[DESIGN_V2.md](DESIGN_V2.md)** for the current specification and rationale
+([DESIGN.md](DESIGN.md) keeps the sprint-by-sprint build history).
 
 The memory trick that makes this fit in 32 GB: the 6.2 GB quantized base is loaded **once** and shared by
 A, B, and the knowledge oracle. A and B are just two small LoRA parameter trees swapped in over the same
@@ -110,8 +111,9 @@ Record runs and what you learned in [EXPERIMENTS.md](EXPERIMENTS.md).
 ## Layout
 
 ```
-DESIGN.md            full spec (read this first)
-configs/             tiny.yaml (dev) + base.yaml (research)
+DESIGN_V2.md         current spec (read this first)
+DESIGN.md            v1 spec + Sprints 1-7 build history
+configs/             tiny.yaml (dev), base.yaml (scale), mini*.yaml (real runs; mini4 = current)
 src/twin/
   config.py          typed config + YAML loader
   models/base.py     TwinBase: shared frozen base, generate, oracle, logprobs

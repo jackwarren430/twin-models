@@ -1,0 +1,43 @@
+Loading base: ~/.cache/lm-studio/models/mlx-community/Qwen3-8B-6bit
+  loaded; rank=64 alpha=128.0 scale=2; 77,594,624 params/adapter.
+Running iterations 0..29; logging to runs/2026-07-01-mini-02.jsonl
+
+[   0] A->create B->solve | Rc=+0.100 Rs=+0.000 solve%=0.00 parseOK=1.00 | KL c=0.000 s=0.000 | drift A=0.000 B=0.000
+[   1] A->create B->solve | Rc=+0.902 Rs=+0.861 solve%=0.86 parseOK=1.00 | KL c=0.001 s=0.001 | drift A=0.150 B=0.147
+[   2] A->create B->solve | Rc=-0.450 Rs=+0.000 solve%=0.00 parseOK=0.50 | KL c=0.001 s=0.000 | drift A=0.277 B=0.147
+[   3] A->create B->solve | Rc=-0.175 Rs=+0.000 solve%=0.00 parseOK=0.75 | KL c=0.001 s=0.000 | drift A=0.406 B=0.147
+[   4] A->create B->solve | Rc=-0.450 Rs=+0.000 solve%=0.00 parseOK=0.50 | KL c=0.001 s=0.000 | drift A=0.531 B=0.147
+       checkpointed at step 5
+[   5] A->create B->solve | Rc=+0.062 Rs=+1.000 solve%=1.00 parseOK=0.75 | KL c=0.001 s=0.000 | drift A=0.649 B=0.147
+[   6] A->create B->solve | Rc=+0.465 Rs=+1.000 solve%=1.00 parseOK=1.00 | KL c=0.002 s=0.000 | drift A=0.772 B=0.147
+[   7] A->create B->solve | Rc=+0.222 Rs=+1.000 solve%=1.00 parseOK=1.00 | KL c=0.002 s=0.000 | drift A=0.889 B=0.147
+[   8] A->create B->solve | Rc=-0.450 Rs=+0.000 solve%=0.00 parseOK=0.50 | KL c=0.004 s=0.000 | drift A=0.999 B=0.147
+[   9] A->create B->solve | Rc=+0.300 Rs=+0.833 solve%=0.83 parseOK=0.75 | KL c=0.004 s=0.000 | drift A=1.103 B=0.147
+       checkpointed at step 10
+[  10] A->create B->solve | Rc=+0.100 Rs=+0.000 solve%=0.00 parseOK=1.00 | KL c=0.000 s=0.000 | drift A=1.103 B=0.147
+[  11] A->create B->solve | Rc=-0.175 Rs=+0.000 solve%=0.00 parseOK=0.75 | KL c=0.008 s=0.000 | drift A=1.210 B=0.147
+[  12] A->create B->solve | Rc=+0.216 Rs=+1.000 solve%=1.00 parseOK=1.00 | KL c=0.007 s=0.000 | drift A=1.316 B=0.147
+[  13] B->create A->solve | Rc=-0.450 Rs=+0.000 solve%=0.00 parseOK=0.50 | KL c=0.000 s=0.000 | drift A=1.316 B=0.273
+[  14] B->create A->solve | Rc=-0.609 Rs=+1.000 solve%=1.00 parseOK=0.25 | KL c=0.001 s=0.000 | drift A=1.316 B=0.397
+       checkpointed at step 15
+[  15] B->create A->solve | Rc=-0.175 Rs=+0.000 solve%=0.00 parseOK=0.75 | KL c=0.001 s=0.000 | drift A=1.316 B=0.524
+[  16] B->create A->solve | Rc=+0.100 Rs=+0.000 solve%=0.00 parseOK=1.00 | KL c=0.000 s=0.000 | drift A=1.316 B=0.524
+[  17] B->create A->solve | Rc=+0.157 Rs=+0.250 solve%=0.25 parseOK=1.00 | KL c=0.001 s=0.009 | drift A=1.411 B=0.652
+[  18] B->create A->solve | Rc=-0.175 Rs=+0.000 solve%=0.00 parseOK=0.75 | KL c=0.001 s=0.000 | drift A=1.411 B=0.766
+[  19] B->create A->solve | Rc=+0.653 Rs=+0.844 solve%=0.84 parseOK=1.00 | KL c=0.001 s=0.007 | drift A=1.498 B=0.878
+       checkpointed at step 20
+[  20] B->create A->solve | Rc=+0.100 Rs=+0.000 solve%=0.00 parseOK=1.00 | KL c=0.000 s=0.000 | drift A=1.498 B=0.878
+[  21] A->create B->solve | Rc=-0.334 Rs=+1.000 solve%=1.00 parseOK=0.50 | KL c=0.010 s=0.000 | drift A=1.587 B=0.878
+[  22] A->create B->solve | Rc=+0.247 Rs=+1.000 solve%=1.00 parseOK=0.75 | KL c=0.012 s=0.000 | drift A=1.675 B=0.878
+[  23] A->create B->solve | Rc=+0.311 Rs=+1.000 solve%=1.00 parseOK=0.75 | KL c=0.012 s=0.000 | drift A=1.765 B=0.878
+[  24] A->create B->solve | Rc=+0.528 Rs=+1.000 solve%=1.00 parseOK=1.00 | KL c=0.018 s=0.000 | drift A=1.857 B=0.878
+       checkpointed at step 25
+[  25] A->create B->solve | Rc=+0.100 Rs=+0.000 solve%=0.00 parseOK=1.00 | KL c=0.000 s=0.000 | drift A=1.857 B=0.878
+[  26] A->create B->solve | Rc=-0.057 Rs=+0.750 solve%=0.75 parseOK=0.75 | KL c=0.021 s=0.003 | drift A=1.952 B=0.972
+[  27] A->create B->solve | Rc=+0.100 Rs=+0.000 solve%=0.00 parseOK=1.00 | KL c=0.000 s=0.000 | drift A=1.952 B=0.972
+[  28] A->create B->solve | Rc=-0.175 Rs=+0.000 solve%=0.00 parseOK=0.75 | KL c=0.034 s=0.000 | drift A=2.044 B=0.972
+[  29] B->create A->solve | Rc=+0.100 Rs=+0.000 solve%=0.00 parseOK=1.00 | KL c=0.000 s=0.000 | drift A=2.044 B=0.972
+       checkpointed at step 30
+
+Done. Log: runs/2026-07-01-mini-02.jsonl
+

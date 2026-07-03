@@ -1,6 +1,11 @@
 # Twin-Models — Self-Play RLVR with Two LoRA Adapters on One Frozen Base
 
-**Status:** living design spec (supersedes `2026-06-26_183000-selfplay-rlvr-design.md`, which targeted a
+> **SUPERSEDED (2026-07-03): [DESIGN_V2.md](DESIGN_V2.md) is the current spec** — a clean rewrite
+> caught up through Sprint 7 (native tool calling, per-problem creator generation, personas) with the
+> Sprint-8 plan. This file is kept for the sprint-by-sprint build history in §11, which V2 references
+> instead of repeating.
+
+**Status:** historical design spec (supersedes `2026-06-26_183000-selfplay-rlvr-design.md`, which targeted a
 14B GGUF/llama.cpp/PEFT stack). This revision is written for the actual hardware, model, and framework
 we are using and folds in the decisions made in the kickoff conversation.
 
@@ -313,7 +318,11 @@ Group sizes are the cost knobs: `G_c` (creator suites), `K` (solver attempts/pro
 
 All tools are plain Python callables exposed to the policy via a **ReAct-style text protocol** for v1
 (model emits `<tool>name(args)</tool>`, harness executes, returns `<obs>...</obs>`). Rationale: robust
-across chat templates and trivial to parse/sandbox; we can switch to Qwen3 native function-calling later.
+across chat templates and trivial to parse/sandbox. *(Sprint 7 amendment: that rationale did not
+survive contact with a thinking model — Qwen3 never emitted the foreign tags, it simulated the tool
+inside `<think>`. `tools.protocol: native` switches the creator to Qwen3 function calling —
+`<tool_call>` JSON via the chat template, `<tool_response>` turns spliced back masked — see §11
+Sprint 7. The judge still uses the legacy protocol.)*
 
 - `oracle(question) -> str` — base-only generation; **counted and taxed**.
 - `python(code) -> str` — sandboxed subprocess execution (also powers the code verifier).
@@ -547,6 +556,58 @@ every coding problem with "no tests supplied", and the solver path has no code b
 and **wiring the oracle** (OracleTool is never instantiated in the loop; the tax currently taxes
 nothing). Tests: `tests/sprint5/` + updated `tests/sprint3/test_rewards_scored_mask.py` (236 fast
 tests green).
+
+**Sprint 7 — native tool calling, per-problem creator generation, personas. ✅ CODE DONE — `mini-04`
+(configs/mini4.yaml) is the measured run.** Motivated by the mini-03b transcript: the creator made
+**zero** real tool calls in the legacy ReAct protocol — it planned calls inside `<think>` and
+*hallucinated the observations* ("The tool would return x=3, y=2"), wasting thinking tokens re-solving
+its own problems and shipping unverified answers. Four changes, each an explicit config knob (all
+defaults preserve v1 behaviour bit-for-bit):
+
+1. **Qwen3 native function calling** (`tools.protocol: native`; `twin.tools.native`). Tools are
+   declared through the chat template (`render(tools=…)` → `<tools>` JSON signatures in the system
+   block) and the model emits `<tool_call>{"name": …, "arguments": …}</tool_call>` — the format it was
+   post-trained on. The existing segmented-generation machinery is reused unchanged: `generate_react`
+   stops on `</tool_call>` instead of `</tool>`, and the runner splices the chat template's own
+   tool-response turn (`<|im_end|>… <tool_response>…</tool_response> … <|im_start|>assistant`) as
+   masked (loss 0) tokens. A malformed call JSON gets a corrective format-error observation
+   (`ToolHarness` grew a pluggable `parser`). The hardcoded glue is verified against
+   `apply_chat_template` ground truth by a tokenizer-only test. The judge stays on legacy ReAct
+   (migration queued, Sprint 8). New per-iteration watchdogs: `creator_tool_ok` (successful calls),
+   `creator_answer_in_obs` (stated answers that literally appeared in a real observation),
+   `creator_tool_gated`.
+2. **Per-problem creator generation** (`game.creator_mode: per_problem`; §5 amendment). A suite is
+   built as N separate rollouts, one problem each: every problem gets the full creator token budget
+   for its own thinking (a whole-suite rollout squeezed thinking + N problems + certs into one 4096
+   window), and each GRPO backward sees a much shorter trajectory. Rank i's prompt carries a dictated
+   difficulty value (i/(N−1), overwriting the model's claim so ranks can't scramble) and the target
+   solve rate from the reward's own ramp ("omega should solve this about 30% of the time" — targets
+   and reward can't disagree). With `game.condition_on_previous` (default on) problem k also sees the
+   *JSONs* of problems 1..k−1 — never their thinking — with a strictly-harder/genuinely-distinct
+   instruction. **Credit is broadcast** (§6 amendment): the suite-level reward is shared by all N
+   trajectories (identical math to v1 whenever every rank parses — the creator group is now all
+   G_c·N trajectories, whose mean equals the suite mean in that case); a rank that fails to parse is
+   parse-gated individually and simply missing from the suite (the engine re-stretches the target over
+   the surviving ranks). Per-problem credit decomposition (per-rank fit + per-problem consistency) is
+   a queued Sprint-8 ablation.
+3. **Personas** (`game.personas`). "alpha"/"omega" glued to adapters A/B (never to roles), with a
+   fair-competition frame worded as *calibration*, not stumping — "you win by predicting exactly what
+   omega can and cannot solve" — because the gradient reward *is* a calibration game and mini-03a
+   showed pure difficulty-aspiration language causes think-spiral truncation. The hardest rank still
+   gets the full push ("make the hardest problem you can — one you are confident omega will almost
+   never crack; structural, never bigger numbers"). Solver gets the mirror frame. Judge and benchmark
+   never see personas (neutral graders); with personas off the prompts are byte-identical to v1.
+4. **Strict tool gate** (`game.require_tool_use`, default off). When on, a problem whose creator
+   rollout made no successful tool call is voided outright (drags R_consistency like any void).
+   Off = log-first: mini-04 watches `answer_in_obs` before deciding to flip it.
+
+Also: the creator contract (both modes) now orders `solution` **before** `answer` — autoregressive
+CoT should derive, then state. `parse_problem` (schema.py) parses single-problem JSON, tolerating an
+accidental suite wrapper. Tests: `tests/sprint7/` — 43 new fast tests (309 total green), including a
+scripted-generation run of the real `run_iteration` covering broadcast credit, conditioning,
+rank-dictated difficulty, the tool gate, and suite-mode regression; plus the tokenizer-only glue
+test. Cost note for mini-04: G_c·N·K = 4·5·8 = **160** max solver generations/iter (mini-03: 48) —
+batched solver generation is the queued Sprint-8 lever.
 
 ---
 

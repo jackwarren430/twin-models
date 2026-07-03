@@ -73,20 +73,29 @@ class TwinBase:
         *,
         enable_thinking: bool = False,
         add_generation_prompt: bool = True,
+        tools: list[dict] | None = None,
     ) -> str:
         """Render a chat prompt to a string using the model's chat template.
 
         ``enable_thinking`` is a Qwen3 template flag (forwarded as a kwarg);
-        kept False by default for throughput (see DESIGN.md §2)."""
+        kept False by default for throughput (see DESIGN.md §2).
+        ``tools`` (JSON function signatures, e.g. ``twin.tools.tool_schemas``)
+        switches the template into native function-calling mode: it declares
+        the tools in the system block and the model emits ``<tool_call>``
+        JSON — the protocol Qwen3 was trained on (Sprint 7)."""
         messages: list[dict[str, str]] = []
         if system is not None:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": user})
+        kwargs: dict = {}
+        if tools:
+            kwargs["tools"] = tools
         return self.tokenizer.apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=add_generation_prompt,
             enable_thinking=enable_thinking,
+            **kwargs,
         )
 
     # ----- generation ------------------------------------------------------

@@ -18,6 +18,12 @@ from typing import Callable
 
 _TOOL_OPEN = re.compile(r"<tool>\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", re.DOTALL)
 
+# Sentinel tool name a parser may emit for a syntactically broken call (e.g.
+# invalid JSON in a native <tool_call> block). The harness turns it into a
+# format-error observation so the model gets corrective feedback instead of
+# silence.
+PARSE_ERROR_NAME = "__parse_error__"
+
 
 @dataclass
 class ToolCall:
@@ -86,9 +92,19 @@ class ToolHarness:
     the reward engine needs). One harness instance per rollout; call
     :meth:`reset` to reuse."""
 
-    def __init__(self, tools: dict[str, Callable[[str], str]], *, max_tool_calls: int = 4):
+    def __init__(
+        self,
+        tools: dict[str, Callable[[str], str]],
+        *,
+        max_tool_calls: int = 4,
+        parser: Callable[[str], list[ToolCall]] | None = None,
+    ):
         self.tools = tools
         self.max_tool_calls = max_tool_calls
+        # How calls are extracted from model text: the legacy <tool>name(arg)
+        # </tool> parser by default, or twin.tools.native.parse_native_tool_calls
+        # for Qwen3 function calling (Sprint 7).
+        self.parser = parser or parse_tool_calls
         self.calls: list[ToolResult] = []
         self.reset()
 
@@ -113,11 +129,22 @@ class ToolHarness:
         """Execute every tool call found in ``text`` (up to the remaining
         budget) and return their results in order."""
         results: list[ToolResult] = []
-        for call in parse_tool_calls(text):
+        for call in self.parser(text):
             if self.n_calls >= self.max_tool_calls:
                 results.append(ToolResult(call, "error: tool call budget exhausted", ok=False))
                 self.calls.append(results[-1])
                 break
+            if call.name == PARSE_ERROR_NAME:
+                res = ToolResult(
+                    call,
+                    'error: malformed tool call — the body must be one JSON '
+                    'object like {"name": "solve", "arguments": '
+                    '{"expression": "..."}}',
+                    ok=False,
+                )
+                results.append(res)
+                self.calls.append(res)
+                continue
             fn = self.tools.get(call.name)
             if fn is None:
                 res = ToolResult(call, f"error: unknown tool '{call.name}'", ok=False)

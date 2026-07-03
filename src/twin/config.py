@@ -82,6 +82,25 @@ class GameConfig:
     creator_group: int = 4        # G_c: candidate suites per creator prompt (GRPO group)
     solver_attempts: int = 4      # K: solver attempts per problem (GRPO group)
     domains: list[str] = field(default_factory=lambda: ["math", "coding"])
+    # Sprint 7 — creator generation architecture.
+    # "suite": one rollout emits the whole N-problem suite (v1 behaviour).
+    # "per_problem": N separate rollouts, one problem each — each problem gets
+    #   its own thinking budget, trajectories are shorter (smaller GRPO
+    #   backward), and the suite reward is broadcast to all N trajectories.
+    creator_mode: str = "suite"
+    # per_problem only: show problem k the JSONs of problems 1..k-1 (never
+    # their thinking) so the suite stays coherent (distinct problems, real
+    # ramp). Prompt-injection only, so it's cheap to ablate.
+    condition_on_previous: bool = True
+    # Named personas (alpha/omega, glued to adapters A/B) + fair-competition
+    # framing injected into creator AND solver prompts. The judge and the
+    # held-out benchmark always stay neutral.
+    personas: bool = False
+    # Strict tool gate: void a problem (consistency=False) when its creator
+    # rollout contained no successful tool call — the anti "guess what the
+    # tool would return" measure. Off = log-only (per-problem tool usage and
+    # answer-appears-in-obs are always recorded in the suite summary).
+    require_tool_use: bool = False
 
 
 @dataclass
@@ -128,6 +147,15 @@ class ToolsConfig:
     creator_tools: list[str] = field(default_factory=lambda: ["solve", "calc"])
     creator_max_tool_calls: int = 4   # ToolHarness budget per creator rollout
     creator_tool_rounds: int = 4      # max ReAct rounds (generate->tool->continue)
+    # Tool-call protocol for the CREATOR rollout (Sprint 7).
+    # "react":  legacy text protocol — <tool>name(arg)</tool> / <obs>...</obs>.
+    #   Qwen3 was never trained on it; with thinking ON it plans calls inside
+    #   <think> and hallucinates the results (mini-03b: ZERO real calls).
+    # "native": Qwen3 function calling — tools declared via the chat template
+    #   (tools=...), model emits <tool_call>{json}</tool_call>, harness splices
+    #   a <tool_response> user turn back (masked out of the GRPO loss).
+    # The judge stays on "react" either way (migration queued for Sprint 8).
+    protocol: str = "react"
     cas_timeout_s: float = 3.0        # best-effort wall-clock guard for `solve`
     judge_tools: list[str] = field(default_factory=lambda: ["solve", "calc"])
     judge_max_tool_calls: int = 4     # ToolHarness budget per judge call

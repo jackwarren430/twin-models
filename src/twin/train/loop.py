@@ -24,6 +24,7 @@ via :func:`count_oracle_calls` (counts the oracle calls the policy *wrote*).
 Inline ReAct tool execution with <obs> masking is a documented later extension.
 """
 
+import json
 import random
 from pathlib import Path
 
@@ -33,19 +34,36 @@ import mlx.optimizers as optim
 from twin.config import Config
 from twin.log import JsonlLogger, TranscriptLogger
 from twin.models import Adapters, TwinBase
-from twin.problems.schema import SuiteParseError, parse_suite
+from twin.problems.schema import (
+    ProblemSuite,
+    SuiteParseError,
+    parse_problem,
+    parse_suite,
+)
 from twin.prompts import (
-    CREATOR_SYSTEM,
     JUDGE_SYSTEM,
-    SOLVER_SYSTEM,
+    creator_persona,
+    creator_problem_user,
+    creator_system,
     creator_user,
+    opponent_of,
     pick_theme,
+    solver_persona,
+    solver_system,
     solver_user,
 )
 from twin.rewards import RewardEngine, solve_rate
 from twin.rl import Trajectory, all_zero_advantages, group_advantages, grpo_update
 from twin.roles import RoleManager
-from twin.tools import ToolHarness, calc, solve
+from twin.tools import (
+    NATIVE_STOP,
+    ToolHarness,
+    calc,
+    format_tool_responses,
+    parse_native_tool_calls,
+    solve,
+    tool_schemas,
+)
 from twin.train.extract import count_oracle_calls, extract_final_answer
 from twin.verifiers import check_consistency, verify_answer
 
@@ -122,6 +140,12 @@ class SelfPlayTrainer:
     # task + VERDICT contract come in `question` from twin.verifiers.judge.
     def _judge(self, question: str) -> str:
         tcfg = self.cfg.tools
+        # The judge stays on the legacy ReAct protocol regardless of
+        # tools.protocol (native migration queued for Sprint 8) and never gets
+        # a persona — it must remain a neutral grader.
+        judge_runner, _ = self._build_tool_runner(
+            tcfg.judge_tools, tcfg.judge_max_tool_calls
+        )
         with self.adapters.using("base"):
             prompt = self.base.render(
                 question, system=JUDGE_SYSTEM,
@@ -129,9 +153,7 @@ class SelfPlayTrainer:
             )
             result = self.base.generate_react(
                 prompt,
-                tool_runner=self._build_tool_runner(
-                    tcfg.judge_tools, tcfg.judge_max_tool_calls
-                ),
+                tool_runner=judge_runner,
                 max_tokens=self.cfg.gen.oracle_max_tokens,
                 temp=self.cfg.gen.oracle_temp,
                 top_p=self.cfg.gen.top_p,
@@ -150,13 +172,18 @@ class SelfPlayTrainer:
             prompt, max_tokens=max_tokens, temp=temp, top_p=self.cfg.gen.top_p
         )
 
-    # ----- inline-tool (ReAct) generation ---------------------------------
-    def _build_tool_runner(self, tool_names, max_tool_calls):
-        """Fresh ToolHarness + runner for ONE ReAct rollout (creator or judge).
-        The runner takes the segment text the model just emitted (ending in
-        ``</tool>``), executes the call, and returns the ``<obs>...</obs>`` text
-        to splice in (or None to finish). Reuses the existing
-        ToolHarness/parse_tool_calls protocol."""
+    # ----- inline-tool generation (legacy ReAct or Qwen3 native) ----------
+    def _build_tool_runner(self, tool_names, max_tool_calls, *, native: bool = False):
+        """Fresh ToolHarness + runner for ONE tool-augmented rollout (creator
+        or judge). Returns ``(runner, harness)`` — the harness so the caller
+        can inspect per-rollout tool usage afterwards (strict tool gate,
+        answer-in-obs diagnostics, Sprint 7).
+
+        Legacy: the runner takes the segment ending in ``</tool>`` and returns
+        ``<obs>...</obs>`` text. Native: the segment ends in ``</tool_call>``
+        (Qwen3 function calling) and the runner returns the chat-template
+        ``<tool_response>`` turn glue. Either way the splice is masked out of
+        the GRPO loss by generate_react."""
         tcfg = self.cfg.tools
         tools = {}
         for name in tool_names:
@@ -164,35 +191,135 @@ class SelfPlayTrainer:
                 tools["solve"] = lambda arg, _ts=tcfg.cas_timeout_s: solve(arg, timeout_s=_ts)
             elif name == "calc":
                 tools["calc"] = calc
-        harness = ToolHarness(tools, max_tool_calls=max_tool_calls)
+        harness = ToolHarness(
+            tools,
+            max_tool_calls=max_tool_calls,
+            parser=parse_native_tool_calls if native else None,
+        )
 
-        def runner(segment_text: str):
-            results = harness.run(segment_text)
-            if not results:
-                return None
-            return "\n" + ToolHarness.format_observations(results) + "\n"
+        if native:
+            def runner(segment_text: str):
+                results = harness.run(segment_text)
+                if not results:
+                    return None
+                return format_tool_responses(results)
+        else:
+            def runner(segment_text: str):
+                results = harness.run(segment_text)
+                if not results:
+                    return None
+                return "\n" + ToolHarness.format_observations(results) + "\n"
 
-        return runner
-
-    def _creator_tool_runner(self):
-        """Tool runner for a creator rollout — untaxed generation aids; the solver
-        path never sees them."""
-        tcfg = self.cfg.tools
-        return self._build_tool_runner(tcfg.creator_tools, tcfg.creator_max_tool_calls)
+        return runner, harness
 
     def _generate_creator(self, adapter, system, user):
+        """One creator rollout under the configured tool protocol. Returns
+        ``(ReactResult, ToolHarness)`` — the harness carries what the tools
+        actually did (ok/error per call), which the loop logs per problem and
+        the strict tool gate consumes."""
+        tcfg = self.cfg.tools
+        native = tcfg.protocol == "native"
         self.adapters.activate(adapter)
         prompt = self.base.render(
-            user, system=system, enable_thinking=self.cfg.model.enable_thinking
+            user,
+            system=system,
+            enable_thinking=self.cfg.model.enable_thinking,
+            tools=tool_schemas(tcfg.creator_tools) if native else None,
         )
-        return self.base.generate_react(
+        runner, harness = self._build_tool_runner(
+            tcfg.creator_tools, tcfg.creator_max_tool_calls, native=native
+        )
+        result = self.base.generate_react(
             prompt,
-            tool_runner=self._creator_tool_runner(),
+            tool_runner=runner,
             max_tokens=self.cfg.gen.creator_max_tokens,
             temp=self.cfg.gen.creator_temp,
             top_p=self.cfg.gen.top_p,
-            max_rounds=self.cfg.tools.creator_tool_rounds,
+            max_rounds=tcfg.creator_tool_rounds,
+            stop=NATIVE_STOP if native else "</tool>",
         )
+        return result, harness
+
+    # ----- per-problem creator generation (Sprint 7) -----------------------
+    def _create_suite_per_problem(self, assign, domain, theme, n, g, creator_sys):
+        """Build ONE candidate suite as ``n`` separate creator rollouts, one
+        problem each (``game.creator_mode = "per_problem"``). Each rollout gets
+        the full creator token budget for its own thinking, and each backward
+        sees a much shorter trajectory than a whole-suite rollout.
+
+        Rank ``i`` is prompted with its dictated difficulty value and the
+        target solve rate from the reward's own ramp, plus (when
+        ``game.condition_on_previous``) the JSONs of the problems already
+        written — never their thinking. Returns ``(suite, rollouts)``:
+        the suite holds the parsed problems in rank order (difficulty is
+        overwritten with the dictated value so a scrambled claim can't re-sort
+        ranks); ``rollouts`` has one bookkeeping dict per rank, parsed or not.
+        A rank that fails to parse is simply absent from the suite — the
+        reward engine re-stretches the target over the remaining ranks, and
+        the failed rank's trajectory is parse-gated at broadcast time."""
+        cfg = self.cfg
+        targets = ProblemSuite.target_curve(
+            n, cfg.rewards.target_hi, cfg.rewards.target_lo)
+        opp = opponent_of(assign.creator) if cfg.game.personas else None
+        problems = []
+        prev_jsons: list[str] = []
+        rollouts: list[dict] = []
+        for i in range(n):
+            difficulty = round(i / (n - 1), 2) if n > 1 else 0.5
+            user = creator_problem_user(
+                domain, theme, rank=i, n_problems=n,
+                difficulty=difficulty, target_rate=targets[i],
+                previous=prev_jsons if (cfg.game.condition_on_previous and prev_jsons) else None,
+                opponent=opp,
+            )
+            cgen, harness = self._generate_creator(assign.creator, creator_sys, user)
+            roll = {
+                "rank": i,
+                "prompt_tokens": cgen.prompt_tokens,
+                "completion_tokens": cgen.completion_tokens,
+                "loss_mask": cgen.loss_mask,
+                "n_tool_calls": cgen.n_tool_calls,
+                "n_tool_ok": sum(1 for res in harness.calls if res.ok),
+                "n_oracle": count_oracle_calls(cgen.text),
+                "parsed": False,
+                "answer_in_obs": False,
+            }
+            self._tr(
+                f"creator[{g}.{i}] adapter={assign.creator} "
+                f"difficulty={difficulty:.2f} target={targets[i]:.2f}",
+                cgen.text,
+                n_tool_calls=roll["n_tool_calls"], n_tool_ok=roll["n_tool_ok"],
+                n_oracle=roll["n_oracle"],
+            )
+            try:
+                problem = parse_problem(cgen.text, default_domain=domain)
+            except SuiteParseError as e:
+                roll["error"] = str(e)[:120]
+                self._tr(f"creator[{g}.{i}] PARSE-FAIL", str(e)[:200])
+                rollouts.append(roll)
+                continue
+            problem.difficulty = float(difficulty)
+            answer = (problem.answer or "").strip()
+            roll["parsed"] = True
+            # Did the stated answer literally appear in a successful tool
+            # observation? Log-only adoption signal (the strict gate is
+            # game.require_tool_use); a multi-step answer assembled from
+            # several observations legitimately reads False.
+            roll["answer_in_obs"] = bool(answer) and any(
+                res.ok and answer in res.output for res in harness.calls)
+            rollouts.append(roll)
+            problems.append(problem)
+            prev_jsons.append(json.dumps({
+                "statement": problem.statement,
+                "difficulty": problem.difficulty,
+                "solution": problem.solution,
+                "answer": problem.answer,
+                **({"verification": problem.verification}
+                   if problem.verification else {}),
+            }))
+        suite = (ProblemSuite(problems=problems, theme=theme, domain=domain)
+                 if problems else None)
+        return suite, rollouts
 
     # ----- GRPO update with a base-reference KL pass -----------------------
     def _grpo(self, adapter: str, trajs: list[Trajectory]) -> dict:
@@ -256,31 +383,96 @@ class SelfPlayTrainer:
         solver_attempts_solved = 0 # attempts that verified correct
         solver_problems_solved = 0 # problems solved on >=1 attempt
 
-        for g in range(cfg.game.creator_group):
-            cgen = self._generate_creator(
-                assign.creator, CREATOR_SYSTEM, creator_user(domain, theme, n),
-            )
-            n_oracle_c = count_oracle_calls(cgen.text)
-            self._tr(f"creator[{g}] adapter={assign.creator}", cgen.text,
-                     n_tool_calls=cgen.n_tool_calls, n_oracle=n_oracle_c)
+        # Sprint 7: persona-aware system prompts (neutral when personas off —
+        # identical to the pre-Sprint-7 constants). Personas are glued to
+        # adapters (A=alpha, B=omega) whatever role each plays this iteration;
+        # the judge and the held-out benchmark never see them.
+        creator_sys = creator_system(
+            native_tools=(cfg.tools.protocol == "native"),
+            persona=creator_persona(assign.creator) if cfg.game.personas else None,
+        )
+        solver_sys = solver_system(
+            persona=solver_persona(assign.solver) if cfg.game.personas else None,
+        )
 
-            try:
-                suite = parse_suite(cgen.text)
-            except SuiteParseError as e:
+        for g in range(cfg.game.creator_group):
+            # --- creator generation --------------------------------------
+            # Uniform shape either way: `suite` (or None) + `rollouts`, one
+            # bookkeeping dict per creator rollout (1 in suite mode, N in
+            # per-problem mode) carrying tokens/mask + tool diagnostics.
+            if cfg.game.creator_mode == "per_problem":
+                suite, rollouts = self._create_suite_per_problem(
+                    assign, domain, theme, n, g, creator_sys
+                )
+            else:
+                cgen, charness = self._generate_creator(
+                    assign.creator, creator_sys, creator_user(domain, theme, n),
+                )
+                roll = {
+                    "prompt_tokens": cgen.prompt_tokens,
+                    "completion_tokens": cgen.completion_tokens,
+                    "loss_mask": cgen.loss_mask,
+                    "n_tool_calls": cgen.n_tool_calls,
+                    "n_tool_ok": sum(1 for res in charness.calls if res.ok),
+                    "n_oracle": count_oracle_calls(cgen.text),
+                    "parsed": False,
+                    "answer_in_obs": False,
+                }
+                self._tr(f"creator[{g}] adapter={assign.creator}", cgen.text,
+                         n_tool_calls=roll["n_tool_calls"],
+                         n_tool_ok=roll["n_tool_ok"], n_oracle=roll["n_oracle"])
+                suite = None
+                try:
+                    suite = parse_suite(cgen.text)
+                    roll["parsed"] = True
+                except SuiteParseError as e:
+                    roll["error"] = str(e)[:120]
+                rollouts = [roll]
+
+            n_oracle_c = sum(r["n_oracle"] for r in rollouts)
+            n_tool_calls_c = sum(r["n_tool_calls"] for r in rollouts)
+            n_tool_ok_c = sum(r["n_tool_ok"] for r in rollouts)
+
+            # --- parse gate: no usable suite -> fixed low reward, no solver
+            if suite is None or not suite.problems:
                 r = self.engine.creator_parse_gate()
-                self._tr(f"creator[{g}] PARSE-FAIL", str(e)[:200],
+                detail = rollouts[-1].get("error", "no problems parsed")
+                self._tr(f"creator[{g}] PARSE-FAIL", str(detail)[:200],
                          reward=round(r.total, 4))
-                creator_trajs.append(Trajectory(
-                    cgen.prompt_tokens, cgen.completion_tokens,
-                    reward=r.total, loss_mask=cgen.loss_mask, meta={"parsed": False}))
-                suite_summaries.append({"parsed": False, "error": str(e)[:120],
-                                        "n_tool_calls": cgen.n_tool_calls,
+                for roll in rollouts:
+                    creator_trajs.append(Trajectory(
+                        roll["prompt_tokens"], roll["completion_tokens"],
+                        reward=r.total, loss_mask=roll["loss_mask"],
+                        meta={"parsed": False}))
+                suite_summaries.append({"parsed": False, "error": str(detail)[:120],
+                                        "n_tool_calls": n_tool_calls_c,
+                                        "n_tool_ok": n_tool_ok_c,
+                                        "n_rollouts": len(rollouts),
                                         "reward": r.total})
                 continue
 
-            # Consistency of the creator's own solutions (verifier-first).
+            # Rollout backing each problem: its own rollout in per-problem
+            # mode, the single suite rollout otherwise (for the tool gate and
+            # the answer-in-obs diagnostic).
+            if cfg.game.creator_mode == "per_problem":
+                prob_rolls = [r for r in rollouts if r["parsed"]]
+            else:
+                prob_rolls = [rollouts[0]] * len(suite.problems)
+
+            # --- consistency of the creator's own solutions (verifier-first),
+            # behind the optional strict tool gate (Sprint 7): with
+            # game.require_tool_use, a problem whose rollout made no successful
+            # tool call is voided outright — the "guessed what the tool would
+            # return" case. Voids drag R_consistency like any other.
             flags: list[bool] = []
-            for p in suite.problems:
+            tool_gated = 0
+            for p, roll in zip(suite.problems, prob_rolls):
+                if cfg.game.require_tool_use and roll["n_tool_ok"] == 0:
+                    flags.append(False)
+                    tool_gated += 1
+                    self._tr(f"problem[{g}] TOOL-GATED (no successful tool call)",
+                             p.statement[:160])
+                    continue
                 try:
                     flags.append(bool(check_consistency(p, oracle=self._judge).correct))
                 except Exception:  # noqa: BLE001 - verifier boundary, never crash a run
@@ -301,7 +493,7 @@ class SelfPlayTrainer:
                 attempt_flags: list[bool] = []
                 for k in range(cfg.game.solver_attempts):
                     sgen = self._generate(
-                        assign.solver, SOLVER_SYSTEM, solver_user(p),
+                        assign.solver, solver_sys, solver_user(p),
                         max_tokens=cfg.gen.solver_max_tokens, temp=cfg.gen.solver_temp,
                     )
                     ans = extract_final_answer(sgen.text)
@@ -342,10 +534,23 @@ class SelfPlayTrainer:
                      r_gradient=round(creward.r_gradient, 4),
                      r_consistency=round(creward.r_consistency, 4),
                      n_consistent=int(sum(flags)))
-            creator_trajs.append(Trajectory(
-                cgen.prompt_tokens, cgen.completion_tokens,
-                reward=creward.total, loss_mask=cgen.loss_mask,
-                meta={"parsed": True, "suite_id": suite.suite_id}))
+            # Broadcast credit (Sprint 7): the suite-level reward is shared by
+            # every rollout that contributed a parsed problem — in suite mode
+            # that's the single suite rollout (v1 behaviour, unchanged); in
+            # per-problem mode all N problem rollouts carry the same reward
+            # (and hence the same advantage). A rank that failed to parse gets
+            # the parse-gate reward individually instead, so garbage output is
+            # penalized at the trajectory that produced it. Per-problem credit
+            # decomposition is a queued Sprint-8 ablation.
+            gate_total = self.engine.creator_parse_gate().total
+            for roll in rollouts:
+                meta = {"parsed": roll["parsed"], "suite_id": suite.suite_id}
+                if "rank" in roll:
+                    meta["rank"] = roll["rank"]
+                creator_trajs.append(Trajectory(
+                    roll["prompt_tokens"], roll["completion_tokens"],
+                    reward=creward.total if roll["parsed"] else gate_total,
+                    loss_mask=roll["loss_mask"], meta=meta))
             suite_summaries.append({
                 "parsed": True, "n_problems": len(suite.problems),
                 # Certificate coverage (Sprint 5): problems carrying the
@@ -360,11 +565,24 @@ class SelfPlayTrainer:
                 "solve_rates_by_rank": [round(x, 3) for x in creward.solve_rates_by_rank],
                 "r_gradient": round(creward.r_gradient, 4),
                 "r_consistency": round(creward.r_consistency, 4),
-                "n_oracle": n_oracle_c, "n_tool_calls": cgen.n_tool_calls,
+                "n_oracle": n_oracle_c, "n_tool_calls": n_tool_calls_c,
+                # Sprint 7 tool-adoption watchdogs: successful tool calls, how
+                # many stated answers literally appeared in a tool observation,
+                # ranks lost to the strict gate / parse failures.
+                "n_tool_ok": n_tool_ok_c,
+                "n_answer_in_obs": sum(1 for r in prob_rolls if r["answer_in_obs"]),
+                "n_tool_gated": tool_gated,
+                "n_rollouts": len(rollouts),
+                "n_parse_failed": sum(1 for r in rollouts if not r["parsed"]),
                 "reward": round(creward.total, 4),
             })
 
-        # Creator GRPO group = the G_c candidate suites for this prompt.
+        # Creator GRPO group = every creator trajectory this iteration. In
+        # suite mode that's the G_c suites (v1 semantics, unchanged). In
+        # per-problem mode it's G_c·N broadcast trajectories: the mean baseline
+        # is then a per-trajectory mean, which equals the suite mean whenever
+        # every rank parsed (identical math to v1) and reweights only when
+        # parse-gate rewards are mixed in.
         for t, a in zip(creator_trajs, group_advantages(
                 [t.reward for t in creator_trajs], mode=cfg.train.adv_mode)):
             t.advantage = a
@@ -386,6 +604,9 @@ class SelfPlayTrainer:
         # by twin.analysis.curves to plot trends over a run.
         creator_oracle_total = sum(s.get("n_oracle", 0) for s in suite_summaries)
         creator_tool_total = sum(s.get("n_tool_calls", 0) for s in suite_summaries)
+        creator_tool_ok_total = sum(s.get("n_tool_ok", 0) for s in suite_summaries)
+        answer_in_obs_total = sum(s.get("n_answer_in_obs", 0) for s in suite_summaries)
+        tool_gated_total = sum(s.get("n_tool_gated", 0) for s in suite_summaries)
         r_gradient_vals = [s["r_gradient"] for s in suite_summaries if "r_gradient" in s]
         adapter_norm = {n: round(self.adapters.global_norm(n), 6)
                         for n in self.adapters.NAMES}
@@ -408,6 +629,10 @@ class SelfPlayTrainer:
             "creator_oracle_calls": creator_oracle_total,
             "solver_oracle_calls": solver_oracle_total,
             "creator_tool_calls": creator_tool_total,
+            # Sprint 7 tool-adoption watchdogs (native protocol / strict gate):
+            "creator_tool_ok": creator_tool_ok_total,
+            "creator_answer_in_obs": answer_in_obs_total,
+            "creator_tool_gated": tool_gated_total,
             "adapter_norm": adapter_norm,
             "adapter_drift": adapter_drift,
             "n_solver_trajs": len(solver_trajs),

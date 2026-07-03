@@ -205,6 +205,30 @@ def _vanishes(expr, tolerance: float) -> bool:
     return False
 
 
+_NAMED_VALUE = re.compile(r"^\s*([A-Za-z_][A-Za-z_0-9]*)\s*=\s*(.+?)\s*$")
+
+
+def _normalize_named_value(value: str, sym_parts: list[str]) -> str:
+    """Rewrite a ``"x = 2, y = 1"``-style answer into the declared symbols'
+    order (``"(2, 1)"``). Creators frequently state multi-unknown answers as
+    named assignments instead of the spec'd bare tuple, which voided *correct*
+    problems in mini-03 (the '=' broke the predicate parse). Only fires when
+    every comma-separated part is ``name = expr`` and the names are exactly
+    the declared symbols; anything else is returned untouched."""
+    parts = split_top_level_commas(value or "")
+    named: dict[str, str] = {}
+    for p in parts:
+        m = _NAMED_VALUE.match(p)
+        if not m:
+            return value
+        named[m.group(1)] = m.group(2)
+    names = [s.strip() for s in sym_parts]
+    if sorted(named) != sorted(names):
+        return value
+    ordered = [named[n] for n in names]
+    return ordered[0] if len(ordered) == 1 else "(" + ", ".join(ordered) + ")"
+
+
 def check_predicate(check: str, symbol: str, value: str, *, tolerance: float = 1e-6) -> VerificationResult:
     """Substitute ``value`` for ``symbol`` in ``check`` and test it holds.
 
@@ -223,7 +247,7 @@ def check_predicate(check: str, symbol: str, value: str, *, tolerance: float = 1
         syms = [_parse_raw(s) for s in sym_parts]
         if not all(getattr(s, "is_Symbol", False) for s in syms):
             return VerificationResult.fail(_METHOD, f"bad symbol spec: {symbol!r}")
-        val = _parse(value)
+        val = _parse(_normalize_named_value(value, sym_parts))
         vals = list(val) if (len(syms) > 1 and _is_seq(val)) else [val]
         if len(vals) != len(syms):
             return VerificationResult.fail(

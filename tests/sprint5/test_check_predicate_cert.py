@@ -97,3 +97,33 @@ def test_empty_inputs_fail_cleanly():
     assert not check_predicate("", "x", "3").correct
     assert not check_predicate("x = 3", "", "3").correct
     assert not check_predicate("x = 3", "not a symbol!!", "3").correct
+
+
+# ----- named-assignment answer normalization (mini-03 fix) --------------------
+def test_named_assignment_tuple_answer():
+    # 'x = 2, y = 1' voided a CORRECT problem in mini-03; must now pass.
+    r = check_predicate("2*x + y = 5, x - y = 1", "x, y", "x = 2, y = 1")
+    assert r.correct, r.detail
+
+
+def test_named_assignment_order_follows_symbols():
+    # Answer names in the "wrong" order still bind to the right symbols.
+    r = check_predicate("2*x + y = 5, x - y = 1", "x, y", "y = 1, x = 2")
+    assert r.correct, r.detail
+
+
+def test_named_assignment_single_symbol():
+    r = check_predicate("4*x = 20", "x", "x = 5")
+    assert r.correct, r.detail
+
+
+def test_named_assignment_wrong_names_untouched():
+    # Names not matching the declared symbols: no rewrite, parse fails as before.
+    r = check_predicate("2*x + y = 5, x - y = 1", "x, y", "a = 2, b = 1")
+    assert not r.correct
+
+
+def test_named_assignment_wrong_values_still_fail():
+    # Normalization must not weaken the predicate itself.
+    r = check_predicate("2*x + y = 5, x - y = 1", "x, y", "x = 3, y = 7")
+    assert not r.correct

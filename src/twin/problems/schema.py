@@ -254,3 +254,19 @@ def parse_suite(text: str) -> ProblemSuite:
     penalty (DESIGN.md §6.3)."""
     obj = _extract_json_object(text)
     return ProblemSuite.from_dict(obj)
+
+
+def parse_problem(text: str, *, default_domain: str = "math") -> Problem:
+    """Parse creator output text into a single Problem (Sprint 7 per-problem
+    creator mode), raising SuiteParseError on failure. Tolerates the model
+    wrapping the one problem in a suite-style ``{"problems": [...]}`` object —
+    the first entry is taken."""
+    obj = _extract_json_object(text)
+    if "problems" in obj and isinstance(obj["problems"], list):
+        if not obj["problems"]:
+            raise SuiteParseError("wrapper object has an empty 'problems' list")
+        inner = obj["problems"][0]
+        if not isinstance(inner, dict):
+            raise SuiteParseError("wrapper 'problems' entry is not an object")
+        obj = inner
+    return Problem.from_dict(obj, default_domain=default_domain)

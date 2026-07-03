@@ -1,0 +1,103 @@
+# Third real run — "mini-03": mini-02 minus its two measured compute sinks
+# (dead coding domain, starved solver), same Sprint-6 machinery otherwise.
+#
+# mini-02 final analysis (runs/2026-07-01-mini-02.jsonl, EXPERIMENTS.md):
+#   - coding iters (15/30) produced 0/141 consistent problems -> zero solver
+#     rollouts, half the wall-clock wasted on parse-gate-only creator signal;
+#   - solver got 4/30 real updates: 88% of scored math problems had solve rate
+#     exactly 0 or 1 (7/57 interior), so K-groups tied and the zero-adv skip
+#     (correctly) fired — the creator's consistent problems saturate the solver
+#     (rank curve 0.95/0.89/0.82 easy->hard, compressed at ceiling).
+#
+# Deltas vs mini2.yaml:
+#   - game.domains: ["math"]        coding is dead until its pipeline sprint
+#                                   (verify_code passes nothing the creator
+#                                   writes; needs a transcript-on shakeout to
+#                                   diagnose before it rejoins).
+#   - rewards.w_brevity: 0.15       correct-only bonus w_brevity*(1 - L/L_max):
+#                                   token-length spread breaks the all-solved
+#                                   K-group ties that starved the solver, and
+#                                   pressures verbose thinking traces.
+#   - (code, no knob) creator difficulty prompt recalibrated: anchor is now a
+#     STRONG solver, hardest problem should stump it most of the time, and
+#     "hard" must be structural (multi-step / combined concepts), not bigger
+#     arithmetic — attacks the same ceiling-compression from the prompt side.
+#   - transcript ON (scripts/train.py default): mini-02's consistency questions
+#     (why 38% of full-cert math problems fail their own predicate) were
+#     undiagnosable without one. Do NOT pass --no-transcript.
+# Everything else identical to mini2.yaml (G_c=4, interior target band 0.9/0.1,
+# adv_mode mean, zero-adv skip, 4096-token budgets — probe_memory measured the
+# worst-case grpo backward at 55GB@4096/132GB@8192, so budgets stay at 4096 and
+# longer contexts wait for a chunked completion_logprobs backward).
+model:
+  path: ~/.cache/lm-studio/models/mlx-community/Qwen3-8B-6bit
+  enable_thinking: true
+  max_kv_size: null
+
+lora:
+  num_layers: 16
+  rank: 64
+  alpha: 128.0          # effective mlx-lm scale = alpha / rank = 2.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+  top_p: 0.95
+  # 4096 everywhere: 2048 truncated the creator mid-<think> (mini-01 shakeout);
+  # 8192 is out (probe_memory: 132GB worst-case backward).
+  creator_max_tokens: 4096
+  solver_max_tokens: 4096
+  oracle_max_tokens: 4096
+
+game:
+  n_problems: 3         # N  (3-point difficulty curve = enough to fit a slope)
+  creator_group: 4      # G_c  (validated in mini-02: creator trained 23/30)
+  solver_attempts: 4    # K  (GRPO group per problem)
+  domains: ["math"]     # coding dropped (see header)
+
+rewards:
+  w_gradient: 1.0
+  w_consistency: 0.5
+  w_oracle: 0.1
+  w_valid: 0.1
+  w_solve: 1.0
+  w_oracle_solver: 0.05
+  w_brevity: 0.15       # NEW (see header); 0.0 in mini-01/02
+  mse_beta: 4.0
+  clip: 10.0
+  target_hi: 0.9        # interior target ramp (kept from mini-02)
+  target_lo: 0.1
+
+oracle:
+  enabled: true
+  cost_per_query: 1.0
+  max_calls_per_turn: 4
+
+tools:                  # creator inline CAS tool (ReAct); untaxed creator aid
+  creator_tools: ["solve", "calc"]
+  creator_max_tool_calls: 4
+  creator_tool_rounds: 4
+  cas_timeout_s: 3.0
+
+roles:
+  swap_interval: 8
+  warmup_iterations: 5
+  injection_rate: 0.0   # rotation-only (the headline mechanism)
+
+train:
+  iters: 30
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  grad_accumulation_steps: 1
+  grpo_microbatch: 1    # one 4096-token rollout per backward chunk (and even
+                        # that worst-cases ~55GB via swap — see header)
+  adv_mode: mean        # Dr.GRPO mean baseline
+  seed: 0
+  checkpoint_every: 5
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints
+  runs: runs
