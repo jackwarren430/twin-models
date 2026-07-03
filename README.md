@@ -46,7 +46,32 @@ frozen weights; the oracle/KL-reference is the same base with a zeroed adapter.
   `scripts/build_hard_bench.py` — **MATH-500**, **MBPP**, **MMLU-Pro**, **BIG-Bench-Hard** — where the
   frozen base lands at **66%** (math 70 / coding 50 / knowledge 60 / reasoning 85), i.e. real headroom to
   measure training. 43 fast tests cover loading, every grader path, the source converters, and the runner
-  via a fake solver (210 fast tests total).
+  via a fake solver.
+- **Sprint 5 — mini-01 audit fixes: done & verified.** Gradient reward scaled by the scored fraction
+  (voided problems strictly unprofitable), **math verification certificates** (`verification.check` +
+  `symbol`, mechanically checked by the CAS — replaces the LLM judge as the primary math consistency
+  path; self-certifying checks rejected as trivial), locked-down SymPy parse namespaces everywhere model
+  text is evaluated, and seeded MLX sampling (reproducible generation).
+- **Sprint 6 — advantage-degeneracy fixes: done & verified.** Mean-baseline advantages (Dr.GRPO
+  `A = R − mean(R)`, default; ÷std kept as ablation), interior target band (`rewards.target_hi/lo`,
+  runs use 0.9→0.1), G_c 2→4, and the zero-advantage skip (fully tied batches skip the whole GRPO
+  update before the reference pass).
+- **Sprint 7 — native tools, per-problem creator, personas: done & verified (code); mini-04 queued.**
+  Driven by mini-03b's transcript (the creator made **zero** real tool calls under the legacy ReAct
+  protocol — it simulated the CAS inside `<think>`): `tools.protocol: native` switches the creator to
+  **Qwen3 native function calling** (`<tool_call>` JSON via the chat template, masked `<tool_response>`
+  splice, glue verified against `apply_chat_template`); `game.creator_mode: per_problem` builds each
+  suite as N separate rollouts (own thinking budget per problem, rank-dictated difficulty + target
+  solve rate in-prompt, conditioning on previous problems' JSONs, suite reward broadcast across the N
+  trajectories); `game.personas` gives A/B stable identities ("alpha"/"omega") with a
+  calibration-framed competition; `game.require_tool_use` adds an optional strict tool gate plus
+  always-on adoption telemetry (`creator_tool_ok`, `creator_answer_in_obs`). **309 fast tests pass.**
+- **Runs so far** (details in [EXPERIMENTS.md](EXPERIMENTS.md)): **mini-01** SUCCESS (clean descending
+  difficulty curve, pearson −0.979; held-out hard-tier bench A +4 / B +5 over the frozen base);
+  **mini-02** done (creator signal fixed, but coding measured dead — 0/141 consistent — and the solver
+  starved: 4 real updates/30 iters); **mini-03a** aborted (prompt-induced think-spiral; w_brevity
+  validated); **mini-03b** stopped (zero real tool calls → Sprint 7); **mini-04** (configs/mini4.yaml)
+  is next: 2-iter shakeout, then the full 30.
 
 ## Setup
 
@@ -85,8 +110,10 @@ conda run -n twin-models python scripts/smoke_test_creator_cas.py  # creator inl
 # run the self-play loop from a config
 conda run -n twin-models python scripts/train.py --config configs/tiny.yaml --iters 5
 
-# the bigger Sprint-4 scale loop (thinking ON; minutes per iteration)
-conda run -n twin-models python scripts/train.py --config configs/base.yaml --iters 1000
+# a real run (mini-04 = current config; thinking ON, ~half an hour per iteration —
+# use --no-capture-output + python -u for live logs, caffeinate so it isn't suspended)
+caffeinate -i conda run --no-capture-output -n twin-models python -u \
+    scripts/train.py --config configs/mini4.yaml --run-name <date>-mini-04
 
 # analyze a finished run into curves (CSV + JSON + terminal report; --plots for PNGs)
 conda run -n twin-models python scripts/analyze_run.py runs/<run-name>.jsonl
@@ -119,12 +146,13 @@ src/twin/
   models/base.py     TwinBase: shared frozen base, generate, oracle, logprobs
   models/adapters.py Adapters: two LoRA trees over one base, swap/save/load
   problems/schema.py Problem / ProblemSuite + parsing & validation
-  tools/             calc, solve (creator CAS), sandboxed python, taxed oracle, ReAct harness
+  tools/             calc, solve (creator CAS), sandboxed python, taxed oracle,
+                     tool harness (legacy ReAct + Qwen3 native function calling)
   verifiers/         sympy math, sandboxed code exec, oracle-judge, dispatch
   rewards/engine.py  RewardEngine: creator/solver rewards (DESIGN §6)
   rl/grpo.py         GRPO: group advantages, k3 KL, single-step update
   roles/manager.py   role assignment, rotation/warmup, optional blend
-  prompts/           creator/solver templates + themes
+  prompts/           creator/solver/judge templates, personas, per-problem creator prompt
   train/loop.py      SelfPlayTrainer: one self-play iteration end-to-end
   train/extract.py   final-answer + oracle-call parsing
   log/jsonl.py       local JSONL run logging
@@ -139,6 +167,6 @@ scripts/
   benchmark.py       score base/A/B on the held-out benchmark (base-vs-trained table + JSON)
   build_hard_bench.py  adapt MATH-500/MBPP/MMLU-Pro/BBH into the data/bench/hard tier
   run_tests.py       central test runner (per-sprint selection, verbosity, ...)
-tests/               one folder per sprint (sprint1..4) + tests/bench + conftest auto-markers
+tests/               one folder per sprint (sprint1..7) + tests/bench + conftest auto-markers
 EXPERIMENTS.md       run log: how to launch/analyze + entry template + backlog
 ```
