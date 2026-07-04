@@ -36,6 +36,18 @@ def test_jaccard_template_edit_stays_high():
     assert jaccard(a, b) > 0.6
 
 
+def test_quadratic_coefficient_swap_reads_as_duplicate():
+    # mini-04b's live collapse signature (EXPERIMENTS checkpoint-10 review):
+    # the raw-token metric read pairs like these at ~0.3-0.7 because "5x" and
+    # "2x" tokenize as different words; digit-normalized they are the same
+    # template and must read as duplicates.
+    a = "Solve the quadratic equation $x^2 - 5x + 6 = 0$ and select the maximum root."
+    b = "Solve the quadratic equation $x^2 - 2x + 1 = 0$ and select the maximum root."
+    assert jaccard(a, b) == 1.0
+    c = "Find the smallest positive integer divisible by 12, 15, and 20."
+    assert jaccard(a, c) < 0.3
+
+
 def test_mean_pairwise_similarity():
     assert mean_pairwise_similarity([]) == 0.0
     assert mean_pairwise_similarity(["one problem only"]) == 0.0

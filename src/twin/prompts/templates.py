@@ -197,7 +197,11 @@ _MATH_VERIFICATION_RULES = (
     "$20?\" -> check \"4*x = 20\"; statement \"What is 15% of 80?\" -> check "
     "\"x = 0.15*80\". Do NOT write \"x = <your answer>\" (rejected as trivial). "
     "For several unknowns use symbol \"x, y\", answer \"(6, 4)\", check "
-    "\"x + y = 10, x - y = 2\"."
+    "\"x + y = 10, x - y = 2\". The example equations above are format "
+    "illustrations ONLY — never use them, or trivial variants of them, as "
+    "your problem."
+    # mini-04b measured both adapters submitting the "x + y = 10" example
+    # verbatim as a problem (EXPERIMENTS.md checkpoint-15) — hence the ban.
 )
 
 # The coding contract (Sprint 8 pipeline): the creator must ship an executable

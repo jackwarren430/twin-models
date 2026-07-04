@@ -419,7 +419,7 @@ Copy this block for each run.
   its primary pass. Probes: `runs/probe-tool-adoption-{1,2}.out` + rollout
   texts in `runs/probe-tool-adoption.rollouts.txt`.
 
-### 2026-07-04 — (RUNNING) mini-04b — probe-validated relaunch
+### 2026-07-04 — (STOPPED at 15/30, by pre-registered rule) mini-04b — probe-validated relaunch
 
 - **Config:** configs/mini4b.yaml = mini4.yaml + `creator_enable_thinking:
   false` (solver keeps thinking) + `require_tool_use: TRUE` (gate on — at 5/6
@@ -486,6 +486,42 @@ Copy this block for each run.
   self-inconsistency, so the safe-template strategy dominates; iter dips
   to 2/5 consistent are wrong-creator-answer buckets on the rare
   non-template attempts.
+- **STOPPED at iter 15/30 (2026-07-04 ~19:50), by the checkpoint-15
+  pre-registration.** Rotation fired exactly as designed at iter 13
+  (n_swaps=1; first flip = warmup + swap_interval = 13, manager.py:44 — my
+  "expected at 8" read was wrong, the code documents this). What rotation
+  measured:
+    - **Iter 13 (B creates, cold):** Rc +0.264, one suite 0/3 consistent.
+      B *did* attempt genuinely hard problems at hard ranks ("largest n
+      dividing 2^2023−1 with no prime factor <10", LCM-with-exclusion) —
+      and zeroed its consistency on them, the punishment arriving exactly
+      as the incentive analysis predicted.
+    - **Iter 14 (one GRPO update later):** Rc +0.856, 18/20 consistent,
+      all scored rates 1.0 — B converged to the safe strategy in a single
+      update, writing trivial arithmetic ("7×8+3"), A's quadratic
+      template, and the PROMPT'S OWN cert-format example ("x+y=10,
+      x−y=2", templates.py:200) as actual problems.
+  **Resolution of the live question: NO** — the calibration reward alone
+  cannot ratchet difficulty in a non-thinking creator. GRPO only
+  reinforces what sampling discovers; with deliberation removed, sampled
+  problem diversity collapses to templates, and the trivial+consistent
+  local optimum (rgrad floor 0.267 + full consistency) beats the
+  exploration needed to claim the 0.73 of gradient upside. **Rotation
+  TRANSPORTS the collapse rather than breaking it**: the incoming creator
+  reproduces the distribution it was just trained to solve. Both failure
+  modes are now measured, complementary, and instructive: 04(a) thinking
+  creator = simulate-don't-call + spiral; 04(b) non-thinking creator =
+  template collapse. mini-05 must restore bounded deliberation.
+  - Findings ledger (mini-05 prerequisites): (1) prompt-example leakage —
+    mark format examples do-not-reuse (templates.py:200); (2) bigram
+    similarity must be digit-normalized or template collapse dodges it;
+    (3) machinery CLEAN throughout: parse 1.0, cert coverage 100%, tool
+    adoption 100% under the strict gate (gated 1/300), solver_batch=8 +
+    two-phase prompt + no-think creator = ~30-35 min/iter (04a: 50-70).
+  - Artifacts: `runs/2026-07-04-mini-04b.{jsonl,out,transcript.txt}`,
+    checkpoints A/B at steps 5/10/15. Hard-bench of step-15 adapters vs
+    the base 66% no-think bar: `runs/bench-hard-mini04b-step15.json`
+    (results below when done).
 
 ---
 

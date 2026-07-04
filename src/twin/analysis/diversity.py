@@ -8,19 +8,24 @@ twin-models had NO diversity mechanism — this module adds the measurement
 (always-on telemetry) and a config-gated reward penalty (``rewards.
 w_diversity``, default 0 = off, run as a measured ablation).
 
-Similarity is Jaccard over word bigrams of the problem *statement* — cheap,
-tokenizer-free, and robust to small numeric edits (swapping constants in a
-template leaves most bigrams intact, which is exactly the collapse case we
-want to catch).
+Similarity is Jaccard over word bigrams of the problem *statement*, with
+digit runs normalized to ``0`` first — cheap and tokenizer-free. The
+normalization is load-bearing: mini-04b collapsed onto one quadratic
+template whose coefficient swaps ("x^2 - 5x + 6" vs "x^2 - 2x + 1")
+produced entirely different tokens ("5x" vs "2x"), reading 0.3-0.7 on the
+raw metric while structural repetition was ~total (EXPERIMENTS.md
+checkpoint-10 review). Two statements that differ only in their numbers ARE
+the same problem template, which is exactly what this metric must say.
 """
 
 import re
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
+_NUM_RE = re.compile(r"\d+(?:\.\d+)?")
 
 
 def _ngrams(text: str, n: int = 2) -> frozenset:
-    words = _WORD_RE.findall((text or "").lower())
+    words = _WORD_RE.findall(_NUM_RE.sub("0", (text or "").lower()))
     if len(words) < n:
         return frozenset([tuple(words)]) if words else frozenset()
     return frozenset(tuple(words[i:i + n]) for i in range(len(words) - n + 1))
