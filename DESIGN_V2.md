@@ -335,11 +335,21 @@ Queued 2026-07-03 (from the Sprint-7 discussion), roughly in order:
    simulates the CAS inside `<think>` under the native protocol — gate + prompt pressure likely
    needed; decide on the full-run numbers.)
 
+Also **LANDED 2026-07-03: chunked `completion_logprobs` backward** (`train.logit_chunk`, default
+0 = plain path). The transformer runs once for [T, H] hidden states; the LM head + log-softmax run
+over the completion region in `mx.checkpoint`-ed chunks, so backward rematerializes one
+[chunk, V] instead of pinning two fp32 [T, V] tensors — the mini-02 probe's 55GB worst case at
+4096 budgets. CPU-stream equivalence proven to ~1e-7 (Metal shows shape-dependent kernel rounding
+~1e-4, harmless); CAVEAT documented in code: `mx.checkpoint` treats the closed-over head weights
+as constants, correct because only the LoRA tree (upstream of the head) is trainable — do not
+enable if head/embeddings ever become trainable. Re-run `scripts/probe_memory.py` with
+`logit_chunk` set (post-mini-04) to certify the measured peak before flipping it on in mini-05;
+it also unlocks the 8192-budget question.
+
 Next after Sprint 8 (standing queue): **coding pipeline sprint** (creator contract for
 `verification.tests`/`solution_code`, solver code branch, transcript-on shakeout — brings the second
 domain back); **wire the oracle** (instantiate OracleTool in rollouts so the tax taxes something);
-**kl_beta/LR probe** (mini-01's late-run KL creep); **chunked `completion_logprobs` backward** (needed
-for >4096 budgets and worst-case-4096 robustness); rank-adaptive K; thinking on/off ablation
+**kl_beta/LR probe** (mini-01's late-run KL creep); rank-adaptive K; thinking on/off ablation
 (pilot.yaml); the Sprint-4 ablation backlog in EXPERIMENTS.md.
 
 ### Sprint 9 — literature countermeasures (first two LANDED 2026-07-03)

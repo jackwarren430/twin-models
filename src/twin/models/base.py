@@ -303,7 +303,11 @@ class TwinBase:
         return chosen
 
     def completion_logprobs(
-        self, prompt_tokens: list[int], completion_tokens: list[int]
+        self,
+        prompt_tokens: list[int],
+        completion_tokens: list[int],
+        *,
+        logit_chunk: int | None = None,
     ) -> mx.array:
         """Per-token log-probs of ``completion_tokens`` given ``prompt_tokens``
         under the *currently active* adapter. Returns shape
@@ -315,18 +319,57 @@ class TwinBase:
         params), so it works both for the grad-enabled policy pass and the
         no-grad reference pass (base adapter). ``token_logprobs`` returns *all*
         positions; this slices to the completion region without summing, which
-        GRPO needs for its per-token policy-gradient and KL terms."""
+        GRPO needs for its per-token policy-gradient and KL terms.
+
+        ``logit_chunk`` (Sprint 8, from the mini-02 memory probe): the plain
+        path materializes fp32 ``[T, V]`` logits AND log-softmax (~5.3GB each
+        at 8.7k tokens), both pinned live by ``value_and_grad`` — a 4096-budget
+        worst case peaks at 55GB and survives only on macOS swap. Chunked, the
+        transformer runs once for ``[T, H]`` hidden states (H=4096 ≪ V=152k),
+        and the LM head + log-softmax run over the completion region in
+        ``mx.checkpoint``-ed chunks of this many positions — backward
+        rematerializes one chunk's ``[chunk, V]`` at a time instead of holding
+        ``[T, V]``. CAVEAT: ``mx.checkpoint`` differentiates only through the
+        chunk function's array *arguments*; the closed-over head weights are
+        treated as constants. That is exactly right here — the LoRA tree
+        (attention/MLP projections) is the only trainable set and it sits
+        upstream of the hidden states — but do NOT enable this if the head or
+        embeddings are ever made trainable. ``None``/0 = plain v1 path."""
         n = len(completion_tokens)
         if n == 0:
             return mx.zeros((0,))
         seq = list(prompt_tokens) + list(completion_tokens)
         ids = mx.array(seq)[None]                  # [1, T]
-        logits = self.model(ids)[0].astype(mx.float32)   # [T, V]
-        logp = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
         start = len(prompt_tokens) - 1             # logits[start] predicts completion[0]
-        sel = logp[start : start + n]              # [n, V]
-        targets = mx.array(list(completion_tokens))[:, None]  # [n, 1]
-        return mx.take_along_axis(sel, targets, axis=-1)[:, 0]  # [n]
+        targets = mx.array(list(completion_tokens))
+        if not logit_chunk:
+            logits = self.model(ids)[0].astype(mx.float32)   # [T, V]
+            logp = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
+            sel = logp[start : start + n]              # [n, V]
+            return mx.take_along_axis(sel, targets[:, None], axis=-1)[:, 0]  # [n]
+
+        hidden = self.model.model(ids)[0]          # [T, H] pre-head states
+        sel_h = hidden[start : start + n]          # [n, H]
+        head = self._lm_head_fn()
+
+        def chunk_logprobs(h, t):
+            logits = head(h).astype(mx.float32)                       # [k, V]
+            logp = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
+            return mx.take_along_axis(logp, t[:, None], axis=-1)[:, 0]
+
+        ckpt = mx.checkpoint(chunk_logprobs)
+        outs = [
+            ckpt(sel_h[i : i + logit_chunk], targets[i : i + logit_chunk])
+            for i in range(0, n, logit_chunk)
+        ]
+        return outs[0] if len(outs) == 1 else mx.concatenate(outs)
+
+    def _lm_head_fn(self):
+        """The model's vocabulary projection as a callable ``[.., H] -> [.., V]``
+        (plain or tied-embedding head, quantized or not)."""
+        if getattr(getattr(self.model, "args", None), "tie_word_embeddings", False):
+            return self.model.model.embed_tokens.as_linear
+        return self.model.lm_head
 
     def sequence_logprob(self, prompt_tokens: list[int], completion_tokens: list[int]) -> mx.array:
         """Total log-prob of ``completion_tokens`` given ``prompt_tokens``

@@ -212,6 +212,14 @@ class TrainConfig:
     # pass — a 4096-token completion alone materializes a ~2.5GB [T,V] logits
     # tensor, so a dozen at once blows past 32GB.
     grpo_microbatch: int = 0
+    # Sprint 8 — chunked+checkpointed LM-head in completion_logprobs: the
+    # transformer runs once for [T, H] hidden states, then the head +
+    # log-softmax run over the completion in mx.checkpoint-ed chunks of this
+    # many positions (backward rematerializes one [chunk, V] at a time
+    # instead of pinning two fp32 [T, V] monsters — the mini-02 probe's 55GB
+    # worst case at 4096 budgets). Numerically identical gradients (the head
+    # carries no LoRA params). 0/None = plain v1 path; 256 is a sane setting.
+    logit_chunk: int = 0
     # Group-advantage normalization (twin.rl.group_advantages). "mean" (the
     # default) is Dr.GRPO-style A = R − mean(R): for the small groups this
     # project runs (G_c 2-4, K=4) the classic ÷std maps ANY non-tie to ±1 —

@@ -127,7 +127,10 @@ class SelfPlayTrainer:
 
     # GRPO scoring primitive; ignores the passed `model` (it IS self.base.model).
     def _score(self, model, prompt_ids, completion_ids):
-        return self.base.completion_logprobs(prompt_ids, completion_ids)
+        return self.base.completion_logprobs(
+            prompt_ids, completion_ids,
+            logit_chunk=self.cfg.train.logit_chunk or None,
+        )
 
     # ----- raw-text transcript helpers (no-op when no sink) ----------------
     def _tr_section(self, title: str) -> None:
@@ -382,7 +385,10 @@ class SelfPlayTrainer:
         # OOM. (Lazy eval would also reference whatever adapter is active later.)
         self.adapters.activate("base")
         for t in trajs:
-            t.ref_logprobs = self.base.completion_logprobs(t.prompt_ids, t.completion_ids)
+            t.ref_logprobs = self.base.completion_logprobs(
+                t.prompt_ids, t.completion_ids,
+                logit_chunk=self.cfg.train.logit_chunk or None,
+            )
             mx.eval(t.ref_logprobs)
         # Policy update on this adapter.
         self.adapters.activate(adapter)
