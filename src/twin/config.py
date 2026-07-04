@@ -74,6 +74,13 @@ class GenConfig:
     creator_max_tokens: int = 1024
     solver_max_tokens: int = 768
     oracle_max_tokens: int = 512
+    # Sprint 8 — batched solver generation: sample the K solver attempts at a
+    # problem in continuous-batching chunks of this size (they share one
+    # prompt, the ideal batching case). 1 = the v1 sequential path, unchanged.
+    # >1 changes the RNG *stream* (not the sampling distribution) and trades
+    # KV-cache memory (~0.6GB/sequence worst-case at a 4096 budget) for
+    # decode throughput. K=8 at batch 8 is the intended mini-05 setting.
+    solver_batch: int = 1
 
 
 @dataclass
@@ -101,6 +108,15 @@ class GameConfig:
     # tool would return" measure. Off = log-only (per-problem tool usage and
     # answer-appears-in-obs are always recorded in the suite summary).
     require_tool_use: bool = False
+    # Sprint 8 — creator credit assignment in per_problem mode.
+    # "broadcast": all N rank trajectories share the suite reward (Sprint 7
+    #   default — one advantage per suite, as in v1).
+    # "per_problem": rank i earns its OWN calibration fit + consistency flag
+    #   + oracle tax (suite validity stays shared) via
+    #   RewardEngine.creator_problem_rewards — the TRR++ direction
+    #   (RELATED_WORK.md §1): a rank that nailed its target is not dragged by
+    #   a sibling. Ignored in suite creator_mode (one trajectory per suite).
+    credit: str = "broadcast"
 
 
 @dataclass

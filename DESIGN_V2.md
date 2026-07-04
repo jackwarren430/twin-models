@@ -305,25 +305,35 @@ A 70% (+4), B 71% (+5) — real transferable capability from 30 iterations.
 
 ---
 
-## 12. Sprint 8 — planned
+## 12. Sprint 8 — in progress (code landed 2026-07-03 during the mini-04 run)
 
 Queued 2026-07-03 (from the Sprint-7 discussion), roughly in order:
 
-1. **Batched solver generation.** K=8 attempts are identical prompts with no tools — batch them
-   through mlx-lm batch generation (~2-3× wall-clock from the earlier probe; per-row sampling is
-   independent, so outputs differ automatically). This is the lever that funds mini-04's 160
-   generations/iter and any further K/N growth. Acceptance: identical reward semantics, measured
-   speedup on a 2-iter shakeout.
-2. **Per-problem creator credit decomposition** (ablation vs mini-04's broadcast). Trajectory i gets
-   its own rank fit (|p_i − t_i|²) + own consistency + a shared suite-level term (distinctness/ordering
-   don't decompose). Sharper credit for bad ranks; more moving parts — measured, not default.
-3. **CAS session state.** Per-rollout namespace so calls can define intermediates
+1. **Batched solver generation — LANDED.** `TwinBase.generate_batch` (mlx-lm `BatchGenerator`
+   continuous batching; exact sampled ids incl. terminal EOS, matching `generate` semantics) +
+   `gen.solver_batch` (default 1 = v1 sequential path, unchanged) + trainer
+   `_generate_solver_group` chunking K attempts. A batched run is statistically — not bitwise —
+   equivalent to sequential (same sampling distribution, different RNG draws).
+   `scripts/probe_batch_generate.py` measures tok/s + peak memory at B=1/2/4/8 (run it only when
+   no training run is live); its numbers pick mini-05's `solver_batch`.
+2. **Per-problem creator credit decomposition — LANDED** (config `game.credit: per_problem`,
+   default `broadcast` = Sprint-7 behaviour). `RewardEngine.creator_problem_rewards`: rank i earns
+   its own calibration fit exp(−β(p_i−t_i)²) + own consistency flag + own oracle tax + the shared
+   suite validity; parse-failed ranks still gate individually; suite summary logs
+   `problem_rewards`. Run as a measured ablation vs broadcast, not a silent default.
+3. **Think-share telemetry — LANDED** (pulled forward from the Sprint-9 watch list):
+   `twin.think.think_share` + per-iter `creator_think_share`/`solver_think_share` in the record
+   (unclosed think counts as thinking-to-end, so truncation spirals read ~1.0). Watchdog for
+   SPIRAL-style thinking collapse under w_brevity pressure.
+4. **CAS session state.** Per-rollout namespace so calls can define intermediates
    (`a = solve(...)`, then use `a`), or multi-statement calls. Ergonomics for creative multi-step
    problems; pointless until mini-04 proves the model calls the tool at all.
-4. **Judge → native protocol.** The judge is the same base model with the same legacy-ReAct failure
+5. **Judge → native protocol.** The judge is the same base model with the same legacy-ReAct failure
    mode; migrate once mini-04 validates native on the creator path.
-5. **Strict tool gate decision.** Flip `game.require_tool_use: true` if mini-04's `answer_in_obs`
-   shows the creator still faking tool grounding.
+6. **Strict tool gate decision.** Flip `game.require_tool_use: true` if mini-04's `answer_in_obs`
+   shows the creator still faking tool grounding. (Early mini-04 iter-0 transcript: creator still
+   simulates the CAS inside `<think>` under the native protocol — gate + prompt pressure likely
+   needed; decide on the full-run numbers.)
 
 Next after Sprint 8 (standing queue): **coding pipeline sprint** (creator contract for
 `verification.tests`/`solution_code`, solver code branch, transcript-on shakeout — brings the second

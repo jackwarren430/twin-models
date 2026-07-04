@@ -161,6 +161,62 @@ class RewardEngine:
             target_curve=target,
         )
 
+    def creator_problem_rewards(
+        self,
+        suite: ProblemSuite,
+        solve_rates: list[float],
+        consistent_flags: list[bool],
+        *,
+        valid: bool | None = None,
+        scored_mask: list[bool] | None = None,
+        target_by_problem: list[float] | None = None,
+        n_oracle_by_problem: list[int] | None = None,
+    ) -> list[float]:
+        """Per-problem creator rewards (Sprint 8 credit decomposition, the
+        TRR++ direction — RELATED_WORK.md §1): rank i earns its OWN
+        calibration fit ``w_grad·exp(-β·(p_i - t_i)²)`` (0 if unscored), its
+        own consistency flag, its own oracle tax, and the shared suite-level
+        validity. Used in per-problem creator mode instead of broadcasting
+        the suite reward to all N trajectories, so a rank that nailed its
+        target is not dragged by a sibling that missed. Same weights and clip
+        as :meth:`creator_reward`; parallel to ``suite.problems``."""
+        n = len(suite.problems)
+        if len(solve_rates) != n or len(consistent_flags) != n:
+            raise ValueError(
+                f"expected {n} solve_rates/consistent_flags, got "
+                f"{len(solve_rates)}/{len(consistent_flags)}"
+            )
+        for name, xs in (("scored_mask", scored_mask),
+                         ("target_by_problem", target_by_problem),
+                         ("n_oracle_by_problem", n_oracle_by_problem)):
+            if xs is not None and len(xs) != n:
+                raise ValueError(f"expected {n} {name} entries, got {len(xs)}")
+        c = self.cfg
+        if target_by_problem is None:
+            ranked = sorted(range(n), key=lambda i: suite.problems[i].difficulty)
+            curve = ProblemSuite.target_curve(n, hi=c.target_hi, lo=c.target_lo)
+            targets = [0.0] * n
+            for rank, i in enumerate(ranked):
+                targets[i] = curve[rank]
+        else:
+            targets = [float(t) for t in target_by_problem]
+        is_valid = suite.is_valid() if valid is None else bool(valid)
+        rewards: list[float] = []
+        for i in range(n):
+            scored = scored_mask[i] if scored_mask is not None else True
+            r_grad = (
+                math.exp(-c.mse_beta * (float(solve_rates[i]) - targets[i]) ** 2)
+                if scored else 0.0
+            )
+            n_oracle = n_oracle_by_problem[i] if n_oracle_by_problem else 0
+            rewards.append(self._clip(
+                c.w_gradient * r_grad
+                + c.w_consistency * (1.0 if consistent_flags[i] else 0.0)
+                - c.w_oracle * n_oracle
+                + c.w_valid * (1.0 if is_valid else 0.0)
+            ))
+        return rewards
+
     def creator_parse_gate(self) -> CreatorReward:
         """Unparseable creator rollout -> fixed low reward, not fed to solver."""
         return CreatorReward(

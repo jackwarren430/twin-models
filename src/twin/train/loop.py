@@ -64,6 +64,7 @@ from twin.tools import (
     solve,
     tool_schemas,
 )
+from twin.think import think_share
 from twin.train.extract import count_oracle_calls, extract_final_answer
 from twin.verifiers import check_consistency, verify_answer
 
@@ -171,6 +172,38 @@ class SelfPlayTrainer:
         return self.base.generate(
             prompt, max_tokens=max_tokens, temp=temp, top_p=self.cfg.gen.top_p
         )
+
+    def _generate_solver_group(self, adapter, system, user):
+        """The K solver attempts at ONE problem. ``gen.solver_batch == 1`` is
+        the v1 sequential path (one :meth:`_generate` per attempt); >1 samples
+        the shared prompt in continuous-batching chunks (Sprint 8 — the K
+        attempts are the ideal batch: identical prompt, independent draws).
+        Chunking keeps peak KV-cache bounded at solver_batch sequences."""
+        cfg = self.cfg
+        k = cfg.game.solver_attempts
+        if cfg.gen.solver_batch <= 1:
+            return [
+                self._generate(
+                    adapter, system, user,
+                    max_tokens=cfg.gen.solver_max_tokens, temp=cfg.gen.solver_temp,
+                )
+                for _ in range(k)
+            ]
+        self.adapters.activate(adapter)
+        prompt = self.base.render(
+            user, system=system, enable_thinking=cfg.model.enable_thinking
+        )
+        results = []
+        for start in range(0, k, cfg.gen.solver_batch):
+            b = min(cfg.gen.solver_batch, k - start)
+            results.extend(self.base.generate_batch(
+                [prompt] * b,
+                max_tokens=cfg.gen.solver_max_tokens,
+                temp=cfg.gen.solver_temp,
+                top_p=cfg.gen.top_p,
+                completion_batch_size=b,
+            ))
+        return results
 
     # ----- inline-tool generation (legacy ReAct or Qwen3 native) ----------
     def _build_tool_runner(self, tool_names, max_tool_calls, *, native: bool = False):
@@ -281,6 +314,7 @@ class SelfPlayTrainer:
                 "n_tool_calls": cgen.n_tool_calls,
                 "n_tool_ok": sum(1 for res in harness.calls if res.ok),
                 "n_oracle": count_oracle_calls(cgen.text),
+                "think_share": round(think_share(cgen.text), 4),
                 "parsed": False,
                 "answer_in_obs": False,
             }
@@ -377,6 +411,11 @@ class SelfPlayTrainer:
         solver_trajs: list[Trajectory] = []
         suite_summaries: list[dict] = []
         solver_oracle_total = 0  # oracle calls the solver wrote this iteration
+        # Think-share telemetry (Sprint 8): fraction of each rollout spent
+        # inside <think>. Watch solver trend under brevity pressure (SPIRAL's
+        # thinking collapse) and creator pinning at 1.0 (truncation spirals).
+        creator_think: list[float] = []
+        solver_think: list[float] = []
         # Solver accuracy tallies (consistent problems only get a solver rollout).
         solver_problems = 0        # problems posed to the solver
         solver_attempts = 0        # total attempts across those problems
@@ -415,6 +454,7 @@ class SelfPlayTrainer:
                     "n_tool_calls": cgen.n_tool_calls,
                     "n_tool_ok": sum(1 for res in charness.calls if res.ok),
                     "n_oracle": count_oracle_calls(cgen.text),
+                    "think_share": round(think_share(cgen.text), 4),
                     "parsed": False,
                     "answer_in_obs": False,
                 }
@@ -432,6 +472,7 @@ class SelfPlayTrainer:
             n_oracle_c = sum(r["n_oracle"] for r in rollouts)
             n_tool_calls_c = sum(r["n_tool_calls"] for r in rollouts)
             n_tool_ok_c = sum(r["n_tool_ok"] for r in rollouts)
+            creator_think.extend(r.get("think_share", 0.0) for r in rollouts)
 
             # --- parse gate: no usable suite -> fixed low reward, no solver
             if suite is None or not suite.problems:
@@ -491,11 +532,10 @@ class SelfPlayTrainer:
                     continue
                 group: list[Trajectory] = []
                 attempt_flags: list[bool] = []
-                for k in range(cfg.game.solver_attempts):
-                    sgen = self._generate(
-                        assign.solver, solver_sys, solver_user(p),
-                        max_tokens=cfg.gen.solver_max_tokens, temp=cfg.gen.solver_temp,
-                    )
+                sgens = self._generate_solver_group(
+                    assign.solver, solver_sys, solver_user(p))
+                solver_think.extend(think_share(s.text) for s in sgens)
+                for k, sgen in enumerate(sgens):
                     ans = extract_final_answer(sgen.text)
                     try:
                         solved = bool(verify_answer(p, ans, oracle=self._judge).correct)
@@ -534,13 +574,24 @@ class SelfPlayTrainer:
             # (b) grade each parsed rank against the target it was prompted
             # with (target_by_problem) rather than a re-stretched ramp —
             # otherwise dropping hard ranks out-earns writing them.
+            problem_rewards: list[float] | None = None
             if cfg.game.creator_mode == "per_problem":
                 rank_targets = ProblemSuite.target_curve(
                     n, cfg.rewards.target_hi, cfg.rewards.target_lo)
+                target_by_problem = [rank_targets[r["rank"]] for r in prob_rolls]
                 creward = self.engine.creator_reward(
                     suite, solve_rates, flags, n_oracle_c,
                     scored_mask=scored_mask, expected_n=n,
-                    target_by_problem=[rank_targets[r["rank"]] for r in prob_rolls])
+                    target_by_problem=target_by_problem)
+                # Credit decomposition (Sprint 8, config-gated): each parsed
+                # rank earns its own reward instead of the broadcast total.
+                if cfg.game.credit == "per_problem":
+                    problem_rewards = self.engine.creator_problem_rewards(
+                        suite, solve_rates, flags,
+                        scored_mask=scored_mask,
+                        target_by_problem=target_by_problem,
+                        n_oracle_by_problem=[r["n_oracle"] for r in prob_rolls],
+                    )
             else:
                 creward = self.engine.creator_reward(
                     suite, solve_rates, flags, n_oracle_c, scored_mask=scored_mask)
@@ -557,14 +608,23 @@ class SelfPlayTrainer:
             # penalized at the trajectory that produced it. Per-problem credit
             # decomposition is a queued Sprint-8 ablation.
             gate_total = self.engine.creator_parse_gate().total
-            for roll in rollouts:
+            # Reward per rollout: the broadcast suite total (default), or —
+            # with game.credit == "per_problem" — that rank's own decomposed
+            # reward; parse-failed ranks always get the gate individually.
+            if problem_rewards is not None:
+                rw = iter(problem_rewards)
+                roll_rewards = [next(rw) if r["parsed"] else gate_total
+                                for r in rollouts]
+            else:
+                roll_rewards = [creward.total if r["parsed"] else gate_total
+                                for r in rollouts]
+            for roll, reward in zip(rollouts, roll_rewards):
                 meta = {"parsed": roll["parsed"], "suite_id": suite.suite_id}
                 if "rank" in roll:
                     meta["rank"] = roll["rank"]
                 creator_trajs.append(Trajectory(
                     roll["prompt_tokens"], roll["completion_tokens"],
-                    reward=creward.total if roll["parsed"] else gate_total,
-                    loss_mask=roll["loss_mask"], meta=meta))
+                    reward=reward, loss_mask=roll["loss_mask"], meta=meta))
             suite_summaries.append({
                 "parsed": True, "n_problems": len(suite.problems),
                 # Certificate coverage (Sprint 5): problems carrying the
@@ -579,6 +639,8 @@ class SelfPlayTrainer:
                 "solve_rates_by_rank": [round(x, 3) for x in creward.solve_rates_by_rank],
                 "r_gradient": round(creward.r_gradient, 4),
                 "r_consistency": round(creward.r_consistency, 4),
+                **({"problem_rewards": [round(r, 4) for r in problem_rewards]}
+                   if problem_rewards is not None else {}),
                 "n_oracle": n_oracle_c, "n_tool_calls": n_tool_calls_c,
                 # Sprint 7 tool-adoption watchdogs: successful tool calls, how
                 # many stated answers literally appeared in a tool observation,
@@ -647,6 +709,9 @@ class SelfPlayTrainer:
             "creator_tool_ok": creator_tool_ok_total,
             "creator_answer_in_obs": answer_in_obs_total,
             "creator_tool_gated": tool_gated_total,
+            # Sprint 8 think-share telemetry (see accumulators above):
+            "creator_think_share": round(_mean(creator_think), 4),
+            "solver_think_share": round(_mean(solver_think), 4),
             "adapter_norm": adapter_norm,
             "adapter_drift": adapter_drift,
             "n_solver_trajs": len(solver_trajs),

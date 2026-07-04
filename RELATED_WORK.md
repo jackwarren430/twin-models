@@ -383,6 +383,84 @@ the same run-and-decompose loop that caught mini-03b's fake tool calls is what w
 
 ---
 
+## 6. Backlog answers (2026-07-03, web-verified)
+
+Three questions from the project backlog, researched against the July-2026 literature.
+
+### 6a. Can we use TinyLoRA? ("Learning to Reason in 13 Parameters", arXiv:2602.04118)
+
+**What it is.** Weight tying + fixed random projections scale a LoRA-style update down to
+arbitrarily few trainable parameters — as few as ONE. Headline: Qwen2.5-7B-Instruct goes
+76.0% → 91.8% on GSM8K trained with **GRPO on 13 parameters** (26 bytes in bf16), ≈ full-FT's
+91.7%; ~90% of the gains at 1000× fewer params across AIME/AMC/MATH500. Two findings matter more
+than the stunt number: (1) **RL specifically** works at tiny capacity — SFT needs 100–1000×
+larger updates for the same gains; (2) "tiling" (sharing params across depth) beats sharing by
+module type.
+
+**Verdict for twin-models: yes, trivially implementable (fixed seeded projections + a tiny
+trainable vector on the frozen base — same `model.update(tree)` machinery), but it does NOT
+attack our bottleneck, and it cuts against the headline hypothesis.**
+- Our constraint is generation throughput (~16 tok/s) and backward *activation* memory (the
+  [T,V] logits, 55GB worst-case at 4096 — see EXPERIMENTS.md mini-02 probe), neither of which shrinks with
+  adapter size. 2×77M adapter params are already free.
+- The scientific reading is the real payoff: TinyLoRA is strong evidence that RLVR mostly
+  **elicits** capabilities already in the base rather than adding knowledge. Twin-models' story
+  ("two adapters diverge into distinct skills/knowledge and pull each other up") needs adapter
+  capacity to be *load-bearing*. A **capacity-downward ablation** (rank 64 → 8 → 1 → TinyLoRA-
+  style tied) is therefore a *sharper version of an experiment we already planned*: if the loop's
+  gains survive at rank-1, rotation-injection is eliciting, not teaching — that's a publishable
+  negative/positive either way. Queue it with the ablation series, not before.
+
+### 6b. What problems did AZR use? What did comparable setups use?
+
+Already detailed in §1/§2; the compact answer the backlog wants:
+- **AZR**: no natural-language problems at all — **code triplets** (program, input, output) in
+  three modes: *deduction* (program+input → output), *abduction* (program+output → find input),
+  *induction* (I/O pairs → write program). The Python executor derives ground truth by running
+  the proposer's program — **the proposer cannot state a wrong answer**, which is the single
+  deepest difference from our stated-answer+certificate design.
+- **R-Zero**: open-ended *math word problems*, ground truth = majority vote over 10 solver
+  samples (decays 79%→63% as problems harden — the failure our certificates exist to avoid).
+- **SPIRAL**: zero-sum *text games* (Kuhn poker etc.) — skills transfer to math anyway.
+- **SPICE**: questions grounded in a *retrieved corpus* — ground truth from documents.
+- **Minimo**: formal *Lean conjectures* — proof-checker ground truth.
+- Lesson mined for us: AZR's three task *modes* are a built-in **structural diversity mechanism**
+  (same theme, three inverse problems). Our creator has one mode: "pose a problem". A cheap
+  math analog — "given this solution/derivation, write the problem" (abduction) — is a
+  Sprint-9-adjacent diversity lever no one in our queue has yet.
+
+### 6c. "Use the new agentworld model — why would this be better than an actual environment?"
+
+Two distinct 2026 artifacts, neither actually DeepSeek:
+- **Qwen-AgentWorld** (Qwen, arXiv:2606.24597, June 2026): a *language world model* (LWM) —
+  35B-A3B and 397B-A17B MoE — trained on 10M+ interaction trajectories to *predict environment
+  transitions* (terminal, web, OS, Android, SWE, MCP, search). Agents trained inside the
+  simulation beat real-environment-only training on 7 agentic benchmarks.
+- **Agent World Model** (Snowflake, arXiv:2602.10090, ICML 2026): NOT an LLM simulator — a
+  pipeline that *synthesizes 1,000 executable, database-backed environments* with reward
+  functions over real system state. (DeepSeek-V3.2's env-synthesis pipeline is the same family.)
+
+**Answer to the backlog's own question.** Simulated/synthesized environments beat "an actual
+environment" on *scale* (thousands in parallel, no infra), *control* (deterministic resets,
+reproducible curricula), *coverage* (tasks nobody hosted), and *safety* — at the price of
+**ground-truth fidelity** (an LWM hallucinates transitions; a policy learns to exploit the
+simulator). That tradeoff is exactly the axis twin-models already fights on (certificate vs
+LLM-judge), so the project's answer writes itself:
+- **For math/coding (now): an LWM is strictly worse than our "actual environment".** SymPy and
+  the sandbox ARE the environment — exact, free, un-hackable by construction. Swapping them for
+  a 35B simulator re-inherits R-Zero's decay problem at GPU prices, on hardware (32GB M5) that
+  can't host it anyway.
+- **For the eventual agentic broadening (later): the Snowflake/DeepSeek *synthesis* route fits
+  twin better than the Qwen *simulation* route** — executable envs with state-based rewards
+  preserve our verifier-first commitment; the creator's job generalizes from "write a problem +
+  certificate" to "write a task + environment + reward check", which is the same contract.
+- One genuinely new idea worth keeping: Qwen-AgentWorld shows *world-model training as warm-up*
+  improves downstream agents. The twin analog — creator pre-trained to *predict the solver's
+  solve rate* before the RL loop starts — is a cheap calibration warm-up that directly serves
+  our gradient reward. Filed for Sprint 9+.
+
+---
+
 ## References (compact)
 
 | Work | Ref |
@@ -409,3 +487,6 @@ the same run-and-decompose loop that caught mini-03b's fake tool calls is what w
 | SPAG | Cheng et al., 2024, arXiv:2404.10642 |
 | Self-Rewarding LMs | Yuan et al., 2024, arXiv:2401.10020 |
 | Minimo | Poesia et al., 2024, arXiv:2407.00695 |
+| TinyLoRA ("13 Parameters") | 2026, arXiv:2602.04118 |
+| Qwen-AgentWorld | Qwen Team, 2026, arXiv:2606.24597 |
+| Agent World Model (synthetic envs) | Snowflake, 2026, arXiv:2602.10090 |

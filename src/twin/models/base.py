@@ -20,6 +20,7 @@ from typing import Callable, Optional
 
 import mlx.core as mx
 from mlx_lm import load, stream_generate
+from mlx_lm.generate import BatchGenerator
 from mlx_lm.sample_utils import make_sampler
 
 
@@ -135,6 +136,62 @@ class TwinBase:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
         )
+
+    def generate_batch(
+        self,
+        prompts: list[str],
+        *,
+        max_tokens: int = 512,
+        temp: float = 0.7,
+        top_p: float = 0.95,
+        seed: int | None = None,
+        completion_batch_size: int = 32,
+    ) -> list[GenResult]:
+        """Sample completions for ``prompts`` in ONE continuous-batching pass
+        under the *currently active* adapter (Sprint 8: batched solver
+        generation — decode is memory-bandwidth-bound on Apple silicon, so a
+        batch of B reuses each weight read ~B times).
+
+        Semantics match :meth:`generate` per prompt: ``completion_tokens`` are
+        the exact sampled ids (the terminal EOS included when the model
+        emitted one); ``text`` is the decoded completion without the EOS.
+        The RNG *stream* differs from B sequential calls — same sampling
+        distribution, different draws — so a batched run is statistically,
+        not bitwise, equivalent to a sequential one (documented in
+        DESIGN_V2.md; the solve-rate measurement is unaffected).
+
+        ``completion_batch_size`` caps concurrent decode sequences: KV cache
+        is ~150KB/token for Qwen3-8B, so B sequences at a 4096 budget
+        worst-case ~0.6GB each — keep B modest on 32GB."""
+        if seed is not None:
+            mx.random.seed(seed)
+        sampler = make_sampler(temp=temp, top_p=top_p)
+        gen = BatchGenerator(
+            self.model,
+            stop_tokens=[[t] for t in self.tokenizer.eos_token_ids],
+            sampler=sampler,
+            completion_batch_size=completion_batch_size,
+        )
+        prompt_ids = [self.tokenizer.encode(p) for p in prompts]
+        uids = gen.insert(prompt_ids, [max_tokens] * len(prompt_ids))
+        toks: dict = {uid: [] for uid in uids}
+        try:
+            while responses := gen.next_generated():
+                for r in responses:
+                    toks[r.uid].append(int(r.token))
+        finally:
+            gen.close()
+        eos = set(self.tokenizer.eos_token_ids)
+        out: list[GenResult] = []
+        for pid, uid in zip(prompt_ids, uids):
+            ids = toks[uid]
+            text_ids = ids[:-1] if (ids and ids[-1] in eos) else ids
+            out.append(GenResult(
+                text=self.tokenizer.decode(text_ids),
+                prompt_tokens=pid,
+                completion_tokens=ids,
+            ))
+        return out
 
     # ----- inline ReAct generation (tool use mid-rollout) ------------------
     def _encode_no_special(self, text: str) -> list[int]:
