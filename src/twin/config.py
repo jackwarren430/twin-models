@@ -186,6 +186,9 @@ class ToolsConfig:
     # The judge stays on "react" either way (migration queued for Sprint 8).
     protocol: str = "react"
     cas_timeout_s: float = 3.0        # best-effort wall-clock guard for `solve`
+    # Wall-clock limit for the sandboxed `run_python` creator tool (Sprint 8
+    # coding pipeline). The sandbox also enforces CPU/memory/file limits.
+    run_python_timeout_s: float = 5.0
     judge_tools: list[str] = field(default_factory=lambda: ["solve", "calc"])
     judge_max_tool_calls: int = 4     # ToolHarness budget per judge call
     judge_tool_rounds: int = 4        # max ReAct rounds for the judge

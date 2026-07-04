@@ -23,22 +23,13 @@ from __future__ import annotations
 import re
 
 from twin.bench.dataset import BenchItem
-from twin.train.extract import extract_final_answer
+from twin.train.extract import extract_code_block, extract_final_answer  # noqa: F401 - extract_code_block re-exported
 from twin.verifiers.result import VerificationResult
 from twin.verifiers import verify_code, verify_math
 
 from twin.think import strip_think  # noqa: F401 - re-exported; see twin.think
 
-_FENCE_RE = re.compile(r"```[^\n`]*\n(.*?)```", re.DOTALL)
 _MCQ_LABEL_RE = re.compile(r"[\(\[]?\s*([A-Za-z])\s*[\)\].:]")
-
-
-def extract_code_block(text: str) -> str:
-    """Return the last fenced code block, or the whole text if none is fenced."""
-    blocks = _FENCE_RE.findall(text or "")
-    if blocks:
-        return blocks[-1].strip()
-    return (text or "").strip()
 
 
 def _normalize(s: str) -> str:

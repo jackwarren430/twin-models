@@ -143,16 +143,23 @@ def creator_system(*, native_tools: bool = False, persona: str | None = None) ->
     return f"{persona}\n\n{body}" if persona else body
 
 
-def solver_system(*, persona: str | None = None) -> str:
+def solver_system(*, persona: str | None = None, code: bool = False) -> str:
     """Solver system prompt, optionally with the competition persona
-    prepended. The held-out benchmark builds its own prompts and never passes
-    a persona, so it stays neutral by construction."""
-    return f"{persona}\n\n{SOLVER_SYSTEM}" if persona else SOLVER_SYSTEM
+    prepended. ``code=True`` selects the programming variant (Sprint 8 coding
+    pipeline) — the math ANSWER-line contract makes no sense for code, which
+    is graded by executing the solver's function against the creator's tests.
+    The held-out benchmark builds its own prompts and never passes a persona,
+    so it stays neutral by construction."""
+    body = SOLVER_CODE_SYSTEM if code else SOLVER_SYSTEM
+    return f"{persona}\n\n{body}" if persona else body
 
 
 # Domains whose problems must carry the machine-checkable math certificate
 # (verification.check + verification.symbol -> twin.verifiers.check_predicate).
 _MATH_DOMAINS = {"math", "arithmetic", "algebra"}
+# Domains verified by executing code against tests (twin.verifiers.verify_code).
+# Mirrors twin.verifiers.dispatch._CODE_DOMAINS.
+_CODE_DOMAINS = {"coding", "code", "python"}
 
 # The certificate field spec + rules, spliced into the math creator prompt.
 # The check is verified mechanically by a CAS (Sprint 5): it replaces the LLM
@@ -180,12 +187,68 @@ _MATH_VERIFICATION_RULES = (
     "\"x + y = 10, x - y = 2\"."
 )
 
+# The coding contract (Sprint 8 pipeline): the creator must ship an executable
+# reference solution AND the tests that define correctness — the consistency
+# check literally runs solution_code + tests in the sandbox, and the solver is
+# graded by running ITS code against the same tests. mini-02's coding domain
+# scored 0/141 consistent because the prompt never asked for any of this and
+# verify_code fails closed without tests.
+_CODE_VERIFICATION_FIELD = (
+    ',\n      "verification": {\n'
+    '        "type": "code",\n'
+    '        "entry_point": "<the exact function name the statement asks for>",\n'
+    '        "solution_code": "<complete working Python defining that '
+    'function>",\n'
+    '        "tests": "<assert statements calling the function, one per line>"\n'
+    "      }"
+)
+
+_CODE_VERIFICATION_RULES = (
+    " The problem is verified mechanically: \"solution_code\" and \"tests\" "
+    "are executed together in a sandbox, and a problem whose own solution "
+    "fails its own tests (or that omits either field) is DISCARDED — it earns "
+    "you nothing. The statement must name the required function and its "
+    "signature exactly (e.g. \"Write a function count_vowels(s) that ...\"); "
+    "\"tests\" must be 3-6 plain assert lines calling that function, covering "
+    "a normal case and an edge case (e.g. assert count_vowels(\"abc\") == 1); "
+    "deterministic pure Python only — no input(), files, network, randomness, "
+    "or imports beyond the standard library. Set \"answer\" to the entry-point "
+    "name. Use the run_python tool to RUN solution_code plus the tests before "
+    "writing the JSON — an untested solution is usually a discarded one."
+)
+
+
+def _verification_spec(domain: str) -> tuple[str, str, str, str]:
+    """Per-domain contract pieces: (field, rules, tool sentence, answer desc)."""
+    d = domain.lower()
+    if d in _MATH_DOMAINS:
+        return (
+            _MATH_VERIFICATION_FIELD,
+            _MATH_VERIFICATION_RULES,
+            "Use the solve tool to compute and check each answer before "
+            "writing the JSON.",
+            "<the single final answer your solution yields, e.g. a number or "
+            "closed form>",
+        )
+    if d in _CODE_DOMAINS:
+        return (
+            _CODE_VERIFICATION_FIELD,
+            _CODE_VERIFICATION_RULES,
+            "Use the run_python tool to execute each solution_code together "
+            "with its tests before writing the JSON.",
+            "<the entry-point function name>",
+        )
+    return (
+        "", "",
+        "Use the solve tool to check any computation before writing the JSON.",
+        "<the single final answer your solution yields>",
+    )
+
 
 def creator_user(domain: str, theme: str, n_problems: int) -> str:
     """Ask for a suite of ``n_problems`` on ``theme`` spanning easy->hard."""
-    is_math = domain.lower() in _MATH_DOMAINS
-    verification_field = _MATH_VERIFICATION_FIELD if is_math else ""
-    verification_rules = _MATH_VERIFICATION_RULES if is_math else ""
+    verification_field, verification_rules, tool_sentence, answer_desc = (
+        _verification_spec(domain))
     return (
         f"Create a set of {n_problems} {domain} problems about \"{theme}\".\n"
         f"The problems must span a smooth difficulty ramp from easy to genuinely "
@@ -197,8 +260,7 @@ def creator_user(domain: str, theme: str, n_problems: int) -> str:
         f"verify its answer with the tool, and write the JSON. Do not deliberate "
         f"over candidate designs — a long deliberation gets your output cut off "
         f"before the JSON, which scores nothing.\n\n"
-        f"Use the solve tool to compute and check each answer before writing the "
-        f"JSON. Then return ONLY this JSON object:\n"
+        f"{tool_sentence} Then return ONLY this JSON object:\n"
         "{\n"
         f'  "theme": "{theme}",\n'
         f'  "domain": "{domain}",\n'
@@ -207,8 +269,7 @@ def creator_user(domain: str, theme: str, n_problems: int) -> str:
         '      "statement": "<the problem, fully self-contained>",\n'
         '      "difficulty": <number 0.0 (easiest) to 1.0 (hardest)>,\n'
         '      "solution": "<a short worked solution deriving the answer>",\n'
-        '      "answer": "<the single final answer your solution yields, e.g. a '
-        'number or closed form>"'
+        f'      "answer": "{answer_desc}"'
         f"{verification_field}\n"
         "    }\n"
         "    // ... exactly "
@@ -265,9 +326,8 @@ def creator_problem_user(
     (never their thinking — that's the memory point of per-problem mode);
     pass None when ``game.condition_on_previous`` is off."""
     opp = opponent or "the solver"
-    is_math = domain.lower() in _MATH_DOMAINS
-    verification_field = _MATH_VERIFICATION_FIELD if is_math else ""
-    verification_rules = _MATH_VERIFICATION_RULES if is_math else ""
+    verification_field, verification_rules, tool_sentence, answer_desc = (
+        _verification_spec(domain))
 
     if previous:
         prev_block = (
@@ -288,18 +348,18 @@ def creator_problem_user(
         f"{difficulty:.2f}.\n"
         f"{_difficulty_brief(target_rate, opp)}\n\n"
         f"{prev_block}"
-        f"Design decisively: commit to the first workable idea, verify its "
-        f"answer with the solve tool, and write the JSON. Do not deliberate "
+        f"Design decisively: commit to the first workable idea, verify it "
+        f"with the tool, and write the JSON. Do not deliberate "
         f"over candidate designs — a long deliberation gets your output cut "
         f"off before the JSON, which scores nothing.\n\n"
+        f"{tool_sentence} "
         f"Work out the solution first, then state the answer it yields. Return "
         f"ONLY this JSON object (one problem, no wrapper list):\n"
         "{\n"
         '  "statement": "<the problem, fully self-contained>",\n'
         f'  "difficulty": {difficulty:.2f},\n'
         '  "solution": "<a short worked solution deriving the answer>",\n'
-        '  "answer": "<the single final answer your solution yields, e.g. a '
-        'number or closed form>"'
+        f'  "answer": "{answer_desc}"'
         f"{_indent_verification(verification_field)}\n"
         "}\n\n"
         "Rules: the answer must be tool-checked and follow from the solution; "
@@ -325,9 +385,42 @@ SOLVER_SYSTEM = (
     "for several values give an ordered tuple in parentheses, e.g. (3, 2)."
 )
 
+# Coding variant (Sprint 8 pipeline): the answer IS the code — it is graded by
+# running the solver's function against the creator's hidden tests.
+SOLVER_CODE_SYSTEM = (
+    "You are a careful programmer. Think briefly, then reply with exactly one "
+    "fenced Python code block (```python ... ```) containing your complete, "
+    "self-contained solution. Define exactly the function the problem names, "
+    "with the stated signature; standard library only; no prints, no example "
+    "usage, no prose outside the code block."
+)
+
+
+def is_code_problem(problem: "Problem | str") -> bool:
+    """Whether this problem is graded by executing code (mirrors
+    twin.verifiers.dispatch method selection: explicit verification type wins,
+    else the domain decides)."""
+    if not isinstance(problem, Problem):
+        return False
+    vtype = str(problem.verification.get("type", "")).strip().lower()
+    if vtype:
+        return vtype.startswith(("code", "exec", "python"))
+    return problem.domain.lower() in _CODE_DOMAINS
+
 
 def solver_user(problem: Problem | str) -> str:
     statement = problem.statement if isinstance(problem, Problem) else str(problem)
+    if is_code_problem(problem):
+        entry = str(problem.verification.get("entry_point", "")).strip()
+        entry_line = (
+            f"Name the function exactly `{entry}`.\n" if entry else ""
+        )
+        return (
+            f"Solve this programming problem:\n\n{statement}\n\n"
+            f"{entry_line}"
+            "Reply with one complete ```python code block containing your "
+            "solution — it will be run against tests."
+        )
     return (
         f"Solve this problem:\n\n{statement}\n\n"
         "Show your reasoning concisely, then end with a final line in exactly this "

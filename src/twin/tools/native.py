@@ -156,10 +156,38 @@ CALC_TOOL_SCHEMA = {
     },
 }
 
-_SCHEMAS = {"solve": SOLVE_TOOL_SCHEMA, "calc": CALC_TOOL_SCHEMA}
+RUN_PYTHON_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "run_python",
+        "description": (
+            "Run a complete Python program in an isolated sandbox and return "
+            "its stdout (or the error traceback). No network, no files "
+            "persist, a few seconds of CPU. Use print() to see values. The "
+            "right way to test code you are writing: run the function plus "
+            "its asserts before committing to it."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "The complete Python source to execute.",
+                }
+            },
+            "required": ["code"],
+        },
+    },
+}
+
+_SCHEMAS = {
+    "solve": SOLVE_TOOL_SCHEMA,
+    "calc": CALC_TOOL_SCHEMA,
+    "run_python": RUN_PYTHON_TOOL_SCHEMA,
+}
 
 
 def tool_schemas(names: list[str]) -> list[dict]:
     """Schemas for the named tools (unknown names are skipped — the config
-    lists what the run enables; only CAS tools exist natively so far)."""
+    lists what the run enables: CAS tools + the sandboxed ``run_python``)."""
     return [_SCHEMAS[n] for n in names if n in _SCHEMAS]

@@ -10,6 +10,21 @@ from twin.tools.protocol import parse_tool_calls
 
 _BOXED = re.compile(r"\\boxed\{([^{}]*)\}")
 _ANSWER_LINE = re.compile(r"(?im)^[ \t>*-]*(?:final\s+)?answer\s*[:=]\s*(.+?)\s*$")
+_FENCE = re.compile(r"```[^\n`]*\n(.*?)```", re.DOTALL)
+
+
+def extract_code_block(text: str) -> str:
+    """The solver's code answer: the last fenced code block in the post-think
+    text (drafts inside ``<think>`` must not win — same rule as
+    :func:`extract_final_answer`), falling back to the raw text's last block,
+    then to the whole (post-think) text for models that skip the fence.
+    Sprint 8 coding pipeline; the bench grader reuses this."""
+    visible = strip_think(text).strip()
+    for t in ([visible, text] if visible else [text]):
+        blocks = _FENCE.findall(t or "")
+        if blocks:
+            return blocks[-1].strip()
+    return visible if visible else (text or "").strip()
 
 
 def extract_final_answer(text: str) -> str:

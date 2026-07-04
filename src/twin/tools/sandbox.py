@@ -59,6 +59,25 @@ class SandboxResult:
         return self.stderr
 
 
+def format_sandbox_result(res: "SandboxResult", *, max_chars: int = 1500) -> str:
+    """Render a sandbox run as a tool observation the model can act on
+    (Sprint 8 coding pipeline — the `run_python` creator tool). Success shows
+    stdout; failure names the failure mode and shows the stderr tail, which
+    is what the model needs to fix its code."""
+    if res.timed_out:
+        return "TIMEOUT: the code did not finish within the time limit."
+    out = (res.stdout or "").strip()
+    err = (res.stderr or "").strip()
+    if res.ok:
+        text = out if out else "(ok — ran cleanly, no output; use print() to see values)"
+    else:
+        tail = err[-max_chars:] if err else "(no stderr)"
+        text = f"ERROR (exit {res.returncode}):\n{tail}"
+        if out:
+            text = f"{text}\nstdout:\n{out[-max_chars:]}"
+    return text if len(text) <= max_chars else text[:max_chars] + " …[truncated]"
+
+
 def _limit_resources(cpu_s: int, mem_mb: int, fsize_mb: int, nofile: int):
     """Returned closure runs in the child between fork and exec (POSIX only)."""
 

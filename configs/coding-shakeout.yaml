@@ -1,0 +1,95 @@
+# Coding-pipeline shakeout (Sprint 8) — NOT a training run that matters:
+# 3 iterations, coding only, transcript on, to verify with real tokens that
+# (a) the creator emits the executable contract (verification.tests +
+# solution_code + entry_point — the fields mini-02's prompt never asked for,
+# which is why 0/141 problems ever passed consistency),
+# (b) it actually calls run_python to test its solution,
+# (c) consistency passes for correct solutions (n_consistent > 0 at last),
+# (d) the solver emits a ```python block that verify_code can grade.
+#
+# Run AFTER mini-04 finishes (loads the base):
+#   caffeinate -i conda run --no-capture-output -n twin-models \
+#     python -u scripts/train.py --config configs/coding-shakeout.yaml \
+#     --run-name coding-shakeout
+#
+# DECISION: if n_consistent > 0 on most iters and the transcript shows real
+# run_python calls, coding is ready to rejoin game.domains in a mini run
+# (user call — it has been dropped from training since 2026-07-02).
+
+model:
+  path: ~/.cache/lm-studio/models/mlx-community/Qwen3-8B-6bit
+  enable_thinking: true
+  max_kv_size: null
+
+lora:
+  num_layers: 16
+  rank: 64
+  alpha: 128.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+  top_p: 0.95
+  creator_max_tokens: 4096
+  solver_max_tokens: 4096
+  oracle_max_tokens: 4096
+  solver_batch: 4       # Sprint 8 batched solver generation (K=4 in one pass)
+
+game:
+  n_problems: 3
+  creator_group: 2
+  solver_attempts: 4
+  domains: ["coding"]   # the whole point of the shakeout
+  creator_mode: per_problem
+  condition_on_previous: true
+  personas: false       # keep the shakeout mechanically simple
+  require_tool_use: false
+
+rewards:
+  w_gradient: 1.0
+  w_consistency: 0.5
+  w_oracle: 0.1
+  w_valid: 0.1
+  w_solve: 1.0
+  w_oracle_solver: 0.05
+  w_brevity: 0.15
+  mse_beta: 4.0
+  clip: 10.0
+  target_hi: 0.9
+  target_lo: 0.1
+
+oracle:
+  enabled: true
+  cost_per_query: 1.0
+  max_calls_per_turn: 4
+
+tools:
+  creator_tools: ["solve", "calc", "run_python"]  # run_python = the coding CAS
+  creator_max_tool_calls: 4
+  creator_tool_rounds: 5
+  cas_timeout_s: 3.0
+  run_python_timeout_s: 5.0
+  protocol: native
+
+roles:
+  swap_interval: 8
+  warmup_iterations: 0
+  injection_rate: 0.0
+
+train:
+  iters: 3
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  grad_accumulation_steps: 1
+  grpo_microbatch: 1
+  logit_chunk: 256      # Sprint 8 chunked LM-head backward (first real-token use)
+  adv_mode: mean
+  seed: 0
+  checkpoint_every: 0   # no checkpoints — diagnostic run
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints
+  runs: runs

@@ -47,6 +47,7 @@ from twin.prompts import (
     creator_problem_user,
     creator_system,
     creator_user,
+    is_code_problem,
     opponent_of,
     pick_theme,
     solver_persona,
@@ -65,8 +66,13 @@ from twin.tools import (
     solve,
     tool_schemas,
 )
+from twin.tools.sandbox import format_sandbox_result, run_python
 from twin.think import think_share
-from twin.train.extract import count_oracle_calls, extract_final_answer
+from twin.train.extract import (
+    count_oracle_calls,
+    extract_code_block,
+    extract_final_answer,
+)
 from twin.verifiers import check_consistency, verify_answer
 
 
@@ -234,6 +240,14 @@ class SelfPlayTrainer:
                 tools["solve"] = lambda arg, _ts=tcfg.cas_timeout_s: solve(arg, timeout_s=_ts)
             elif name == "calc":
                 tools["calc"] = calc
+            elif name == "run_python":
+                # Sandboxed exec (Sprint 8 coding pipeline): the creator's
+                # analog of the CAS — test the reference solution + its own
+                # asserts before committing to the problem.
+                tools["run_python"] = (
+                    lambda code, _ts=tcfg.run_python_timeout_s:
+                    format_sandbox_result(run_python(code, timeout_s=_ts))
+                )
         harness = ToolHarness(
             tools,
             max_tool_calls=max_tool_calls,
@@ -453,6 +467,13 @@ class SelfPlayTrainer:
         solver_sys = solver_system(
             persona=solver_persona(assign.solver) if cfg.game.personas else None,
         )
+        # Coding-pipeline variant (Sprint 8): code problems are graded by
+        # executing the solver's function against the creator's tests, so the
+        # math ANSWER-line contract is replaced per problem below.
+        solver_sys_code = solver_system(
+            persona=solver_persona(assign.solver) if cfg.game.personas else None,
+            code=True,
+        )
 
         for g in range(cfg.game.creator_group):
             # --- creator generation --------------------------------------
@@ -552,11 +573,15 @@ class SelfPlayTrainer:
                     continue
                 group: list[Trajectory] = []
                 attempt_flags: list[bool] = []
+                p_is_code = is_code_problem(p)
                 sgens = self._generate_solver_group(
-                    assign.solver, solver_sys, solver_user(p))
+                    assign.solver,
+                    solver_sys_code if p_is_code else solver_sys,
+                    solver_user(p))
                 solver_think.extend(think_share(s.text) for s in sgens)
                 for k, sgen in enumerate(sgens):
-                    ans = extract_final_answer(sgen.text)
+                    ans = (extract_code_block(sgen.text) if p_is_code
+                           else extract_final_answer(sgen.text))
                     try:
                         solved = bool(verify_answer(p, ans, oracle=self._judge).correct)
                     except Exception:  # noqa: BLE001

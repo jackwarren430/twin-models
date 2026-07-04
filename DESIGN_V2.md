@@ -406,7 +406,15 @@ batch), plus queued design items:
 - **Oracle is not wired.** `OracleTool` is never instantiated in the loop; `n_oracle_calls` counts
   only oracle-call *text* the policy writes (always 0 so far). The "epistemic floor" contribution is
   design intent, not yet an experiment.
-- **Coding domain is dead** and out of training until its pipeline sprint (§12).
+- **Coding domain: root cause FOUND + pipeline BUILT (2026-07-03), real-token shakeout pending.**
+  mini-02's 0/141 was never about bad code: the creator prompt's verification block was math-only —
+  coding problems were never asked for `tests`/`solution_code`, and `verify_code` fails closed with
+  "no tests supplied". Landed: code verification contract in both creator prompts (entry_point +
+  solution_code + 3-6 asserts), sandboxed `run_python` creator tool (schema + harness + observation
+  formatter), code-aware solver prompt (`SOLVER_CODE_SYSTEM`, one ```python block) + think-aware
+  `extract_code_block` scoring in the loop. `configs/coding-shakeout.yaml` = the 3-iter
+  transcript-on validation run (post-mini-04); coding stays OUT of `game.domains` until it passes
+  and the user re-admits it.
 - **Judge still on legacy ReAct** — same protocol the creator just abandoned for cause.
 - **Solver is single-turn, tool-less** — inline tools/oracle for the solver remain future work.
 - A structured-but-colluding certificate (`"x = 12 + 0"`) passes the triviality tripwire; cert
