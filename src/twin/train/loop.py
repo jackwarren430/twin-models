@@ -31,6 +31,7 @@ from pathlib import Path
 import mlx.core as mx
 import mlx.optimizers as optim
 
+from twin.analysis.diversity import cross_suite_penalties, mean_pairwise_similarity
 from twin.config import Config
 from twin.log import JsonlLogger, TranscriptLogger
 from twin.models import Adapters, TwinBase
@@ -117,6 +118,12 @@ class SelfPlayTrainer:
         # curve, DESIGN.md §11). Taken before any training touches the trees.
         self._init_trees = {n: adapters.snapshot(n) for n in adapters.NAMES}
         mx.eval([t for t in self._init_trees.values()])
+        # Sprint 9 — grounded theme weights (game.theme_weights): loaded once;
+        # None keeps the uniform static pool.
+        self._theme_weights = None
+        if cfg.game.theme_weights:
+            with open(cfg.game.theme_weights) as f:
+                self._theme_weights = json.load(f)
 
     # GRPO scoring primitive; ignores the passed `model` (it IS self.base.model).
     def _score(self, model, prompt_ids, completion_ids):
@@ -399,7 +406,10 @@ class SelfPlayTrainer:
             self.roles.maybe_blend(self.adapters, assign)
 
         domain = self.rng.choice(cfg.game.domains)
-        theme = pick_theme(domain, self.rng)
+        # getattr: scripted test trainers are built via __new__ and may not
+        # carry the grounded-theme attribute.
+        theme = pick_theme(domain, self.rng,
+                           weights=getattr(self, "_theme_weights", None))
         n = cfg.game.n_problems
 
         self._tr_section(
@@ -416,6 +426,10 @@ class SelfPlayTrainer:
         # thinking collapse) and creator pinning at 1.0 (truncation spirals).
         creator_think: list[float] = []
         solver_think: list[float] = []
+        # Diversity bookkeeping (Sprint 9): per parsed suite, its id, its
+        # problem statements, and its summary dict — consumed after the
+        # group loop for the repetition telemetry/penalty.
+        parsed_records: list[tuple[str, list[str], dict]] = []
         # Solver accuracy tallies (consistent problems only get a solver rollout).
         solver_problems = 0        # problems posed to the solver
         solver_attempts = 0        # total attempts across those problems
@@ -652,6 +666,31 @@ class SelfPlayTrainer:
                 "n_parse_failed": sum(1 for r in rollouts if not r["parsed"]),
                 "reward": round(creward.total, 4),
             })
+            parsed_records.append((
+                suite.suite_id,
+                [p.statement for p in suite.problems],
+                suite_summaries[-1],
+            ))
+
+        # Sprint 9 — diversity: always-on repetition telemetry, config-gated
+        # penalty (rewards.w_diversity). Computed across the whole group so a
+        # suite that copies another's problems earns less than one that
+        # explored; a shared theme baseline cancels in the GRPO advantage.
+        problem_similarity = 0.0
+        if parsed_records:
+            all_statements = [s for _, stmts, _ in parsed_records for s in stmts]
+            problem_similarity = round(mean_pairwise_similarity(all_statements), 4)
+            penalties = cross_suite_penalties(
+                [stmts for _, stmts, _ in parsed_records])
+            penalty_by_suite: dict[str, float] = {}
+            for (sid, _, summary), pen in zip(parsed_records, penalties):
+                summary["repetition"] = round(pen, 4)
+                penalty_by_suite[sid] = pen
+            if cfg.rewards.w_diversity:
+                for t in creator_trajs:
+                    sid = t.meta.get("suite_id")
+                    if t.meta.get("parsed") and sid in penalty_by_suite:
+                        t.reward -= cfg.rewards.w_diversity * penalty_by_suite[sid]
 
         # Creator GRPO group = every creator trajectory this iteration. In
         # suite mode that's the G_c suites (v1 semantics, unchanged). In
@@ -712,6 +751,10 @@ class SelfPlayTrainer:
             # Sprint 8 think-share telemetry (see accumulators above):
             "creator_think_share": round(_mean(creator_think), 4),
             "solver_think_share": round(_mean(solver_think), 4),
+            # Sprint 9 diversity telemetry: mean pairwise statement similarity
+            # across every parsed problem this iteration (collapse watchdog;
+            # per-suite nearest-neighbour "repetition" lives in the summaries).
+            "problem_similarity": problem_similarity,
             "adapter_norm": adapter_norm,
             "adapter_drift": adapter_drift,
             "n_solver_trajs": len(solver_trajs),

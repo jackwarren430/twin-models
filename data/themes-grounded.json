@@ -1,0 +1,34 @@
+{
+  "coding": [
+    [
+      "mbpp",
+      11.0
+    ]
+  ],
+  "math": [
+    [
+      "number theory",
+      3.0
+    ],
+    [
+      "intermediate algebra",
+      3.0
+    ],
+    [
+      "prealgebra",
+      2.0
+    ],
+    [
+      "geometry",
+      2.0
+    ],
+    [
+      "counting and probability",
+      1.0
+    ],
+    [
+      "algebra",
+      1.0
+    ]
+  ]
+}

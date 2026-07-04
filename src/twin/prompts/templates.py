@@ -28,7 +28,23 @@ THEMES: dict[str, list[str]] = {
 }
 
 
-def pick_theme(domain: str, rng: random.Random) -> str:
+def pick_theme(
+    domain: str,
+    rng: random.Random,
+    weights: dict[str, list] | None = None,
+) -> str:
+    """Pick this iteration's theme. Uniform over the static ``THEMES`` pool by
+    default. ``weights`` (Sprint 9 — SPICE-style target grounding,
+    RELATED_WORK.md §3) maps a domain to ``[[theme, weight], ...]`` — usually
+    written by ``scripts/build_grounded_themes.py`` from a held-out-benchmark
+    result, so the curriculum leans toward measured failure topics instead of
+    a fixed hand-picked list. Domains absent from ``weights`` (or with empty/
+    non-positive entries) fall back to the static pool."""
+    if weights and weights.get(domain):
+        entries = [(str(t), float(w)) for t, w in weights[domain] if float(w) > 0]
+        if entries:
+            themes, ws = zip(*entries)
+            return rng.choices(themes, weights=ws, k=1)[0]
     pool = THEMES.get(domain) or THEMES["math"]
     return rng.choice(pool)
 

@@ -342,6 +342,34 @@ domain back); **wire the oracle** (instantiate OracleTool in rollouts so the tax
 for >4096 budgets and worst-case-4096 robustness); rank-adaptive K; thinking on/off ablation
 (pilot.yaml); the Sprint-4 ablation backlog in EXPERIMENTS.md.
 
+### Sprint 9 — literature countermeasures (first two LANDED 2026-07-03)
+
+Attacks the two strongest-evidence gaps from RELATED_WORK.md §5 (code shipped with the sprint8 test
+batch), plus queued design items:
+
+1. **Diversity mechanism — LANDED.** `twin.analysis.diversity`: word-bigram Jaccard similarity;
+   always-on telemetry (`problem_similarity` per iteration, per-suite nearest-neighbour
+   `repetition` in summaries) + config-gated `rewards.w_diversity` penalty (default 0) — the
+   R-Zero repetition-penalty analog. Suites that copy another suite's problems earn less than
+   suites that explore; the shared-theme baseline cancels in the GRPO advantage. Watch the
+   telemetry a full run before enabling the penalty.
+2. **Target-distribution grounding — LANDED.** `game.theme_weights` (path to
+   `{domain: [[theme, weight], ...]}`) + `scripts/build_grounded_themes.py`, which profiles a
+   held-out bench result's failures by subcategory (floor + #failures). The SPICE/SGS move:
+   curriculum themes lean toward measured weakness (current base profile: number theory,
+   intermediate algebra) instead of a fixed hand list. Uniform static pool remains the default.
+3. **Abduction mode (queued, AZR-inspired).** A second creator task mode — "here is a
+   derivation/solution, write the problem it solves" — is structural diversity the single
+   "pose a problem" mode can't reach, and its certificate falls out for free (the given
+   derivation IS the check). Candidate `game.creator_task_mix`.
+4. **Calibration warm-up (queued, Qwen-AgentWorld-inspired).** Pre-train the creator to predict
+   the solver's solve rate on a fixed probe set before the RL loop starts — world-model-as-warm-up
+   for the gradient reward.
+5. **Plateau expectation (analysis stance, not code).** R-Zero's gains fade by round 3; expect the
+   same shape past ~30 iters and treat a flat stretch as *the measured phenomenon to study* (with
+   certificates, our ground truth does not decay — the interesting question is whether the plateau
+   moves).
+
 ---
 
 ## 13. Failure modes & mitigations (updated with what actually happened)

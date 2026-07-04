@@ -117,6 +117,12 @@ class GameConfig:
     #   (RELATED_WORK.md §1): a rank that nailed its target is not dragged by
     #   a sibling. Ignored in suite creator_mode (one trajectory per suite).
     credit: str = "broadcast"
+    # Sprint 9 — SPICE-style target grounding: path to a theme-weights JSON
+    # ({domain: [[theme, weight], ...]}), usually built by
+    # scripts/build_grounded_themes.py from a held-out bench result, biasing
+    # the per-iteration theme draw toward measured failure topics. null =
+    # uniform over the static prompts.THEMES pool (v1 behaviour).
+    theme_weights: str | None = None
 
 
 @dataclass
@@ -135,6 +141,13 @@ class RewardsConfig:
     w_brevity: float = 0.0
     mse_beta: float = 4.0         # sharpness of exp(-beta*MSE) gradient reward
     clip: float = 10.0
+    # Sprint 9 — cross-suite repetition penalty (the R-Zero-style diversity
+    # mechanism; RELATED_WORK.md §2/§5). Per suite: mean nearest-neighbour
+    # word-bigram Jaccard of its problems vs the OTHER suites in the same
+    # iteration (twin.analysis.diversity), subtracted from the suite reward
+    # scaled by this weight. 0 = off (telemetry still always logged as
+    # problem_similarity / per-suite repetition). Run as a measured ablation.
+    w_diversity: float = 0.0
     # Target solve-rate ramp endpoints (easy rank -> hard rank). The default
     # 1.0 -> 0.0 ramp makes the endpoint ranks' solver K-groups zero-variance
     # (all-solved / all-failed) at creator-optimum; an interior band like
