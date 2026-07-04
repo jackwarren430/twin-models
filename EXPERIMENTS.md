@@ -396,10 +396,45 @@ Copy this block for each run.
   stating explicitly that tools cannot run inside private reasoning; hard-rank
   brief gains a one-pass-commit instruction ("a merely-good hard problem
   beats a discarded perfect one"). `scripts/probe_tool_adoption.py` (6 real
-  rollouts, no training) gates the relaunch — pre-registered rule: adoption
-  ≥2/6 → relaunch as **mini-04b** with `game.require_tool_use: true` +
-  `gen.solver_batch: 8` + the new telemetry; adoption 0 → iterate the prompt
-  again first.
+  rollouts, no training) gated the relaunch — pre-registered rule: adoption
+  ≥2/6 → relaunch with the strict gate; 0 → iterate the prompt again.
+
+### 2026-07-04 — probes 1 & 2 — tool adoption under the rewritten prompt
+
+- **Probe 1 (creator thinking ON):** adoption 2/6 — both rank-2 rollouts
+  called; both rank-4 rollouts burned the FULL 4096 budget in <think> without
+  ever leaving it (the mini-03a spiral, surviving the prompt rewrite); rank-0
+  answers directly. Post-call "parse failures" turned out to be OUR bug, not
+  the model's (below).
+- **Probe 2 (creator thinking OFF, `model.creator_enable_thinking: false`):**
+  **adoption 5/6 including both hard ranks**, ~215-token rollouts (~20×
+  shorter), every delivered JSON valid. The 1/6 no-call rollout parsed fine —
+  exactly what the gate should select against.
+- **Extractor bug found by the probe dump:** a native rollout's own
+  `<tool_call>` JSON (`{"name": "solve", ...}`) sits earlier in the text than
+  the final problem JSON and won first-balanced-object extraction — every
+  tool-USING rollout "parse-failed" while doing everything right (this also
+  poisoned probe 1's post-call reads and would have voided mini-04b).
+  `_extract_json_object` now strips `<tool_call>`/`<tool_response>` markup in
+  its primary pass. Probes: `runs/probe-tool-adoption-{1,2}.out` + rollout
+  texts in `runs/probe-tool-adoption.rollouts.txt`.
+
+### 2026-07-04 — (RUNNING) mini-04b — probe-validated relaunch
+
+- **Config:** configs/mini4b.yaml = mini4.yaml + `creator_enable_thinking:
+  false` (solver keeps thinking) + `require_tool_use: TRUE` (gate on — at 5/6
+  baseline adoption it selects rather than starves) + `solver_batch: 8`.
+  Same seed (0), same rewards/targets, 30 iters, checkpoints every 5.
+- **Launched:** 2026-07-04 ~02:00, `runs/2026-07-04-mini-04b.*`.
+- **Hypotheses:** (1) creator_tool_ok ≈ N·G_c from iter 0 and answer_in_obs
+  high (tool-grounded answers); (2) consistency (cert-pass) well above
+  mini-02's ~38%; (3) per-rank parse ok ≈ 1.0 (no think spirals to truncate);
+  (4) iterations several× faster (short creator rollouts + batched solver);
+  (5) the open question inherited from 04(a): can the REWARD (not
+  deliberation) push difficulty — watch solve_rate_mean vs the 0.9→0.1
+  targets and problem_similarity for trivial-template collapse.
+- **Watch:** creator_tool_gated (how often the gate bites); think-share
+  telemetry (solver only now); repetition/similarity; wall-clock/iter.
 
 ---
 
