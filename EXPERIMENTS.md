@@ -445,6 +445,25 @@ Copy this block for each run.
   decision point at checkpoint 5-10: repetition >0.8 + solve ~1.0 →
   mini-05 = w_diversity ablation. (answer_in_obs 0 is format sensitivity —
   "(6, 4)" vs the tool's "{x: 6, y: 4}" — not fake grounding; log-only.)
+- **Checkpoint-5 deep-dive (iters 0-4, adapters saved 10:51):** machinery
+  stays healthy — suite parse 1.0 every iter, 0-2 rank parse-fails/suite,
+  tool_gated 0/100 (gate never bit: every scored problem made a real call),
+  cert coverage 100% of parsed, ~30-35 min/iter, KL ≤0.004, drift A 0.625.
+  **Difficulty ratchet: NO traction yet.** Of consistent(scored) problems,
+  the solver goes 8/8 on essentially everything — solve_rates_by_rank is
+  1.0 across ranks with exactly two 0.0 exceptions in 5 iters; r_gradient
+  sits at 0.22-0.36 ≈ the all-solved floor exp(−4·mean((1−t)²)) ≈ 0.267.
+  Rc's climb (+0.30 → +0.87) is consistency+validity+tool terms, not
+  gradient fit. Consistency oscillates (14/14, 11/19, 20/20, 9/19, 18/19)
+  — the dips are wrong-creator-answer buckets, penalized as designed.
+  Repetition is volatile, not locked: iter 2 hit 0.88-1.0 (near-duplicate
+  linear systems) but iter 4 read 0.25-0.62. **Decision rule half-met**
+  (solve ~1.0 YES; repetition >0.8 persistent NO) → let it run; re-evaluate
+  at checkpoint 10. If rgrad is still floor-pinned there with rotation
+  having swapped roles (warmup 5, swap 8), that's evidence the calibration
+  reward alone cannot ratchet difficulty without deliberation space →
+  mini-05 candidates: w_diversity > 0, or creator thinking back ON with a
+  hard token cap instead of OFF.
 
 ---
 
