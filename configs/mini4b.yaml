@@ -1,15 +1,37 @@
-# "mini-04b" — the mini-04 relaunch (2026-07-04). Identical GAME to mini4.yaml
-# (same seed, same rewards, gate still off — log-first); the only deltas are
-# throughput + eyes, both landed mid-mini-04:
+# "mini-04b" — the mini-04 relaunch (2026-07-04), PROBE-VALIDATED. mini-04(a)
+# ran 2 iterations as the Sprint-7 real-token shakeout (machinery all worked;
+# artifacts runs/2026-07-03-mini-04.*) and measured creator_tool_calls = 0/40:
+# the model simulated the CAS inside <think> and burned full budgets in
+# hard-rank deliberation spirals. Two 6-rollout probes
+# (scripts/probe_tool_adoption.py, runs/probe-tool-adoption-{1,2}.out) under
+# the rewritten two-phase VERIFY/DELIVER prompt measured:
+#   creator thinking ON:  2/6 adoption; hard ranks 2/2 full-budget spirals
+#   creator thinking OFF: 5/6 adoption incl. both hard ranks; ~215-tok
+#                         rollouts; every delivered JSON valid (after fixing
+#                         the extractor to strip <tool_call> markup — the
+#                         call's own JSON was winning extraction)
+# Deltas vs mini4.yaml:
+#   - model.creator_enable_thinking: false
+#                                 kills the simulate-space AND the spiral
+#                                 space; solver KEEPS thinking (it's the one
+#                                 measured on solve rate). ~20x shorter
+#                                 creator rollouts.
+#   - game.require_tool_use: true STRICT GATE ON (the pre-registered rule:
+#                                 adoption >= 2/6): a problem whose rollout
+#                                 made no successful tool call is voided —
+#                                 with 5/6 baseline adoption the gate selects,
+#                                 it doesn't starve.
 #   - gen.solver_batch: 8         Sprint-8 batched solver generation: the K=8
 #                                 attempts at one problem sample in ONE
 #                                 continuous-batching pass (statistically, not
 #                                 bitwise, equivalent to sequential).
 #   - (telemetry, no config)      think-share + problem_similarity/repetition
-#                                 now in every record; per-suite repetition in
-#                                 summaries.
-# mini-04(a) ran iter 0-1 as the Sprint-7 real-token shakeout (~1.5h/iter
-# sequential); its artifacts are runs/2026-07-03-mini-04.*.
+#                                 in every record; per-suite repetition +
+#                                 problem_rewards in summaries.
+# WATCH: with a non-thinking creator, difficulty must come from the reward +
+# conditioning, not deliberation — watch solve_rate_mean vs the 0.9->0.1
+# targets, problem_similarity (trivial-template collapse), and
+# creator_tool_gated (how often the gate bites).
 #
 # Everything below this line is the original mini-04 rationale.
 # ---------------------------------------------------------------------------
@@ -63,6 +85,8 @@
 model:
   path: ~/.cache/lm-studio/models/mlx-community/Qwen3-8B-6bit
   enable_thinking: true
+  creator_enable_thinking: false  # probe-validated (see header): 5/6 adoption
+                                  # vs 2/6, no spirals; solver keeps thinking
   max_kv_size: null
 
 lora:
@@ -93,7 +117,7 @@ game:
   creator_mode: per_problem
   condition_on_previous: true
   personas: true
-  require_tool_use: false
+  require_tool_use: true  # STRICT GATE ON (pre-registered; see header)
 
 rewards:
   w_gradient: 1.0

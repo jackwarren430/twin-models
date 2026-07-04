@@ -26,6 +26,7 @@ Parsing is deliberately forgiving: model output is often wrapped in prose or a
 
 import json
 import math
+import re
 import uuid
 from dataclasses import dataclass, field, asdict
 from typing import Any
@@ -171,16 +172,33 @@ class ProblemSuite:
 # ---------------------------------------------------------------------------
 # Robust extraction of a JSON object from free-form model text.
 # ---------------------------------------------------------------------------
+_TOOL_MARKUP_RE = re.compile(
+    r"<tool_call>.*?</tool_call>|<tool_response>.*?</tool_response>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _strip_tool_markup(text: str) -> str:
+    """Drop native ``<tool_call>``/``<tool_response>`` blocks: a tool-call's
+    OWN JSON (``{"name": "solve", ...}``) is a parseable dict that sits
+    earlier in the rollout than the final problem JSON, so leaving it in made
+    every tool-USING rollout parse-fail (probe 2026-07-04 — the model did
+    everything right and the extractor grabbed the wrong object)."""
+    return _TOOL_MARKUP_RE.sub("", text or "")
+
+
 def _extract_json_object(text: str) -> dict[str, Any]:
     """Extract the intended JSON object from creator output.
 
-    The post-``</think>`` text is searched FIRST: with thinking on, the trace
-    routinely contains *draft* problem JSONs, and taking the first parseable
-    dict by start index let a draft beat the final answer (audit 2026-07-03).
-    The raw text is the fallback so an unclosed think block whose JSON is the
-    only JSON (truncation) still parses, matching pre-fix behaviour there."""
+    The post-``</think>``, post-tool-markup text is searched FIRST: with
+    thinking on, the trace routinely contains *draft* problem JSONs (audit
+    2026-07-03), and with native tools the rollout contains the tool-call
+    JSON itself (probe 2026-07-04) — either would beat the final answer by
+    start index. The raw text is the fallback so an unclosed think block
+    whose JSON is the only JSON (truncation) still parses, matching pre-fix
+    behaviour there."""
     text = text.strip()
-    visible = strip_think(text).strip()
+    visible = _strip_tool_markup(strip_think(text)).strip()
     candidates = [visible, text] if (visible and visible != text) else [text]
     for t in candidates:
         obj = _extract_json_object_raw(t)

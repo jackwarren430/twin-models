@@ -213,3 +213,37 @@ def test_plain_text_unchanged():
     assert extract_final_answer("work...\nANSWER: 42") == "42"
     assert extract_final_answer("\\boxed{3}") == "3"
     assert extract_final_answer("just 11") == "just 11"
+
+
+# --------------------------------------------------------------------------- #
+# 5. tool-call JSON must not beat the final problem JSON (probe 2026-07-04)
+# --------------------------------------------------------------------------- #
+_NATIVE_ROLLOUT = (
+    '<tool_call>\n'
+    '{"name": "solve", "arguments": {"expression": "x + y = 10, x - y = 2, x, y"}}\n'
+    '</tool_call><|im_end|>\n'
+    '<|im_start|>user\n'
+    '<tool_response>\n{x: 6, y: 4}\n</tool_response><|im_end|>\n'
+    '<|im_start|>assistant\n<think>\n</think>\n\n'
+    '{"statement": "Solve the system: x + y = 10 and x - y = 2.", '
+    '"difficulty": 0.5, "solution": "Add and substitute.", "answer": "(6, 4)", '
+    '"verification": {"type": "math", "symbol": "x, y", '
+    '"check": "x + y = 10, x - y = 2"}}'
+)
+
+
+def test_tool_call_json_does_not_win_extraction():
+    p = parse_problem(_NATIVE_ROLLOUT)
+    assert p.statement.startswith("Solve the system")
+    assert p.answer == "(6, 4)"
+
+
+def test_tool_only_rollout_still_fails_cleanly():
+    # a rollout that ONLY made a tool call and never delivered a problem
+    # must remain a parse failure, not accidentally parse the call JSON
+    text = ('<tool_call>\n{"name": "solve", "arguments": '
+            '{"expression": "2+2"}}\n</tool_call>')
+    import pytest as _pytest
+    from twin.problems.schema import SuiteParseError as _SPE
+    with _pytest.raises(_SPE):
+        parse_problem(text)
