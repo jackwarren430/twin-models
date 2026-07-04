@@ -528,8 +528,22 @@ class SelfPlayTrainer:
                 solver_attempts_solved += sum(attempt_flags)
                 solver_problems_solved += 1 if any(attempt_flags) else 0
 
-            creward = self.engine.creator_reward(
-                suite, solve_rates, flags, n_oracle_c, scored_mask=scored_mask)
+            # Per-problem mode (audit 2026-07-03): a parse-failed rank is
+            # absent from the suite, so the engine must (a) scale the gradient
+            # by the parsed fraction of the INTENDED n (expected_n) and
+            # (b) grade each parsed rank against the target it was prompted
+            # with (target_by_problem) rather than a re-stretched ramp —
+            # otherwise dropping hard ranks out-earns writing them.
+            if cfg.game.creator_mode == "per_problem":
+                rank_targets = ProblemSuite.target_curve(
+                    n, cfg.rewards.target_hi, cfg.rewards.target_lo)
+                creward = self.engine.creator_reward(
+                    suite, solve_rates, flags, n_oracle_c,
+                    scored_mask=scored_mask, expected_n=n,
+                    target_by_problem=[rank_targets[r["rank"]] for r in prob_rolls])
+            else:
+                creward = self.engine.creator_reward(
+                    suite, solve_rates, flags, n_oracle_c, scored_mask=scored_mask)
             self._tr(f"creator[{g}] reward", reward=round(creward.total, 4),
                      r_gradient=round(creward.r_gradient, 4),
                      r_consistency=round(creward.r_consistency, 4),

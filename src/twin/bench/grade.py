@@ -27,18 +27,10 @@ from twin.train.extract import extract_final_answer
 from twin.verifiers.result import VerificationResult
 from twin.verifiers import verify_code, verify_math
 
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+from twin.think import strip_think  # noqa: F401 - re-exported; see twin.think
+
 _FENCE_RE = re.compile(r"```[^\n`]*\n(.*?)```", re.DOTALL)
 _MCQ_LABEL_RE = re.compile(r"[\(\[]?\s*([A-Za-z])\s*[\)\].:]")
-
-
-def strip_think(text: str) -> str:
-    """Drop ``<think>...</think>`` spans so answer extraction sees the response.
-
-    An *unclosed* think block (a truncated reasoning trace that never produced a
-    final answer) is left in place — extraction will then fail and the item is
-    scored wrong, which is the correct outcome for a model that didn't finish."""
-    return _THINK_RE.sub("", text or "")
 
 
 def extract_code_block(text: str) -> str:

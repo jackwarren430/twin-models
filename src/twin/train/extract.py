@@ -5,6 +5,7 @@ Kept model-free and tiny so they're trivially testable.
 
 import re
 
+from twin.think import strip_think
 from twin.tools.protocol import parse_tool_calls
 
 _BOXED = re.compile(r"\\boxed\{([^{}]*)\}")
@@ -14,8 +15,19 @@ _ANSWER_LINE = re.compile(r"(?im)^[ \t>*-]*(?:final\s+)?answer\s*[:=]\s*(.+?)\s*
 def extract_final_answer(text: str) -> str:
     """Pull the solver's final answer out of free-form text.
 
-    Preference order: a ``\\boxed{...}`` span, then the last ``ANSWER:`` line
-    (the form the solver prompt asks for), then the last non-empty line."""
+    Extraction runs on the post-``<think>`` text when there is any — a
+    speculative ``\\boxed{}`` inside the reasoning trace must not beat the
+    final ``ANSWER:`` line (audit 2026-07-03). The raw text is the fallback
+    for rollouts whose only content is an unclosed think block.
+
+    Preference order within the searched text: a ``\\boxed{...}`` span, then
+    the last ``ANSWER:`` line (the form the solver prompt asks for), then the
+    last non-empty line."""
+    visible = strip_think(text).strip()
+    return _extract_from(visible) if visible else _extract_from(text)
+
+
+def _extract_from(text: str) -> str:
     boxed = _BOXED.findall(text)
     if boxed:
         return boxed[-1].strip()

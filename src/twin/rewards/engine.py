@@ -83,6 +83,8 @@ class RewardEngine:
         *,
         valid: bool | None = None,
         scored_mask: list[bool] | None = None,
+        expected_n: int | None = None,
+        target_by_problem: list[float] | None = None,
     ) -> CreatorReward:
         """``solve_rates`` and ``consistent_flags`` are parallel to
         ``suite.problems`` (NOT pre-sorted). The gradient term internally
@@ -101,7 +103,21 @@ class RewardEngine:
         problem fits its [1.0] target perfectly and nearly out-earns an honest
         fully-consistent ramp (mini-01 showed exactly this: reward 1.27-1.43
         for mostly-void suites vs 1.6 for the true ideal). Scaling by
-        n_scored/n makes voiding problems strictly unprofitable."""
+        n_scored/n makes voiding problems strictly unprofitable.
+
+        ``expected_n`` (Sprint 7 per-problem mode, audit 2026-07-03) is the
+        number of problems the suite was *supposed* to have. A rank whose
+        rollout failed to parse is absent from ``suite.problems`` entirely, so
+        the Sprint-5 n_scored/n scaling never saw it — a 3/5-parsed suite
+        fitting its re-stretched 3-rank ramp out-earned an honest 5/5 (repro:
+        1.598 vs 1.503). With ``expected_n`` the scored fraction is measured
+        against the intended size, making parse-dropping strictly
+        unprofitable too. ``target_by_problem`` (parallel to
+        ``suite.problems``) pins each problem's target to the solve rate its
+        rank was PROMPTED with, instead of re-stretching a fresh ramp over
+        whatever subset parsed — keeping "prompt targets == reward targets"
+        true under partial parses. Both default to ``None`` == pre-audit
+        behaviour."""
         n = len(suite.problems)
         if len(solve_rates) != n or len(consistent_flags) != n:
             raise ValueError(
@@ -110,15 +126,21 @@ class RewardEngine:
             )
         if scored_mask is not None and len(scored_mask) != n:
             raise ValueError(f"expected {n} scored_mask entries, got {len(scored_mask)}")
+        if target_by_problem is not None and len(target_by_problem) != n:
+            raise ValueError(
+                f"expected {n} target_by_problem entries, got {len(target_by_problem)}")
+        if expected_n is not None and expected_n < n:
+            raise ValueError(f"expected_n={expected_n} < {n} problems in suite")
         c = self.cfg
 
-        rates_by_rank = self._rates_by_rank(suite, solve_rates, scored_mask)
-        target = ProblemSuite.target_curve(
-            len(rates_by_rank), hi=c.target_hi, lo=c.target_lo
-        )
+        rates_by_rank, target = self._rates_and_targets_by_rank(
+            suite, solve_rates, scored_mask, target_by_problem)
         r_gradient = self._gradient(rates_by_rank, target)
-        if scored_mask is not None and n:
-            r_gradient *= sum(1 for m in scored_mask if m) / n
+        denom = expected_n if expected_n else n
+        if (scored_mask is not None or expected_n is not None) and denom:
+            n_scored = (sum(1 for m in scored_mask if m)
+                        if scored_mask is not None else n)
+            r_gradient *= n_scored / denom
         r_consistency = (sum(1 for f in consistent_flags if f) / n) if n else 0.0
         is_valid = suite.is_valid() if valid is None else bool(valid)
         r_valid = 1.0 if is_valid else 0.0
@@ -159,6 +181,27 @@ class RewardEngine:
         ]
         idx.sort(key=lambda i: suite.problems[i].difficulty)
         return [float(solve_rates[i]) for i in idx]
+
+    def _rates_and_targets_by_rank(
+        self,
+        suite: ProblemSuite,
+        solve_rates: list[float],
+        scored_mask: list[bool] | None,
+        target_by_problem: list[float] | None,
+    ) -> tuple[list[float], list[float]]:
+        """Scored solve rates sorted easy->hard, paired with the target each
+        problem is graded against: its own prompted target when
+        ``target_by_problem`` is given, else the re-stretched ramp."""
+        idx = [
+            i for i in range(len(suite.problems))
+            if scored_mask is None or scored_mask[i]
+        ]
+        idx.sort(key=lambda i: suite.problems[i].difficulty)
+        rates = [float(solve_rates[i]) for i in idx]
+        if target_by_problem is not None:
+            return rates, [float(target_by_problem[i]) for i in idx]
+        return rates, ProblemSuite.target_curve(
+            len(rates), hi=self.cfg.target_hi, lo=self.cfg.target_lo)
 
     def _gradient(self, rates_by_rank: list[float], target: list[float]) -> float:
         if not rates_by_rank:

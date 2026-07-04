@@ -366,6 +366,15 @@ for >4096 budgets and worst-case-4096 robustness); rank-adaptive K; thinking on/
 - `analysis.curves` fits vs the 1→0 ramp regardless of the configured band (intentional, §10).
 - Sprint-7 native protocol and per-problem mode are **fast-test-verified but not yet
   real-token-verified** — that is what the mini-04 shakeout is for.
+- ~~Four audit-2026-07-03 bugs~~ **FIXED pre-mini-04** (tests/sprint8/): (1) draft JSON inside
+  `<think>` no longer beats the final JSON (`_extract_json_object` searches post-think text first,
+  raw-text fallback for truncations); (2) `verify_math` now normalizes named-assignment answers
+  (`"x = 2, y = 1"`) on EITHER side, closing the cert-passes/solver-graded-wrong reward-hack
+  channel; (3) per-problem parse-fails scale `r_gradient` by parsed/intended-N and grade each rank
+  against its PROMPTED target (`expected_n`/`target_by_problem` engine params) — dropping hard
+  ranks is now strictly unprofitable; (4) `extract_final_answer` ignores `\boxed{}` inside
+  `<think>` when post-think text exists. Also `creator_tool_rounds` bumped to calls+1 in
+  mini4.yaml (rounds==calls made the last allowed call unusable).
 
 ---
 

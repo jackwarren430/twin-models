@@ -111,14 +111,60 @@ def _scalar_equal(c, e, tolerance: float) -> bool:
     return False
 
 
+_NAMED_PART = re.compile(r"^\s*([A-Za-z_][A-Za-z_0-9]*)\s*=\s*(.+?)\s*$")
+
+
+def _named_parts(s: str) -> dict[str, str] | None:
+    """``"x = 2, y = 1"`` -> ``{"x": "2", "y": "1"}`` (insertion-ordered).
+
+    ``None`` unless EVERY top-level comma part is ``name = expr`` with distinct
+    names and there are at least two parts (a single ``name = value`` is
+    already handled by ``_normalize``'s take-the-RHS step)."""
+    parts = split_top_level_commas(s or "")
+    if len(parts) < 2:
+        return None
+    named: dict[str, str] = {}
+    for p in parts:
+        m = _NAMED_PART.match(p)
+        if not m or m.group(1) in named or "=" in m.group(2):
+            return None
+        named[m.group(1)] = m.group(2)
+    return named
+
+
+def _unify_named_values(cand: str, exp: str) -> tuple[str, str]:
+    """Rewrite named-assignment multi-value answers into bare tuples so both
+    sides parse and compare element-wise (audit 2026-07-03).
+
+    ``_normalize_named_value`` landed only in ``check_predicate`` (mini-03),
+    which made the two verification paths ASYMMETRIC: a creator answer
+    ``"x = 2, y = 1"`` passed its own certificate, but a solver's correct
+    ``"(2, 1)"`` graded WRONG against it — a live channel for farming fake
+    hardness. When both sides are named, the candidate is re-ordered to the
+    expected side's names (so ``"y = 1, x = 2"`` still matches); when only one
+    side is named, it is rewritten in its own appearance order and compared to
+    the other side's bare tuple. Non-named inputs pass through untouched."""
+    cn, en = _named_parts(_strip_latex(cand)), _named_parts(_strip_latex(exp))
+    if en and cn and sorted(cn) == sorted(en):
+        cand = "(" + ", ".join(cn[k] for k in en) + ")"
+        exp = "(" + ", ".join(en.values()) + ")"
+    elif en and not cn:
+        exp = "(" + ", ".join(en.values()) + ")"
+    elif cn and not en:
+        cand = "(" + ", ".join(cn.values()) + ")"
+    return cand, exp
+
+
 def verify_math(candidate: str, expected: str, *, tolerance: float = 1e-6) -> VerificationResult:
     """True iff ``candidate`` equals ``expected`` symbolically or numerically.
 
     Handles scalars, ordered pairs / vectors (compared element-wise, so
     ``(3, 2)``, ``[3, 2]`` and ``$\\left(\\tfrac31,\\tfrac21\\right)$`` all unify),
-    and degrades to a normalized string compare when neither side parses (e.g. the
-    answer is a word, not an expression)."""
-    cand_raw, exp_raw = (candidate or "").strip(), (expected or "").strip()
+    named-assignment forms (``"x = 2, y = 1"`` on EITHER side — see
+    ``_unify_named_values``), and degrades to a normalized string compare when
+    neither side parses (e.g. the answer is a word, not an expression)."""
+    cand_raw, exp_raw = _unify_named_values(
+        (candidate or "").strip(), (expected or "").strip())
 
     # Cheap exact match on the normalized text — also the safety net for
     # sequence answers whose elements are byte-identical (e.g. "(3, 2)").

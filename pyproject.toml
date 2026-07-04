@@ -32,4 +32,5 @@ markers = [
     "sprint5: Sprint 5 — mini-01 audit fixes (gradient scaling, math certificates, seeding)",
     "sprint6: Sprint 6 — advantage-degeneracy fixes (G_c, mean-baseline advantages, interior target curve, zero-adv skip)",
     "sprint7: Sprint 7 — native tool calling, per-problem creator generation, personas, strict tool gate",
+    "sprint8: Sprint 8 — audit-2026-07-03 fixes (think-scoped extraction, verify_math named-value symmetry, per-problem parse-fail scaling) + backlog",
 ]

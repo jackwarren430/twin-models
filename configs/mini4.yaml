@@ -98,7 +98,10 @@ oracle:
 tools:
   creator_tools: ["solve", "calc"]
   creator_max_tool_calls: 4   # per rollout = per problem in per_problem mode
-  creator_tool_rounds: 4
+  creator_tool_rounds: 5      # calls + 1: a rollout that spends all 4 calls
+                              # still gets a round to write its answer (audit
+                              # 2026-07-03 watch item: rounds==calls made the
+                              # 4th call unusable)
   cas_timeout_s: 3.0
   protocol: native      # Sprint 7 (see header); judge stays on legacy ReAct
 

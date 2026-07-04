@@ -32,6 +32,8 @@ from typing import Any
 
 import numpy as np
 
+from twin.think import strip_think
+
 
 class SuiteParseError(ValueError):
     """Raised when creator output cannot be parsed into a ProblemSuite."""
@@ -170,7 +172,24 @@ class ProblemSuite:
 # Robust extraction of a JSON object from free-form model text.
 # ---------------------------------------------------------------------------
 def _extract_json_object(text: str) -> dict[str, Any]:
+    """Extract the intended JSON object from creator output.
+
+    The post-``</think>`` text is searched FIRST: with thinking on, the trace
+    routinely contains *draft* problem JSONs, and taking the first parseable
+    dict by start index let a draft beat the final answer (audit 2026-07-03).
+    The raw text is the fallback so an unclosed think block whose JSON is the
+    only JSON (truncation) still parses, matching pre-fix behaviour there."""
     text = text.strip()
+    visible = strip_think(text).strip()
+    candidates = [visible, text] if (visible and visible != text) else [text]
+    for t in candidates:
+        obj = _extract_json_object_raw(t)
+        if obj is not None:
+            return obj
+    raise SuiteParseError("no parseable JSON object found in text")
+
+
+def _extract_json_object_raw(text: str) -> dict[str, Any] | None:
     # 1) whole string is JSON
     try:
         obj = json.loads(text)
@@ -195,7 +214,7 @@ def _extract_json_object(text: str) -> dict[str, Any]:
                 return obj
         except json.JSONDecodeError:
             continue
-    raise SuiteParseError("no parseable JSON object found in text")
+    return None
 
 
 def _iter_code_fences(text: str) -> list[str]:
