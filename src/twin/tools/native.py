@@ -180,10 +180,33 @@ RUN_PYTHON_TOOL_SCHEMA = {
     },
 }
 
+ORACLE_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "oracle",
+        "description": (
+            "Ask a neutral reference model a short factual question. Every "
+            "call is TAXED against your reward — use it only when you truly "
+            "cannot derive or compute the fact yourself."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The factual question to ask.",
+                }
+            },
+            "required": ["question"],
+        },
+    },
+}
+
 _SCHEMAS = {
     "solve": SOLVE_TOOL_SCHEMA,
     "calc": CALC_TOOL_SCHEMA,
     "run_python": RUN_PYTHON_TOOL_SCHEMA,
+    "oracle": ORACLE_TOOL_SCHEMA,
 }
 
 

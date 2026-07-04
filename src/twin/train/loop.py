@@ -59,6 +59,7 @@ from twin.rl import Trajectory, all_zero_advantages, group_advantages, grpo_upda
 from twin.roles import RoleManager
 from twin.tools import (
     NATIVE_STOP,
+    OracleTool,
     ToolHarness,
     calc,
     format_tool_responses,
@@ -180,6 +181,16 @@ class SelfPlayTrainer:
                  n_tool_calls=result.n_tool_calls)
         return result.text
 
+    def _oracle_count(self, text: str, harness) -> int:
+        """Taxable oracle calls for one creator rollout. When the oracle is a
+        REAL harness tool (audit watch item — now wired), count executed
+        calls from the harness; the legacy text count would double-count
+        every executed ``<tool>oracle(...)</tool>`` under the react protocol.
+        Without the tool, keep v1 semantics (count what the policy wrote)."""
+        if "oracle" in self.cfg.tools.creator_tools:
+            return sum(1 for res in harness.calls if res.call.name == "oracle")
+        return count_oracle_calls(text)
+
     def _generate(self, adapter, system, user, *, max_tokens, temp):
         self.adapters.activate(adapter)
         prompt = self.base.render(
@@ -247,6 +258,18 @@ class SelfPlayTrainer:
                 tools["run_python"] = (
                     lambda code, _ts=tcfg.run_python_timeout_s:
                     format_sandbox_result(run_python(code, timeout_s=_ts))
+                )
+            elif name == "oracle":
+                # The TAXED base-model reference (DESIGN §9), finally wired
+                # (§14 gap): each executed call is counted from the harness
+                # (see _oracle_count) and taxed by the reward engine. The
+                # zeroed adapter is activated around each query and restored
+                # after, so a mid-rollout call never leaks policy weights.
+                tools["oracle"] = OracleTool.from_model(
+                    self.base, self.adapters,
+                    max_tokens=self.cfg.gen.oracle_max_tokens,
+                    temp=self.cfg.gen.oracle_temp,
+                    max_calls=self.cfg.oracle.max_calls_per_turn,
                 )
         harness = ToolHarness(
             tools,
@@ -337,7 +360,7 @@ class SelfPlayTrainer:
                 "loss_mask": cgen.loss_mask,
                 "n_tool_calls": cgen.n_tool_calls,
                 "n_tool_ok": sum(1 for res in harness.calls if res.ok),
-                "n_oracle": count_oracle_calls(cgen.text),
+                "n_oracle": self._oracle_count(cgen.text, harness),
                 "think_share": round(think_share(cgen.text), 4),
                 "parsed": False,
                 "answer_in_obs": False,
@@ -494,7 +517,7 @@ class SelfPlayTrainer:
                     "loss_mask": cgen.loss_mask,
                     "n_tool_calls": cgen.n_tool_calls,
                     "n_tool_ok": sum(1 for res in charness.calls if res.ok),
-                    "n_oracle": count_oracle_calls(cgen.text),
+                    "n_oracle": self._oracle_count(cgen.text, charness),
                     "think_share": round(think_share(cgen.text), 4),
                     "parsed": False,
                     "answer_in_obs": False,

@@ -403,9 +403,12 @@ batch), plus queued design items:
 
 ## 14. Known gaps (deliberately honest)
 
-- **Oracle is not wired.** `OracleTool` is never instantiated in the loop; `n_oracle_calls` counts
-  only oracle-call *text* the policy writes (always 0 so far). The "epistemic floor" contribution is
-  design intent, not yet an experiment.
+- ~~Oracle is not wired~~ **WIRED 2026-07-03** (still off by default): listing `"oracle"` in
+  `tools.creator_tools` builds a real `OracleTool` per rollout (zeroed adapter around each query,
+  restored after; `oracle.max_calls_per_turn` respected) with a native schema; taxable calls are
+  counted from the harness when the tool is live (the legacy text count would double-count executed
+  calls) and keep v1 written-text semantics otherwise. The "epistemic floor" is now one config line
+  from being an experiment — no run has used it yet.
 - **Coding domain: root cause FOUND + pipeline BUILT (2026-07-03), real-token shakeout pending.**
   mini-02's 0/141 was never about bad code: the creator prompt's verification block was math-only —
   coding problems were never asked for `tests`/`solution_code`, and `verify_code` fails closed with
