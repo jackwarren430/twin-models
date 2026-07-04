@@ -464,6 +464,28 @@ Copy this block for each run.
   reward alone cannot ratchet difficulty without deliberation space →
   mini-05 candidates: w_diversity > 0, or creator thinking back ON with a
   hard token cap instead of OFF.
+- **Checkpoint-10 review (iters 5-10):** pre-registered stop rule literally
+  NOT met — repetition metric reads 0.22-0.85, mostly 0.3-0.7 — but the
+  transcript shows it's being DODGED, not beaten: the last ~12 problems are
+  one template ("solve x^2-ax+b=0, select the maximum root") with
+  coefficient swaps, which break enough word-bigrams to lower Jaccard while
+  structural repetition is ~total. Solve stays saturated (rates 1.0 with
+  isolated exceptions), rgrad floor-pinned (0.13-0.36, mean ≈ the 0.267
+  all-solved floor) through 11 iterations of A creating. Measurement
+  lesson for mini-05: normalize digits/numbers out of the bigram metric
+  (or hash statement templates) so coefficient-swap collapse is visible.
+  **Decision: continue** (rule not met; rotation at iter 13 is the headline
+  mechanism and imminent). Re-evaluate at checkpoint 15, which covers
+  B-as-creator iters 13-14. Pre-registered: if B also collapses to a
+  trivial template by 15, the live question resolves NO — the calibration
+  reward alone cannot ratchet difficulty in a non-thinking creator — and
+  mini-05 restores creator deliberation (thinking ON + hard token cap)
+  and/or turns on w_diversity with a digit-normalized similarity.
+  Corollary already visible: consistency is the binding constraint the
+  creator is optimizing around — writing hard problems risks
+  self-inconsistency, so the safe-template strategy dominates; iter dips
+  to 2/5 consistent are wrong-creator-answer buckets on the rare
+  non-template attempts.
 
 ---
 
