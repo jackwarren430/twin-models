@@ -68,6 +68,9 @@ def main() -> None:
     opp = opponent_of("A") if cfg.game.personas else None
 
     ranks = [int(x) for x in args.ranks.split(",")]
+    dump_path = Path(cfg.paths.runs) / "probe-tool-adoption.rollouts.txt"
+    dump = open(dump_path, "a")
+    dump.write(f"\n===== probe {__import__('time').strftime('%F %T')} config={args.config} =====\n")
     header = f"{'rank':>4} {'calls':>5} {'ok':>3} {'parsed':>6} {'in_obs':>6} {'think%':>6} {'tokens':>6}"
     print(header)
     n_with_calls = 0
@@ -94,7 +97,12 @@ def main() -> None:
         print(f"{rank:>4} {cgen.n_tool_calls:>5} {n_ok:>3} {str(parsed):>6} "
               f"{str(in_obs):>6} {think_share(cgen.text):>6.2f} "
               f"{len(cgen.completion_tokens):>6}")
+        dump.write(f"\n----- rollout {i} rank={rank} calls={cgen.n_tool_calls} "
+                   f"parsed={parsed} -----\n{cgen.text}\n")
+        dump.flush()
 
+    dump.close()
+    print(f"Rollout texts: {dump_path}")
     print(f"\nAdoption: {n_with_calls}/{len(ranks)} rollouts made >=1 real tool call")
     print("Decision rule: >=2 -> relaunch mini-04b with require_tool_use: true; "
           "0 -> iterate the prompt again.")

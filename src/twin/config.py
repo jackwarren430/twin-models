@@ -26,6 +26,13 @@ DEFAULT_MODEL_PATH = os.path.expanduser(
 class ModelConfig:
     path: str = DEFAULT_MODEL_PATH
     enable_thinking: bool = False  # Qwen3 thinking mode; off for v1 throughput
+    # Creator-rollout override for thinking (2026-07-04): null = follow
+    # enable_thinking. mini-04(a) measured the creator simulating the CAS
+    # inside <think> on 40/40 rollouts and truncating in hard-rank
+    # deliberation spirals — denying the creator its thinking space (while
+    # the solver keeps it) is the structural fallback if prompt-level
+    # pressure can't produce real tool calls, and an ablation lever besides.
+    creator_enable_thinking: bool | None = None
     max_kv_size: int | None = None
 
 

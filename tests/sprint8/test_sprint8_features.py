@@ -252,3 +252,12 @@ def test_broadcast_credit_unchanged_by_default():
 def test_solver_batch_default_is_sequential():
     cfg = Config.from_dict({})
     assert cfg.gen.solver_batch == 1
+
+
+def test_creator_enable_thinking_config():
+    # None (default) = follow model.enable_thinking; explicit override wins.
+    assert Config.from_dict({}).model.creator_enable_thinking is None
+    cfg = Config.from_dict({"model": {"enable_thinking": True,
+                                      "creator_enable_thinking": False}})
+    assert cfg.model.enable_thinking is True
+    assert cfg.model.creator_enable_thinking is False

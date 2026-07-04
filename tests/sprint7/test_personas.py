@@ -56,7 +56,10 @@ def test_native_creator_system_drops_legacy_markup_keeps_tool_mandate():
     s = creator_system(native_tools=True)
     assert "<tool>" not in s and "<obs>" not in s  # template declares the tools
     assert "solve" in s
-    assert "Never guess" in s          # the anti-"guess the obs" instruction
+    # the anti-"simulate the obs" instruction (mini-04a rewrite: two-phase
+    # VERIFY/DELIVER + tools cannot run inside private reasoning)
+    assert "can NOT run inside your private reasoning" in s
+    assert "VERIFY" in s and "DELIVER" in s
     assert "JSON" in s
 
 

@@ -300,10 +300,15 @@ class SelfPlayTrainer:
         tcfg = self.cfg.tools
         native = tcfg.protocol == "native"
         self.adapters.activate(adapter)
+        creator_thinking = (
+            self.cfg.model.enable_thinking
+            if self.cfg.model.creator_enable_thinking is None
+            else self.cfg.model.creator_enable_thinking
+        )
         prompt = self.base.render(
             user,
             system=system,
-            enable_thinking=self.cfg.model.enable_thinking,
+            enable_thinking=creator_thinking,
             tools=tool_schemas(tcfg.creator_tools) if native else None,
         )
         runner, harness = self._build_tool_runner(
