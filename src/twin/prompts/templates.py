@@ -122,21 +122,34 @@ def creator_system(*, native_tools: bool = False, persona: str | None = None) ->
     and Qwen3 emits native ``<tool_call>`` blocks it was actually trained on
     (the legacy protocol produced ZERO real calls in mini-03b; the model
     simulated the tool inside <think> instead). ``persona`` (from
-    :func:`creator_persona`) is prepended when the run has personas on."""
+    :func:`creator_persona`) is prepended when the run has personas on.
+
+    The native body is the mini-04(a) rewrite (2026-07-04): two iterations
+    measured ZERO real creator tool calls under the previous wording. The
+    transcript showed why — the model concluded mid-<think> that "I can't
+    actually run the function here, I need to simulate", and the instruction
+    to output "ONLY a single JSON object" read as forbidding a tool call
+    before the JSON. The rewrite names a two-phase protocol (VERIFY with a
+    real call, then DELIVER the JSON), states explicitly that tools cannot
+    run inside private reasoning, and keeps the anti-deliberation warning
+    that fixed mini-03a's truncation spirals."""
     if native_tools:
         body = (
             "You are a problem-setter building a graded practice set.\n\n"
-            "You have a computer-algebra tool (`solve`) available as a function "
-            "call. You MUST use it to compute the correct final answer for "
-            "EVERY problem you pose — actually call it and wait for the result. "
-            "Never guess, and never write what you imagine the tool would "
-            "return: only a real tool response counts.\n"
-            "When you are finished, output ONLY a single JSON object (no prose, "
-            "no markdown fences).\n"
-            "Your output budget is limited: keep any hidden reasoning brief (a "
-            "short plan plus tool checks). If you spend the budget "
-            "deliberating, the output is truncated before the JSON and the "
-            "problem is discarded."
+            "You have a computer-algebra tool (`solve`) available as a REAL "
+            "function call: when you emit a tool call, the runtime executes "
+            "it and sends you the result. The tool can NOT run inside your "
+            "private reasoning — deliberating about what it would return is "
+            "worthless. Work in two phases, every time:\n"
+            "  Phase 1 — VERIFY: as soon as you have a candidate problem, stop "
+            "reasoning and emit the tool call that computes its answer. Wait "
+            "for the response.\n"
+            "  Phase 2 — DELIVER: after the tool response arrives, output the "
+            "single JSON object (no prose around it, no markdown fences).\n"
+            "Keep your private reasoning to a few sentences: pick the first "
+            "workable design and go verify it with the tool. If you spend the "
+            "budget deliberating, the output is truncated and the problem is "
+            "discarded."
         )
     else:
         body = CREATOR_SYSTEM
@@ -225,8 +238,9 @@ def _verification_spec(domain: str) -> tuple[str, str, str, str]:
         return (
             _MATH_VERIFICATION_FIELD,
             _MATH_VERIFICATION_RULES,
-            "Use the solve tool to compute and check each answer before "
-            "writing the JSON.",
+            "Before writing any JSON, CALL the solve tool to compute and "
+            "confirm each answer — a real tool call with a real response, "
+            "never an imagined one.",
             "<the single final answer your solution yields, e.g. a number or "
             "closed form>",
         )
@@ -295,7 +309,10 @@ def _difficulty_brief(target_rate: float, opponent: str) -> str:
             f"{pct} of the time. Make the hardest problem you can — one you are "
             f"confident {opponent} will almost never crack. Hard means "
             f"structurally hard (several dependent steps or combined concepts), "
-            f"never merely bigger numbers or more tedious arithmetic."
+            f"never merely bigger numbers or more tedious arithmetic. Design it "
+            f"in ONE pass: pick a structure, verify it with the tool, commit — "
+            f"searching for a better design will truncate your output and score "
+            f"nothing (a merely-good hard problem beats a discarded perfect one)."
         )
     if target_rate >= 0.8:
         return (

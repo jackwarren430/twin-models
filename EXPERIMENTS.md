@@ -334,7 +334,7 @@ Copy this block for each run.
   step5-30 files predate this run).
 - **Artifacts:** runs/2026-07-02-mini-03b.{jsonl,out,transcript.txt}
 
-### 2026-07-03 — (RUNNING) mini-04 — Sprint-7 run (native tools, per-problem creator, personas)
+### 2026-07-03 — (STOPPED at iter 2/30, by design) mini-04(a) — Sprint-7 shakeout (native tools, per-problem creator, personas)
 
 - **Config:** configs/mini4.yaml (= mini3.yaml + Sprint 7: **tools.protocol
   native**, **game.creator_mode per_problem** (+ condition_on_previous),
@@ -365,20 +365,41 @@ Copy this block for each run.
   k−1 JSONs). Wall-clock per iter vs mini-03b's measured ~28 min/iter (at
   N=3/K=4 with high consistency — mini-04's 160-gen worst case will be
   slower still; consider trimming iters if >1h/iter).
-- **Status:** LAUNCHED 2026-07-03 23:07 (`runs/2026-07-03-mini-04.*`), AFTER
-  the four audit-2026-07-03 bug fixes landed (think-scoped extraction,
-  verify_math named-value symmetry, per-problem parse-fail scaling,
-  creator_tool_rounds 4→5) — commit 599e35d.
-- **Early reads (iter 0 in progress, ~40 min in):** per-problem creation +
-  JSON contract working; hypothesis (1) PARTIAL — most rollouts still
-  simulate the CAS inside `<think>` and never emit `<tool_call>`, but a
-  minority (~3/11) make REAL native calls, so the strict gate would have
-  something to select on. Pace suggests ~1.5h/iter → full 30 iters ≈ 2 days.
-  **Plan: stop after the iter-0/1 records validate the machinery, relaunch as
-  mini-04b** = same game (gate still off) + `gen.solver_batch: 8` (Sprint-8
-  batching, landed mid-run) + think-share/similarity telemetry, same seed —
-  strictly more information per wall-clock hour. mini-04 (a) artifacts remain
-  the Sprint-7 real-token shakeout record.
+- **Status:** LAUNCHED 2026-07-03 23:07 AFTER the four audit-2026-07-03 bug
+  fixes (commit 599e35d); **STOPPED deliberately 2026-07-04 ~01:10 after 2
+  complete iterations** (~50-70 min/iter) — the shakeout had answered its
+  questions and the answers demanded a prompt fix, not 28 more iterations.
+  Artifacts: `runs/2026-07-03-mini-04.{jsonl,out,transcript.txt}` (2 records).
+- **RESULTS (2 iters, 40 creator rollouts):**
+  - **Machinery: WORKS.** Per-problem creation, dictated difficulties,
+    conditioning, broadcast credit, personas, cert coverage (n_cert ==
+    n_problems on every suite), parse-gates, and the audit fix all behaved:
+    partially-parsed suites earned r_gradient 0.14–0.33 (scaled by
+    parsed/5 against prompted targets) where pre-fix code would have paid
+    ~0.9+ for a perfect re-stretched fit. Solver got REAL updates both iters
+    (64 trajectories iter 1 — vs mini-02's 4/30 iterations). KL ~0.001,
+    drift tiny, no OOM.
+  - **Hypothesis (1) REFUTED: creator_tool_calls = 0 / 40 rollouts.** The
+    transcript names the mechanism: the model decides mid-<think> that
+    "I can't actually run the function here, I need to simulate", and the
+    system prompt's "output ONLY a single JSON object" reads as forbidding
+    a tool call before the JSON. (My earlier "~3/11 adoption" read was wrong
+    — those n_tool_calls lines were the JUDGE's, which calls solve fine.)
+  - **Hypothesis (4) REFUTED so far: solve rates saturated** (iter 0 0.93,
+    iter 1 0.98; 63/64 attempts solved iter 1) — difficulty push lost again.
+  - **New: per-RANK parse failures 5/20 then 9/20**, concentrated at the
+    hard ranks (x.3/x.4): the difficulty demand triggers mini-03a-style
+    deliberation spirals that truncate mid-<think>. Numbers: iter 0
+    Rc=+0.398 Rs=+1.127 rgrad=0.334; iter 1 Rc=−0.075 Rs=+1.183 rgrad=0.228.
+- **Pivot (2026-07-04):** creator prompts rewritten to a two-phase
+  VERIFY (emit a real tool call, wait) / DELIVER (then the JSON) protocol,
+  stating explicitly that tools cannot run inside private reasoning; hard-rank
+  brief gains a one-pass-commit instruction ("a merely-good hard problem
+  beats a discarded perfect one"). `scripts/probe_tool_adoption.py` (6 real
+  rollouts, no training) gates the relaunch — pre-registered rule: adoption
+  ≥2/6 → relaunch as **mini-04b** with `game.require_tool_use: true` +
+  `gen.solver_batch: 8` + the new telemetry; adoption 0 → iterate the prompt
+  again first.
 
 ---
 
