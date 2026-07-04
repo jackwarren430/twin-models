@@ -435,6 +435,16 @@ Copy this block for each run.
   targets and problem_similarity for trivial-template collapse.
 - **Watch:** creator_tool_gated (how often the gate bites); think-share
   telemetry (solver only now); repetition/similarity; wall-clock/iter.
+- **Iter-0 record (~40 min):** hypotheses 1-4 CONFIRMED — 44 tool calls/38 ok
+  (04a: 0), **consistency 14/14 = 100% cert-pass** (mini-02: ~38%), suite
+  parse 1.0 (6/20 rank parse-fails, call-budget overruns), 112 solver trajs,
+  tool_gated 0. Hypothesis 5 = the live experiment: solve_rate EXACTLY 1.0,
+  per-suite repetition 0.72-0.96 (near-duplicate trivial systems, as probe 2
+  predicted for a non-thinking creator) → r_gradient 0.26. The run now
+  measures whether the calibration reward alone ratchets difficulty;
+  decision point at checkpoint 5-10: repetition >0.8 + solve ~1.0 →
+  mini-05 = w_diversity ablation. (answer_in_obs 0 is format sensitivity —
+  "(6, 4)" vs the tool's "{x: 6, y: 4}" — not fake grounding; log-only.)
 
 ---
 
