@@ -334,7 +334,7 @@ Copy this block for each run.
   step5-30 files predate this run).
 - **Artifacts:** runs/2026-07-02-mini-03b.{jsonl,out,transcript.txt}
 
-### 2026-07-03 — (queued) mini-04 — Sprint-7 run (native tools, per-problem creator, personas)
+### 2026-07-03 — (RUNNING) mini-04 — Sprint-7 run (native tools, per-problem creator, personas)
 
 - **Config:** configs/mini4.yaml (= mini3.yaml + Sprint 7: **tools.protocol
   native**, **game.creator_mode per_problem** (+ condition_on_previous),
@@ -365,20 +365,52 @@ Copy this block for each run.
   k−1 JSONs). Wall-clock per iter vs mini-03b's measured ~28 min/iter (at
   N=3/K=4 with high consistency — mini-04's 160-gen worst case will be
   slower still; consider trimming iters if >1h/iter).
-- **Status:** code + config ready (309 fast tests green), not launched.
+- **Status:** LAUNCHED 2026-07-03 23:07 (`runs/2026-07-03-mini-04.*`), AFTER
+  the four audit-2026-07-03 bug fixes landed (think-scoped extraction,
+  verify_math named-value symmetry, per-problem parse-fail scaling,
+  creator_tool_rounds 4→5) — commit 599e35d.
+- **Early reads (iter 0 in progress, ~40 min in):** per-problem creation +
+  JSON contract working; hypothesis (1) PARTIAL — most rollouts still
+  simulate the CAS inside `<think>` and never emit `<tool_call>`, but a
+  minority (~3/11) make REAL native calls, so the strict gate would have
+  something to select on. Pace suggests ~1.5h/iter → full 30 iters ≈ 2 days.
+  **Plan: stop after the iter-0/1 records validate the machinery, relaunch as
+  mini-04b** = same game (gate still off) + `gen.solver_batch: 8` (Sprint-8
+  batching, landed mid-run) + think-share/similarity telemetry, same seed —
+  strictly more information per wall-clock hour. mini-04 (a) artifacts remain
+  the Sprint-7 real-token shakeout record.
 
 ---
 
-## Backlog — Sprint 8 (queued 2026-07-03, from the Sprint-7 discussion)
+## Backlog — Sprint 8 (queued 2026-07-03; most items LANDED same day, during the mini-04 run)
 
-- [ ] **Batched solver generation** — K=8 attempts are identical prompts, no
-      tools: batch them through mlx-lm batch generation (~2-3× per the earlier
-      probe; sampling per row is independent so outputs differ automatically).
-      This is the wall-clock lever that funds any further K/N growth.
-- [ ] **Per-problem creator credit decomposition** — replace broadcast with
-      per-trajectory reward = own-rank fit (|p_i − t_i|²) + own consistency +
-      shared suite-level term (distinctness/ordering don't decompose). Sharper
-      credit than broadcast; run as a measured ablation against mini-04.
+- [x] **Batched solver generation** — LANDED: `TwinBase.generate_batch`
+      (continuous batching, exact sampled ids incl. EOS) + `gen.solver_batch`
+      (default 1 = v1 path) + `_generate_solver_group` chunking. Measure with
+      `scripts/probe_batch_generate.py` (NOT while a run is live) to pick
+      future batch sizes; mini-04b uses 8.
+- [x] **Per-problem creator credit decomposition** — LANDED as
+      `game.credit: per_problem` (default broadcast);
+      `RewardEngine.creator_problem_rewards`; suite summaries log
+      `problem_rewards`. Run as a measured ablation against mini-04.
+- [x] **Chunked LM-head backward** (pulled from the standing queue) — LANDED
+      as `train.logit_chunk` (default 0): kills the mini-02-measured 55GB
+      [T,V] worst case; equivalence proven on the CPU stream; certify with
+      probe_memory before making it a run default.
+- [x] **Coding pipeline** (pulled from the standing queue) — root cause of
+      mini-02's 0/141 found by code audit (the creator prompt never asked for
+      verification.tests; verify_code fails closed "no tests supplied"):
+      executable contract in both creator prompts, sandboxed `run_python`
+      creator tool, solver code path (SOLVER_CODE_SYSTEM + extract_code_block
+      scoring). Validate with `configs/coding-shakeout.yaml` (3 iters,
+      transcript on) post-mini-04; coding stays out of game.domains until
+      it passes and is re-admitted.
+- [x] **Sprint 9 countermeasures** (DESIGN_V2 §12): diversity telemetry
+      (`problem_similarity`, per-suite `repetition`) + `rewards.w_diversity`
+      penalty (default 0); grounded themes (`game.theme_weights` +
+      scripts/build_grounded_themes.py; data/themes-grounded.json built from
+      the base hard-bench bar); think-share telemetry
+      (`creator/solver_think_share`).
 - [ ] **CAS session state** — per-rollout namespace so tool calls can define
       intermediates (`a = solve(...)` then reuse `a`), or multi-statement
       calls. Ergonomics for creative multi-step problems; pointless until the
@@ -387,7 +419,10 @@ Copy this block for each run.
       mode (it's the same base model); migrate it to native tool calling once
       mini-04 validates the protocol on the creator path.
 - [ ] **Strict tool gate on** (`game.require_tool_use: true`) — if mini-04's
-      `answer_in_obs` shows the creator still faking tool grounding.
+      `answer_in_obs` shows the creator still faking tool grounding. (Early
+      iter-0 transcript: most rollouts still simulate the CAS in <think>, but
+      ~3/11 make REAL native calls — the gate would have something to select
+      on. Decide on the full-record numbers.)
 
 ## Backlog — planned experiments (deferred from Sprint 4)
 
