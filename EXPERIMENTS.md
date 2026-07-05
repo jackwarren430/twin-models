@@ -574,6 +574,23 @@ Copy this block for each run.
   0.16 vs 0.95 across suites = ~0.24 reward contrast). rgrad 0.221/0.048/
   0.150/0.123/0.245 — floor-ish, no lift-off yet. Continue; the
   difficulty verdict window stays checkpoint 10-15.
+- **Checkpoint-10 deep-dive (iters 5-9):** format axis HEALED (pf settled
+  ~4-7/20, tools 12/12-21/19 ok, think-share 0.90→0.88); content axis
+  genuinely better than 04b — transcript shows radical/rational/absolute-
+  value equations, repetition mostly 0.3-0.7 (w_diversity + thinking is
+  holding the template off); difficulty axis STILL FLAT — 3 non-saturated
+  K-groups in 5 iters, rgrad 0.15-0.24. The creator's "hard" (mid-school
+  algebra) isn't hard for a thinking 8B solver at K=8. KL c climbing
+  normally for a moving policy (0.053 @ iter 9). Verdict window closes at
+  checkpoint 15 (rotation puts B in the creator seat at 13). If rgrad
+  never lifts: the lever list, in order — (a) grounded themes are live but
+  number-theory themes rarely drawn hard, weight them harder; (b) hardest-
+  rank prompt language ("a problem you are confident the opponent cannot
+  crack") may need concrete tactics (multi-step chains, unusual
+  representations); (c) creator sees no example of what the solver
+  actually fails — consider feeding back one solved-vs-failed example pair
+  (SPICE-adjacent grounding); (d) logic domain mix-in (the asymmetric
+  domain built for exactly this).
 
 ---
 
