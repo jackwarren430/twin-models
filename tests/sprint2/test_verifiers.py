@@ -134,8 +134,11 @@ def test_verify_answer_code():
     assert not verify_answer(p, "def f(x):\n    return x").correct
 
 
-def test_verify_answer_judge_for_logic_domain():
-    p = Problem(statement="riddle", difficulty=0.5, answer="blue", domain="logic")
+def test_verify_answer_judge_for_unhandled_domain():
+    # "logic" was this test's example domain until it got a real verifier
+    # (domain expansion 2026-07-04) — riddles still have none, so they show
+    # the judge fallback path.
+    p = Problem(statement="riddle", difficulty=0.5, answer="blue", domain="riddles")
     correct_oracle = lambda q: "VERDICT: CORRECT"
     assert verify_answer(p, "blue", oracle=correct_oracle).correct
 

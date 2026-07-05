@@ -461,6 +461,66 @@ LLM-judge), so the project's answer writes itself:
 
 ---
 
+## 7. Domain expansion analysis (2026-07-04, user backlog: knowledge / logic / puzzles)
+
+The question, sharpened by mini-04b's measurement: which new problem types keep the
+verifier-first guarantee AND widen the gap between "hard for the solver" and "risky for the
+creator"? mini-04b showed creator self-consistency is the binding constraint — in math, a
+problem the solver finds hard is usually one the creator also risks self-answering wrong, so
+the trivial-template equilibrium wins. The ideal new domain is *asymmetric*: solving is
+search, authoring + verification is mechanical.
+
+**What the field actually trains on** (consolidating §1-§3 + two new verified refs):
+
+| Setup | Problem type | Ground truth |
+|---|---|---|
+| AZR | code triplets (deduce/abduce/induce) | Python executor — answer **by construction** |
+| R-Zero | open math word problems | solver majority vote (decays 79%→63%) |
+| SPIRAL | zero-sum text games | game engine |
+| SPICE | corpus-grounded QA | retrieved documents |
+| Minimo | formal conjectures | Lean proof checker |
+| **Logic-RL** (arXiv:2502.14768) | **procedural Knights & Knaves** | rule-based checker; difficulty dialed by character count + statement depth; reports transfer to AIME/AMC |
+| **Reasoning Gym** (arXiv:2505.24760, NeurIPS'25 spotlight) | 100+ procedural generators (algebra, graphs, logic, games incl. sudoku) | per-task verifiers |
+| TinyZero / Stream-of-Search | Countdown (reach a target from given numbers) | expression evaluation |
+
+**Verdicts on the three candidates:**
+
+- **Advanced logic — ADDED (Knights & Knaves).** The literature's canonical verifiable-logic
+  domain, and the best consistency-risk profile of any domain we have: enumeration over 2^n
+  assignments (n ≤ 8) is an exact, fail-closed verifier, and the `logic_solve` authoring tool
+  *tells the creator the unique solution* — answers correct by construction, AZR's property
+  imported to logic. Solving stays genuinely hard for a text model as characters/nesting grow
+  (Logic-RL's difficulty dial). Uniqueness is required by the certificate, so ill-posed
+  puzzles are discarded, and the solver is graded against the enumerated solution rather than
+  the creator's answer string (kills the answer-format-void class of bugs by design).
+  Implemented: `verifiers/logic_verifier.py` (own claim-DSL parser, no eval surface),
+  `tools/logic.py`, prompt contract, solver variant, `configs/logic-shakeout.yaml`.
+
+- **Knowledge tasks — DEFERRED, with a concrete route.** There is no mechanical verifier for
+  an ungrounded fact: every zero-data setup that touches knowledge either grounds it in a
+  corpus (SPICE — external documents as ground truth) or accepts decaying pseudo-labels
+  (R-Zero). Ungrounded knowledge self-play with an 8B creator is a hallucination flywheel —
+  the creator confidently certifies wrong facts, the certificate can't catch it, and the
+  solver trains on poison. The judge fallback is precisely the weakest link this project has
+  been eliminating. IF knowledge is wanted later, the route is SPICE-style corpus grounding
+  (a document store + "the answer must be a span/derivable from the passage" checks) — a
+  separate sprint, and a deliberate departure from zero-external-data. Note the hard bench
+  already *measures* knowledge (MMLU-Pro items) as a transfer target, which is the cheaper
+  question: does reasoning training transfer to knowledge use? (mini-04b @15: flat.)
+
+- **Sudoku — REJECTED as stated; the puzzle niche is covered better.** Verifying a filled
+  grid is trivial, but certifying that a *generated* puzzle has a unique solution requires
+  embedding a constraint solver, the text representation of grid state is hostile to an 8B
+  solver in 4096 tokens (Reasoning Gym ships sudoku, but for consumption by big models, not
+  8B self-play generation), and the difficulty dial is coarse. K&K delivers the same
+  "deduction under constraints" texture with a 2^n verifier and a smooth dial; **Countdown**
+  is the designed-next second puzzle domain — the creator composes an expression first and
+  poses its value as the target, so the answer is again correct by construction, and the
+  verifier is expression evaluation + a used-numbers multiset check (~60 lines). Queued
+  behind the logic shakeout so domains enter one at a time.
+
+---
+
 ## References (compact)
 
 | Work | Ref |
@@ -475,6 +535,8 @@ LLM-judge), so the project's answer writes itself:
 | Vocabulary Dropout | 2026, arXiv:2604.03472 |
 | Self-Guided Self-Play (SGS) | 2026, arXiv:2604.20209 |
 | Self-Questioning LMs (SQLM) | 2025, arXiv:2508.03682 |
+| Logic-RL (K&K puzzles) | Xie et al., 2025, arXiv:2502.14768 |
+| Reasoning Gym | Stojanovski et al., 2025, arXiv:2505.24760 |
 | Asymmetric self-play (Alice/Bob) | Sukhbaatar et al., 2017, arXiv:1703.05407 |
 | Goal GAN / GOID | Florensa et al., 2018, arXiv:1705.06366 |
 | POET | Wang et al., 2019, arXiv:1901.01753 |

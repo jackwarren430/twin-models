@@ -48,6 +48,7 @@ from twin.prompts import (
     creator_system,
     creator_user,
     is_code_problem,
+    is_logic_problem,
     opponent_of,
     pick_theme,
     solver_persona,
@@ -67,6 +68,7 @@ from twin.tools import (
     solve,
     tool_schemas,
 )
+from twin.tools.logic import logic_solve
 from twin.tools.sandbox import format_sandbox_result, run_python
 from twin.think import think_share
 from twin.train.extract import (
@@ -259,6 +261,11 @@ class SelfPlayTrainer:
                     lambda code, _ts=tcfg.run_python_timeout_s:
                     format_sandbox_result(run_python(code, timeout_s=_ts))
                 )
+            elif name == "logic_solve":
+                # K&K enumerator (logic domain): tells the creator whether
+                # its claims pin a unique solution and what it is — the
+                # answer becomes correct by construction.
+                tools["logic_solve"] = logic_solve
             elif name == "oracle":
                 # The TAXED base-model reference (DESIGN §9), finally wired
                 # (§14 gap): each executed call is counted from the harness
@@ -502,6 +509,11 @@ class SelfPlayTrainer:
             persona=solver_persona(assign.solver) if cfg.game.personas else None,
             code=True,
         )
+        # Logic variant (domain expansion): assignment-format ANSWER line.
+        solver_sys_logic = solver_system(
+            persona=solver_persona(assign.solver) if cfg.game.personas else None,
+            logic=True,
+        )
 
         for g in range(cfg.game.creator_group):
             # --- creator generation --------------------------------------
@@ -604,7 +616,8 @@ class SelfPlayTrainer:
                 p_is_code = is_code_problem(p)
                 sgens = self._generate_solver_group(
                     assign.solver,
-                    solver_sys_code if p_is_code else solver_sys,
+                    solver_sys_code if p_is_code
+                    else (solver_sys_logic if is_logic_problem(p) else solver_sys),
                     solver_user(p))
                 solver_think.extend(think_share(s.text) for s in sgens)
                 for k, sgen in enumerate(sgens):

@@ -14,11 +14,13 @@ Verifier-first, judge only as the documented fallback.
 from twin.problems.schema import Problem
 from twin.verifiers.code_verifier import verify_code
 from twin.verifiers.judge import judge_answer, judge_consistency
+from twin.verifiers.logic_verifier import check_logic_consistency, verify_logic
 from twin.verifiers.math_verifier import check_predicate, verify_math
 from twin.verifiers.result import VerificationResult
 
 _MATH_DOMAINS = {"math", "arithmetic", "algebra"}
 _CODE_DOMAINS = {"coding", "code", "python"}
+_LOGIC_DOMAINS = {"logic", "puzzle", "puzzles", "knights-and-knaves"}
 
 
 def _method_for(problem: Problem) -> str:
@@ -28,12 +30,16 @@ def _method_for(problem: Problem) -> str:
             return "math"
         if vtype.startswith(("code", "exec", "python")):
             return "code"
+        if vtype.startswith("logic"):
+            return "logic"
         if vtype.startswith("judge"):
             return "judge"
     if problem.domain.lower() in _CODE_DOMAINS:
         return "code"
     if problem.domain.lower() in _MATH_DOMAINS:
         return "math"
+    if problem.domain.lower() in _LOGIC_DOMAINS:
+        return "logic"
     return "judge"
 
 
@@ -56,6 +62,8 @@ def verify_answer(problem: Problem, candidate: str, *, oracle=None) -> Verificat
     if method == "math":
         tol = float(problem.verification.get("tolerance", 1e-6))
         return verify_math(candidate, problem.answer, tolerance=tol)
+    if method == "logic":
+        return verify_logic(candidate, str(problem.verification.get("claims", "")))
     return judge_answer(problem.statement, candidate, problem.answer, oracle)
 
 
@@ -81,5 +89,9 @@ def check_consistency(problem: Problem, *, oracle=None) -> VerificationResult:
             return check_predicate(check, symbol, problem.answer, tolerance=tol)
         # ...else fall back to the LLM judge on the worked solution.
         return judge_consistency(problem.statement, problem.answer, problem.solution, oracle)
+
+    if method == "logic":
+        return check_logic_consistency(
+            str(problem.verification.get("claims", "")), problem.answer)
 
     return judge_consistency(problem.statement, problem.answer, problem.solution, oracle)

@@ -202,11 +202,40 @@ ORACLE_TOOL_SCHEMA = {
     },
 }
 
+LOGIC_SOLVE_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "logic_solve",
+        "description": (
+            "Enumerate every knight/knave assignment satisfying a claims "
+            "string, and report whether exactly one exists (a well-posed "
+            "puzzle) and what it is. Example: claims='A: B & ~C; B: ~A; "
+            "C: A | B' -> 'UNIQUE solution: a=knight, b=knave, c=knight'. "
+            "One 'Speaker: statement' per claim, ';'-separated; a bare name "
+            "means that person is a knight; operators ~ & | ^ -> and "
+            "parentheses."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "claims": {
+                    "type": "string",
+                    "description": (
+                        "The full claims string, e.g. 'A: B & ~C; B: ~A'."
+                    ),
+                }
+            },
+            "required": ["claims"],
+        },
+    },
+}
+
 _SCHEMAS = {
     "solve": SOLVE_TOOL_SCHEMA,
     "calc": CALC_TOOL_SCHEMA,
     "run_python": RUN_PYTHON_TOOL_SCHEMA,
     "oracle": ORACLE_TOOL_SCHEMA,
+    "logic_solve": LOGIC_SOLVE_TOOL_SCHEMA,
 }
 
 

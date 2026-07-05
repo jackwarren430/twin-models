@@ -564,6 +564,30 @@ Copy this block for each run.
 
 ---
 
+### 2026-07-04 — Domain expansion: logic (K&K) LANDED, knowledge deferred, sudoku rejected
+
+- **User backlog item:** add knowledge tasks / advanced logic / sudoku-like
+  puzzles. Full analysis vs the literature in RELATED_WORK.md §7 (what AZR /
+  R-Zero / SPIRAL / SPICE / Logic-RL / Reasoning Gym / TinyZero train on).
+- **Knights & Knaves logic domain IMPLEMENTED** (code-only; enters training
+  via `configs/logic-shakeout.yaml` when the GPU is free, never mid-run):
+  claims-DSL certificate (`verification.claims`), enumeration verifier with
+  a REQUIRED unique solution (fail-closed on ambiguous/contradictory),
+  solver graded against the enumerated solution (not the creator's answer
+  string), `logic_solve` authoring tool so the creator reads its answer off
+  the tool — **by-construction answers, directly attacking mini-04b's
+  measured binding constraint (consistency risk at high difficulty)**.
+  Solving stays search-hard as characters/nesting grow: the asymmetry math
+  lacks. 21 new tests (hand-verified truth-table fixtures); 405 fast tests
+  green.
+- **Deferred/rejected with rationale (§7):** ungrounded knowledge = no
+  mechanical verifier (SPICE-style corpus grounding is the route IF wanted);
+  sudoku = uniqueness certification needs an embedded solver + grid-in-text
+  is hostile at 8B; Countdown queued as the next puzzle domain (answer by
+  construction, ~60-line verifier).
+
+---
+
 ## Backlog — Sprint 8 (queued 2026-07-03; most items LANDED same day, during the mini-04 run)
 
 - [x] **Batched solver generation** — LANDED: `TwinBase.generate_batch`

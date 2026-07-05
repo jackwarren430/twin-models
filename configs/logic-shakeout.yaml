@@ -1,0 +1,101 @@
+# Logic-domain shakeout (domain expansion 2026-07-04) — NOT a training run
+# that matters: 3 iterations, logic only, transcript on, to verify with real
+# tokens that
+# (a) the creator emits the K&K contract (verification.claims in the DSL),
+# (b) it actually calls logic_solve and reads its answer off the UNIQUE
+#     response (by-construction answers — the property that attacks
+#     mini-04b's measured binding constraint, creator self-consistency),
+# (c) consistency passes for well-posed puzzles (unique solution) and
+#     rejects ambiguous/contradictory ones,
+# (d) the solver emits a parseable 'ANSWER: Name=knight, ...' line that
+#     verify_logic grades against the enumerated solution.
+#
+# Run when the GPU is free (loads the base — never alongside a live run):
+#   caffeinate -i conda run --no-capture-output -n twin-models \
+#     python -u scripts/train.py --config configs/logic-shakeout.yaml \
+#     --run-name logic-shakeout
+#
+# DECISION: if n_consistent > 0 on most iters and the transcript shows real
+# logic_solve calls with answers read off the tool, logic is ready to join
+# game.domains in a mini run (likely mixed with math for domain diversity).
+#
+# Creator setup mirrors mini-05 (bounded deliberation): thinking ON with a
+# 2048 hard cap, native protocol, strict tool gate.
+
+model:
+  path: ~/.cache/lm-studio/models/mlx-community/Qwen3-8B-6bit
+  enable_thinking: true
+  creator_enable_thinking: true
+  max_kv_size: null
+
+lora:
+  num_layers: 16
+  rank: 64
+  alpha: 128.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+  top_p: 0.95
+  creator_max_tokens: 2048
+  solver_max_tokens: 4096
+  oracle_max_tokens: 4096
+  solver_batch: 4
+
+game:
+  n_problems: 3
+  creator_group: 2
+  solver_attempts: 4
+  domains: ["logic"]
+  creator_mode: per_problem
+  condition_on_previous: true
+  personas: true
+  require_tool_use: true
+
+rewards:
+  w_gradient: 1.0
+  w_consistency: 0.5
+  w_oracle: 0.1
+  w_valid: 0.1
+  w_solve: 1.0
+  w_oracle_solver: 0.05
+  w_brevity: 0.25
+  w_diversity: 0.3
+  mse_beta: 4.0
+  clip: 10.0
+  target_hi: 0.9
+  target_lo: 0.1
+
+oracle:
+  enabled: true
+  cost_per_query: 1.0
+  max_calls_per_turn: 4
+
+tools:
+  creator_tools: ["logic_solve"]
+  creator_max_tool_calls: 4
+  creator_tool_rounds: 5
+  cas_timeout_s: 3.0
+  protocol: native
+
+roles:
+  swap_interval: 8
+  warmup_iterations: 5
+  injection_rate: 0.0
+
+train:
+  iters: 3
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  grad_accumulation_steps: 1
+  grpo_microbatch: 1
+  adv_mode: mean
+  seed: 0
+  checkpoint_every: 0
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints
+  runs: runs

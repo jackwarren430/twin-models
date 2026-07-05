@@ -25,6 +25,12 @@ THEMES: dict[str, list[str]] = {
         "string manipulation", "list aggregation", "number theory helpers",
         "recursion basics", "dictionary counting", "sorting and searching",
     ],
+    "logic": [
+        "direct accusations", "mutual references", "chained implications",
+        "self-referential statements", "contradicting pairs",
+        "statements about statements", "exclusive-or claims",
+        "silent characters others talk about",
+    ],
 }
 
 
@@ -156,14 +162,17 @@ def creator_system(*, native_tools: bool = False, persona: str | None = None) ->
     return f"{persona}\n\n{body}" if persona else body
 
 
-def solver_system(*, persona: str | None = None, code: bool = False) -> str:
+def solver_system(
+    *, persona: str | None = None, code: bool = False, logic: bool = False
+) -> str:
     """Solver system prompt, optionally with the competition persona
     prepended. ``code=True`` selects the programming variant (Sprint 8 coding
     pipeline) — the math ANSWER-line contract makes no sense for code, which
     is graded by executing the solver's function against the creator's tests.
-    The held-out benchmark builds its own prompts and never passes a persona,
-    so it stays neutral by construction."""
-    body = SOLVER_CODE_SYSTEM if code else SOLVER_SYSTEM
+    ``logic=True`` selects the knights-and-knaves variant (assignment-format
+    ANSWER line). The held-out benchmark builds its own prompts and never
+    passes a persona, so it stays neutral by construction."""
+    body = SOLVER_CODE_SYSTEM if code else (SOLVER_LOGIC_SYSTEM if logic else SOLVER_SYSTEM)
     return f"{persona}\n\n{body}" if persona else body
 
 
@@ -173,6 +182,9 @@ _MATH_DOMAINS = {"math", "arithmetic", "algebra"}
 # Domains verified by executing code against tests (twin.verifiers.verify_code).
 # Mirrors twin.verifiers.dispatch._CODE_DOMAINS.
 _CODE_DOMAINS = {"coding", "code", "python"}
+# Domains verified by knight/knave enumeration (twin.verifiers.verify_logic).
+# Mirrors twin.verifiers.dispatch._LOGIC_DOMAINS.
+_LOGIC_DOMAINS = {"logic", "puzzle", "puzzles", "knights-and-knaves"}
 
 # The certificate field spec + rules, spliced into the math creator prompt.
 # The check is verified mechanically by a CAS (Sprint 5): it replaces the LLM
@@ -235,9 +247,51 @@ _CODE_VERIFICATION_RULES = (
 )
 
 
+# The logic contract (domain expansion 2026-07-04): Knights & Knaves, the
+# Logic-RL / Reasoning Gym verifiable-logic staple. The certificate is one
+# formal claims string; consistency enumerates all 2^n assignments and
+# requires EXACTLY ONE (well-posedness), and the solver is graded against
+# that enumerated solution — never against the creator's answer string.
+_LOGIC_VERIFICATION_FIELD = (
+    ',\n      "verification": {\n'
+    '        "type": "logic",\n'
+    '        "claims": "<one \'Speaker: statement\' per character who speaks, '
+    "';'-separated, formalizing the statements in your story>\"\n"
+    "      }"
+)
+
+_LOGIC_VERIFICATION_RULES = (
+    " Every character is a knight (always tells the truth) or a knave "
+    "(always lies); the solver must identify everyone. The \"claims\" "
+    "certificate is verified mechanically by enumerating all knight/knave "
+    "assignments: a puzzle with zero or several solutions is DISCARDED (it "
+    "earns you nothing), so is one whose answer disagrees with the unique "
+    "solution. Claim syntax: a name means 'that person is a knight'; "
+    "operators ~ (not), & (and), | (or), ^ (exactly one), -> (implies), "
+    "parentheses — so 'Ava: Ben & ~Cal' formalizes Ava saying 'Ben is a "
+    "knight and Cal is a knave'. The statement must tell the story in "
+    "natural language and quote every speaker faithfully; the claims must "
+    "formalize exactly those quotes. Difficulty comes from more characters "
+    "(2-8) and deeper nesting or implication chains, never from vagueness. "
+    "Set \"answer\" to the full assignment like \"Ava=knight, Ben=knave, "
+    "Cal=knight\". The syntax examples above are format illustrations ONLY "
+    "— invent your own characters and claims."
+)
+
+
 def _verification_spec(domain: str) -> tuple[str, str, str, str]:
     """Per-domain contract pieces: (field, rules, tool sentence, answer desc)."""
     d = domain.lower()
+    if d in _LOGIC_DOMAINS:
+        return (
+            _LOGIC_VERIFICATION_FIELD,
+            _LOGIC_VERIFICATION_RULES,
+            "Before writing any JSON, CALL the logic_solve tool on your "
+            "claims — it reports whether exactly one solution exists and "
+            "what it is; read your \"answer\" directly off the tool "
+            "response, never solve the puzzle in your head.",
+            "<the full assignment, e.g. \"Ava=knight, Ben=knave\">",
+        )
     if d in _MATH_DOMAINS:
         return (
             _MATH_VERIFICATION_FIELD,
@@ -416,6 +470,17 @@ SOLVER_CODE_SYSTEM = (
     "usage, no prose outside the code block."
 )
 
+# Logic variant (domain expansion 2026-07-04): knights-and-knaves answers are
+# full assignments, graded against the certificate's enumerated solution.
+SOLVER_LOGIC_SYSTEM = (
+    "You are a careful logic-puzzle solver. Every character is a knight (always "
+    "tells the truth) or a knave (always lies). Work through the statements "
+    "case by case, then state the final answer on its own last line in the "
+    "exact form 'ANSWER: <assignment>', where <assignment> names EVERY "
+    "character once, comma-separated, e.g. 'ANSWER: Ava=knight, Ben=knave'. "
+    "No other words on that line."
+)
+
 
 def is_code_problem(problem: "Problem | str") -> bool:
     """Whether this problem is graded by executing code (mirrors
@@ -427,6 +492,17 @@ def is_code_problem(problem: "Problem | str") -> bool:
     if vtype:
         return vtype.startswith(("code", "exec", "python"))
     return problem.domain.lower() in _CODE_DOMAINS
+
+
+def is_logic_problem(problem: "Problem | str") -> bool:
+    """Whether this problem is graded by knight/knave enumeration (mirrors
+    twin.verifiers.dispatch method selection)."""
+    if not isinstance(problem, Problem):
+        return False
+    vtype = str(problem.verification.get("type", "")).strip().lower()
+    if vtype:
+        return vtype.startswith("logic")
+    return problem.domain.lower() in _LOGIC_DOMAINS
 
 
 def solver_user(problem: Problem | str) -> str:
@@ -441,6 +517,13 @@ def solver_user(problem: Problem | str) -> str:
             f"{entry_line}"
             "Reply with one complete ```python code block containing your "
             "solution — it will be run against tests."
+        )
+    if is_logic_problem(problem):
+        return (
+            f"Solve this logic puzzle:\n\n{statement}\n\n"
+            "Reason through the statements concisely, then end with a final "
+            "line naming every character once, in exactly this form:\n"
+            "ANSWER: <Name>=knight, <Name>=knave, ..."
         )
     return (
         f"Solve this problem:\n\n{statement}\n\n"
