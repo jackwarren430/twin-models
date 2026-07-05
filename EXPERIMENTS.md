@@ -561,6 +561,19 @@ Copy this block for each run.
   consistency under harder attempts (the binding constraint — if it
   craters while rgrad rises, consider per-problem credit or a softer
   w_consistency next).
+- **Checkpoint-5 deep-dive (iters 0-4):** pre-registered starvation check
+  PASSED — parse-fail 9→15→9→11→5 of 20 (iter 1 was noise, not trend);
+  iter 4 the best row everywhere: 25% spiral rate, 12/12 tool ok,
+  consistency 11/15, first positive Rc (+0.148). The cap+penalty pressure
+  is teaching DELIVER over SPIRAL, slowly; think-share still 0.90-0.97
+  (thinking within cap is fine if delivery happens). New concern:
+  **content re-converging to easy templates** — only two non-1.0 K-groups
+  in 5 iters (both iter 0), per-suite repetition (new digit-normalized
+  metric) hitting 0.92-0.95 in half the suites by iters 3-4. w_diversity's
+  suite-vs-suite contrast now has survivors to act on (iter 4: rep spread
+  0.16 vs 0.95 across suites = ~0.24 reward contrast). rgrad 0.221/0.048/
+  0.150/0.123/0.245 — floor-ish, no lift-off yet. Continue; the
+  difficulty verdict window stays checkpoint 10-15.
 
 ---
 
