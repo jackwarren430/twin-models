@@ -520,8 +520,47 @@ Copy this block for each run.
     two-phase prompt + no-think creator = ~30-35 min/iter (04a: 50-70).
   - Artifacts: `runs/2026-07-04-mini-04b.{jsonl,out,transcript.txt}`,
     checkpoints A/B at steps 5/10/15. Hard-bench of step-15 adapters vs
-    the base 66% no-think bar: `runs/bench-hard-mini04b-step15.json`
-    (results below when done).
+    the base 66% no-think bar: `runs/bench-hard-mini04b-step15.json`.
+  - **Hard-bench result (n=80/adapter, no-think, greedy, matched to the
+    base bar):** base 66.2% / A@15 67.5% (+1 item) / B@15 63.7% (−2
+    items) — **statistically null both ways.** Per-category: math and
+    coding EXACTLY flat for both (70%/50%); the deltas are one reasoning
+    item (A) and one knowledge + one reasoning item (B). Reading: 15
+    iterations of trivial-template self-play is **capability-neutral** —
+    it taught nothing (as expected: solving "7×8+3" 112 times/iter has no
+    signal) but also DAMAGED nothing despite drift A=1.62/B=0.84; the
+    kl_beta=0.02 leash held. The collapse equilibrium wastes compute, it
+    does not poison weights.
+
+---
+
+### 2026-07-04 — (RUNNING) mini-05 — bounded-deliberation creator
+
+- **Config:** configs/mini5.yaml (full rationale in its header) = mini4b +
+  creator thinking ON with a **2048 hard cap** + `w_diversity: 0.3` on the
+  digit-normalized similarity + grounded theme weights
+  (data/themes-grounded.json, first use) + prompt example-reuse ban.
+  Everything else unchanged (require_tool_use, solver_batch 8, N=5 K=8
+  G_c=4, targets 0.9→0.1, seed 0, 30 iters, ckpt every 5).
+- **Design logic:** mini-04a and mini-04b bracket the space (uncapped
+  thinking = spirals + simulation; no thinking = template collapse);
+  mini-05 is the interior point, plus the two Sprint-9 anti-collapse
+  mechanisms no run had used. Bundled deliberately — the question is
+  "can the ratchet get traction AT ALL", not factor attribution;
+  ablations come after traction exists.
+- **Hypotheses:** (1) creator tool adoption survives thinking ON under
+  the two-phase prompt + strict gate (probe 1 measured 2/6 unforced —
+  the GATE now voids non-callers, so selection pressure does the rest);
+  (2) hard-rank spirals return but cost ≤2048 tokens and land as
+  parse-fails (watch n_parse_failed by rank); (3) w_diversity +
+  banned examples + thinking break the single-template equilibrium
+  (repetition on the new metric); (4) **THE success signal: r_gradient
+  lifts off the 0.267 all-solved floor** — any sustained rgrad > 0.4
+  means solve rates left 1.0 and the calibration game is live.
+- **Watch:** wall-clock/iter (expect > 04b's ~32 min; cap bounds it);
+  consistency under harder attempts (the binding constraint — if it
+  craters while rgrad rises, consider per-problem credit or a softer
+  w_consistency next).
 
 ---
 
