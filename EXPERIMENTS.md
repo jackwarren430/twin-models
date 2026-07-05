@@ -534,7 +534,15 @@ Copy this block for each run.
 
 ---
 
-### 2026-07-04 — (RUNNING) mini-05 — bounded-deliberation creator
+### 2026-07-04 — (PAUSED at 10/30, user request 2026-07-05) mini-05 — bounded-deliberation creator
+
+- **PAUSED cleanly at the step-10 checkpoint** (user leaving; iteration 10
+  was mid-flight and is lost, nothing else). RESUME with:
+  `nohup caffeinate -i conda run --no-capture-output -n twin-models \`
+  `python -u scripts/train.py --config configs/mini5.yaml \`
+  `--run-name 2026-07-04-mini-05 --resume-step 10 > runs/2026-07-04-mini-05.resume.out 2>&1 &`
+  (optimizer moments and the drift baseline reset at the resume point —
+  documented train.py behavior; KL/drift curves will re-zero.)
 
 - **Config:** configs/mini5.yaml (full rationale in its header) = mini4b +
   creator thinking ON with a **2048 hard cap** + `w_diversity: 0.3` on the
