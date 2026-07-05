@@ -240,6 +240,13 @@ class TrainConfig:
     seed: int = 0
     checkpoint_every: int = 100
     log_every: int = 1
+    # Also write the INPUT prompts to the raw-text transcript (system prompts
+    # once per iteration — they change at rotation when personas are on —
+    # and each rollout's user prompt; the K solver attempts share one prompt,
+    # logged once per problem). Off by default: prompts are large and mostly
+    # templated, so this roughly doubles transcript size. No effect on the
+    # JSONL log or when the transcript sink is disabled.
+    log_prompts: bool = False
 
 
 @dataclass

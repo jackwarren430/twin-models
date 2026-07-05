@@ -39,9 +39,15 @@ def main() -> None:
                          "moments and the drift baseline reset at the resume point.")
     ap.add_argument("--no-transcript", action="store_true",
                     help="skip the raw-text transcript (runs/<run-name>.transcript.txt)")
+    ap.add_argument("--log-prompts", action="store_true",
+                    help="also write input prompts to the transcript "
+                         "(sets train.log_prompts; system prompts once per "
+                         "iteration, user prompts per rollout)")
     args = ap.parse_args()
 
     cfg = Config.from_yaml(args.config)
+    if args.log_prompts:
+        cfg.train.log_prompts = True
     print(f"Loading base: {cfg.model.path}")
     base = TwinBase(cfg.model.path)
     adapters = Adapters.from_config(base.model, cfg.lora)

@@ -364,6 +364,8 @@ class SelfPlayTrainer:
                 previous=prev_jsons if (cfg.game.condition_on_previous and prev_jsons) else None,
                 opponent=opp,
             )
+            if cfg.train.log_prompts:
+                self._tr(f"prompt creator[{g}.{i}]", user)
             cgen, harness = self._generate_creator(assign.creator, creator_sys, user)
             roll = {
                 "rank": i,
@@ -515,6 +517,14 @@ class SelfPlayTrainer:
             logic=True,
         )
 
+        # Prompt transcript entries (train.log_prompts). System prompts go in
+        # once per iteration — not once per run, because rotation changes the
+        # persona glued to each role — and the solver variants lazily, only if
+        # a problem of that kind actually shows up this iteration.
+        if cfg.train.log_prompts:
+            self._tr("prompt creator_system", creator_sys)
+        solver_sys_logged: set[str] = set()
+
         for g in range(cfg.game.creator_group):
             # --- creator generation --------------------------------------
             # Uniform shape either way: `suite` (or None) + `rollouts`, one
@@ -525,8 +535,11 @@ class SelfPlayTrainer:
                     assign, domain, theme, n, g, creator_sys
                 )
             else:
+                cuser = creator_user(domain, theme, n)
+                if cfg.train.log_prompts:
+                    self._tr(f"prompt creator[{g}]", cuser)
                 cgen, charness = self._generate_creator(
-                    assign.creator, creator_sys, creator_user(domain, theme, n),
+                    assign.creator, creator_sys, cuser,
                 )
                 roll = {
                     "prompt_tokens": cgen.prompt_tokens,
@@ -614,11 +627,19 @@ class SelfPlayTrainer:
                 group: list[Trajectory] = []
                 attempt_flags: list[bool] = []
                 p_is_code = is_code_problem(p)
-                sgens = self._generate_solver_group(
-                    assign.solver,
-                    solver_sys_code if p_is_code
-                    else (solver_sys_logic if is_logic_problem(p) else solver_sys),
-                    solver_user(p))
+                s_variant = ("code" if p_is_code
+                             else "logic" if is_logic_problem(p) else "default")
+                s_sys = (solver_sys_code if p_is_code
+                         else solver_sys_logic if s_variant == "logic"
+                         else solver_sys)
+                s_user = solver_user(p)
+                if cfg.train.log_prompts:
+                    if s_variant not in solver_sys_logged:
+                        solver_sys_logged.add(s_variant)
+                        self._tr(f"prompt solver_system[{s_variant}]", s_sys)
+                    # The K attempts share this one prompt; logged once.
+                    self._tr(f"prompt solver[{g}.{i}]", s_user)
+                sgens = self._generate_solver_group(assign.solver, s_sys, s_user)
                 solver_think.extend(think_share(s.text) for s in sgens)
                 for k, sgen in enumerate(sgens):
                     ans = (extract_code_block(sgen.text) if p_is_code

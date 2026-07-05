@@ -1,0 +1,87 @@
+# 
+#
+#  Copied from mini-05
+#   small test to verify prompts and stuff
+#
+#
+#
+#
+
+model:
+  path: ~/.cache/lm-studio/models/mlx-community/Qwen3-8B-6bit
+  enable_thinking: true
+  creator_enable_thinking: true   # mini-05: bounded deliberation (see header)
+  max_kv_size: null
+
+lora:
+  num_layers: 1
+  rank: 16
+  alpha: 32.0          # effective mlx-lm scale = alpha / rank = 2.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+  top_p: 0.95
+  creator_max_tokens: 2048  # HARD CAP on deliberation (see header)
+  solver_max_tokens: 4096
+  oracle_max_tokens: 4096
+  solver_batch: 1       # validated in mini-04b (~30-35 min/iter)
+
+game:
+  n_problems: 3         # N
+  creator_group: 1      # G_c
+  solver_attempts: 1    # K
+  domains: ["math"]     # coding stays out until its shakeout passes
+  creator_mode: per_problem
+  condition_on_previous: true
+  personas: true
+  require_tool_use: true    # validated: selects, does not starve
+  theme_weights: data/themes-grounded.json  # mini-05: grounded draw (header)
+
+rewards:
+  w_gradient: 1.0
+  w_consistency: 0.5
+  w_oracle: 0.1
+  w_valid: 0.1
+  w_solve: 1.0
+  w_oracle_solver: 0.05
+  w_brevity: 0.25
+  w_diversity: 0.3      # mini-05: anti-template pressure (see header)
+  mse_beta: 4.0
+  clip: 10.0
+  target_hi: 0.9
+  target_lo: 0.1
+
+oracle:
+  enabled: true
+  cost_per_query: 1.0
+  max_calls_per_turn: 4
+
+tools:
+  creator_tools: ["solve", "calc"]
+  creator_max_tool_calls: 4
+  creator_tool_rounds: 5
+  cas_timeout_s: 3.0
+  protocol: native
+
+roles:
+  swap_interval: 8
+  warmup_iterations: 5
+  injection_rate: 0.0   # rotation-only
+
+train:
+  iters: 30
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  grad_accumulation_steps: 1
+  grpo_microbatch: 1
+  adv_mode: mean        # Dr.GRPO mean baseline
+  seed: 0
+  checkpoint_every: 5
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints
+  runs: runs
