@@ -61,7 +61,7 @@ def pick_theme(
 # Names are glued to ADAPTERS, not roles: A is always "alpha", B always
 # "omega", whatever role each is playing this iteration. The judge and the
 # held-out benchmark never see personas (they must stay neutral graders).
-PERSONAS: dict[str, str] = {"A": "alpha", "B": "omega"}
+PERSONAS: dict[str, str] = {"A": "Alpha", "B": "Omega"}
 
 
 def persona_of(model: str) -> str:
@@ -428,7 +428,7 @@ def creator_problem_user(
         f"over candidate designs — a long deliberation gets your output cut "
         f"off before the JSON, which scores nothing.\n\n"
         f"{tool_sentence} "
-        f"Work out the solution first, then state the answer it yields. Return "
+        f"Return "
         f"ONLY this JSON object (one problem, no wrapper list):\n"
         "{\n"
         '  "statement": "<the problem, fully self-contained>",\n'

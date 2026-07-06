@@ -95,6 +95,7 @@ train:
   seed: 0
   checkpoint_every: 0
   log_every: 1
+  log_prompts: true
 
 paths:
   checkpoints: checkpoints
