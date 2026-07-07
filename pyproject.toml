@@ -17,6 +17,18 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# DGX Spark / CUDA native backend (compute.backend: torch). Kept optional so a
+# Mac / mlx install pulls in none of it. On the Spark, install the sm_121 torch
+# build FIRST from the nightly cu13 index (see DGX_SPARK.md) — the bare "torch"
+# pin here is a fallback for hosts where the default wheel already supports the
+# GPU. transformers/peft drive the model + LoRA; accelerate/safetensors support.
+torch = [
+    "torch>=2.5",
+    "transformers>=4.44",
+    "peft>=0.13",
+    "accelerate>=1.0",
+    "safetensors>=0.4",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

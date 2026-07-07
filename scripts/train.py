@@ -19,9 +19,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from twin.backends import get_backend      # noqa: E402
 from twin.config import Config              # noqa: E402
 from twin.log import JsonlLogger, TranscriptLogger  # noqa: E402
-from twin.models import Adapters, TwinBase  # noqa: E402
 from twin.train import SelfPlayTrainer      # noqa: E402
 
 
@@ -48,10 +48,13 @@ def main() -> None:
     cfg = Config.from_yaml(args.config)
     if args.log_prompts:
         cfg.train.log_prompts = True
-    print(f"Loading base: {cfg.model.path}")
-    base = TwinBase(cfg.model.path)
-    adapters = Adapters.from_config(base.model, cfg.lora)
-    print(f"  loaded; rank={cfg.lora.rank} alpha={cfg.lora.alpha} "
+    backend = get_backend(cfg.compute.backend)
+    print(f"Backend: {backend.name} | loading base: {cfg.model.path}")
+    base = backend.load_base(cfg.model, cfg.compute)
+    adapters = backend.build_adapters(base, cfg.lora)
+    dev = getattr(base, "device", None)
+    print(f"  loaded ({backend.name}{f', {dev}' if dev is not None else ''}); "
+          f"rank={cfg.lora.rank} alpha={cfg.lora.alpha} "
           f"scale={cfg.lora.effective_scale:g}; "
           f"{adapters.num_params('A'):,} params/adapter.")
 
@@ -82,7 +85,7 @@ def main() -> None:
             meta={"config": args.config, "run": run_name, "resume_step": start_iter})
         print(f"Transcript: {transcript_path}")
     trainer = SelfPlayTrainer(base, adapters, cfg, logger=logger,
-                              transcript=transcript)
+                              transcript=transcript, backend=backend)
 
     iters = args.iters if args.iters is not None else cfg.train.iters
     if start_iter >= iters:

@@ -374,6 +374,52 @@ GRPO optimization loop.
   effect on the JSONL log; `scripts/train.py --log-prompts` sets it from the
   CLI.
 
+## `compute`
+
+Which compute backend runs the model, plus that backend's native performance
+levers. The default reproduces the historical Apple-silicon behaviour exactly;
+`backend: torch` selects the NVIDIA DGX Spark path. See **DGX_SPARK.md** for
+setup and the acceptance smoke. All `torch`-prefixed fields below are read only
+by the torch backend (the mlx backend ignores them, so one config can carry
+both).
+
+- **`backend`** (default `"mlx"`)
+  `"mlx"` = Apple silicon / mlx-lm (default). `"torch"` = DGX Spark / CUDA
+  (PyTorch + transformers + PEFT, base loaded bf16).
+
+- **`device`** (default `"cuda"`) *(torch)*
+  torch device: `"cuda"` | `"cpu"` | `"mps"`. Falls back to CPU if CUDA is
+  unavailable.
+
+- **`dtype`** (default `"bfloat16"`) *(torch)*
+  Base-weight compute dtype: `"bfloat16"` (Blackwell-native) | `"float16"` |
+  `"float32"`.
+
+- **`attn_impl`** (default `"sdpa"`) *(torch)*
+  Attention kernel: `"sdpa"` (torch fused, always available), `"flash_attention_2"`
+  (needs the flash-attn wheel; fastest on Blackwell), or `"eager"` (reference).
+
+- **`compile`** (default `false`) *(torch)*
+  `torch.compile` the scoring forward. Experimental — may recompile on adapter
+  switch; opt-in.
+
+- **`tf32`** (default `true`) *(torch)*
+  Allow TF32 matmul/cuDNN. Large speedup on Ampere+ for a tiny precision cost.
+
+- **`matmul_precision`** (default `"high"`) *(torch)*
+  `torch.set_float32_matmul_precision`: `"highest"` | `"high"` | `"medium"`.
+
+- **`grad_checkpointing`** (default `false`) *(torch)*
+  HF gradient checkpointing on the scoring backward. Unnecessary at 128GB;
+  enable only if you OOM the backward. (Requires LoRA/base dropout 0 — the
+  default — because it briefly flips the model to train() mode.)
+
+Related, already-existing memory levers that apply to **both** backends:
+`gen.solver_batch` (batch the K solver attempts), `train.grpo_microbatch`
+(trajectories per backward chunk), `train.logit_chunk` (chunked LM-head
+scoring), `model.max_kv_size` (mlx-only). On the Spark's 128GB the last three
+relax toward off/large — see `configs/spark.yaml`.
+
 ## `paths`
 
 - **`checkpoints`** (default `"checkpoints"`)

@@ -110,6 +110,10 @@ conda run -n twin-models python scripts/smoke_test_creator_cas.py  # creator inl
 # run the self-play loop from a config
 conda run -n twin-models python scripts/train.py --config configs/tiny.yaml --iters 5
 
+# NVIDIA DGX Spark (GB10 / CUDA): the SAME loop, native PyTorch backend, via one
+# config field (compute.backend: torch). Setup + acceptance smoke in DGX_SPARK.md.
+python scripts/train.py --config configs/spark.yaml --iters 30
+
 # a real run (mini-04 = current config; thinking ON, ~half an hour per iteration —
 # use --no-capture-output + python -u for live logs, caffeinate so it isn't suspended)
 caffeinate -i conda run --no-capture-output -n twin-models python -u \

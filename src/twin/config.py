@@ -24,6 +24,10 @@ DEFAULT_MODEL_PATH = os.path.expanduser(
 
 @dataclass
 class ModelConfig:
+    # Backend-specific weights. The MLX backend wants an mlx-community MLX dir
+    # (the 6-bit Qwen3-8B default below); the torch backend wants a HuggingFace
+    # checkpoint — a repo id ("Qwen/Qwen3-8B") or a local HF dir — loaded in
+    # bf16. Set this alongside compute.backend (see configs/spark.yaml).
     path: str = DEFAULT_MODEL_PATH
     enable_thinking: bool = False  # Qwen3 thinking mode; off for v1 throughput
     # Creator-rollout override for thinking (2026-07-04): null = follow
@@ -250,6 +254,32 @@ class TrainConfig:
 
 
 @dataclass
+class ComputeConfig:
+    """Which compute backend runs the model, plus that backend's native
+    performance levers (twin.backends). The default is MLX / Apple silicon —
+    the platform the loop was developed on — so an unspecified ``compute``
+    section reproduces the historical behaviour exactly.
+
+    ``backend="torch"`` selects the NVIDIA DGX Spark path (GB10 Grace
+    Blackwell, sm_121, 128GB unified memory): PyTorch + HuggingFace
+    transformers + PEFT LoRA, base loaded bf16. All the ``torch`` fields below
+    are read ONLY by the torch backend; the MLX backend ignores them (they're
+    parsed either way so a single config can carry both). See DGX_SPARK.md."""
+
+    backend: str = "mlx"          # "mlx" (Apple silicon) | "torch" (DGX Spark / CUDA)
+    # ----- torch-only performance levers -----
+    device: str = "cuda"          # torch device ("cuda" | "cpu" | "mps")
+    dtype: str = "bfloat16"       # base-weight compute dtype ("bfloat16" | "float16" | "float32")
+    # Attention kernel: "sdpa" (torch fused, always available), "flash_attention_2"
+    # (needs the flash-attn wheel; fastest on Blackwell), or "eager" (reference).
+    attn_impl: str = "sdpa"
+    compile: bool = False         # torch.compile the scoring forward (opt-in; slow first step)
+    tf32: bool = True             # allow TF32 matmul/cuDNN (Ampere+; big speedup, tiny precision cost)
+    matmul_precision: str = "high"  # torch.set_float32_matmul_precision ("highest"|"high"|"medium")
+    grad_checkpointing: bool = False  # HF gradient checkpointing on the scoring backward
+
+
+@dataclass
 class PathsConfig:
     checkpoints: str = "checkpoints"
     runs: str = "runs"
@@ -266,6 +296,7 @@ class Config:
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     roles: RolesConfig = field(default_factory=RolesConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
+    compute: ComputeConfig = field(default_factory=ComputeConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
 
     @classmethod

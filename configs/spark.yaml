@@ -1,0 +1,91 @@
+# DGX Spark native run (PyTorch/CUDA backend). Same self-play loop and mechanics
+# as configs/mini.yaml — the ONLY structural change is `compute.backend: torch`,
+# which swaps mlx-lm for PyTorch + transformers + PEFT on the GB10 Grace
+# Blackwell GPU (128GB unified memory). See DGX_SPARK.md for setup + the 2-iter
+# acceptance smoke.
+#
+# Why the memory knobs relax here: the mlx config fights a 32GB ceiling
+# (grpo_microbatch=1, logit_chunk, solver_batch=1). On the Spark's 128GB the
+# whole GRPO batch fits in one graph and the K solver attempts batch-decode
+# together — so those levers are turned OFF/UP for throughput. Dial them back
+# only if you push token budgets or group sizes far past these.
+
+compute:
+  backend: torch              # <-- the switch. "mlx" would run this same file on Apple silicon.
+  device: cuda
+  dtype: bfloat16             # Blackwell-native; full-precision base (~16GB) + bf16 LoRA
+  attn_impl: sdpa             # torch fused attention; set "flash_attention_2" if the wheel is installed
+  tf32: true                  # TF32 matmul/cuDNN — big speedup, negligible precision cost
+  matmul_precision: high
+  compile: false              # torch.compile the scoring forward (experimental; may recompile on adapter swap)
+  grad_checkpointing: false   # unnecessary at 128GB; enable only if you OOM the backward
+
+model:
+  # HuggingFace checkpoint (repo id or local HF dir), loaded in bf16 — NOT the
+  # mlx-community 6-bit dir. Pre-download with `huggingface-cli download Qwen/Qwen3-8B`.
+  path: Qwen/Qwen3-8B
+  enable_thinking: true
+  max_kv_size: null           # mlx-only; ignored by the torch backend
+
+lora:
+  num_layers: 16              # last 16 blocks (PEFT layers_to_transform)
+  rank: 64
+  alpha: 128.0                # PEFT scaling = alpha / rank = 2.0 (same as mlx effective scale)
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+  top_p: 0.95
+  creator_max_tokens: 4096
+  solver_max_tokens: 4096
+  oracle_max_tokens: 4096
+  solver_batch: 8             # batch the K=4 solver attempts (128GB has the KV headroom)
+
+game:
+  n_problems: 3
+  creator_group: 2
+  solver_attempts: 4
+  domains: ["math", "coding"]
+
+rewards:
+  w_gradient: 1.0
+  w_consistency: 0.5
+  w_oracle: 0.1
+  w_valid: 0.1
+  w_solve: 1.0
+  w_oracle_solver: 0.05
+  mse_beta: 4.0
+  clip: 10.0
+
+oracle:
+  enabled: true
+  cost_per_query: 1.0
+  max_calls_per_turn: 4
+
+tools:
+  creator_tools: ["solve", "calc"]
+  creator_max_tool_calls: 4
+  creator_tool_rounds: 4
+  cas_timeout_s: 3.0
+
+roles:
+  swap_interval: 8
+  warmup_iterations: 5
+  injection_rate: 0.0
+
+train:
+  iters: 30
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  grad_accumulation_steps: 1
+  grpo_microbatch: 0          # whole GRPO batch in one graph (128GB has room; 0 = no chunking)
+  logit_chunk: 0              # plain LM-head scoring (the chunked path is a 32GB memory saver)
+  seed: 0
+  checkpoint_every: 5
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints
+  runs: runs

@@ -15,7 +15,6 @@ the desired adapter via ``Adapters`` before calling generate()/logprobs().
 """
 
 import os
-from dataclasses import dataclass
 from typing import Callable, Optional
 
 import mlx.core as mx
@@ -23,40 +22,11 @@ from mlx_lm import load, stream_generate
 from mlx_lm.generate import BatchGenerator
 from mlx_lm.sample_utils import make_sampler
 
+# Backend-neutral value types (no mlx) live in twin.models.types; re-exported
+# here so `from twin.models.base import GenResult` keeps working.
+from twin.models.types import GenResult, ReactResult, assemble_react
 
-@dataclass
-class GenResult:
-    text: str
-    prompt_tokens: list[int]
-    completion_tokens: list[int]
-
-
-@dataclass
-class ReactResult:
-    """A multi-turn (ReAct) rollout: the model's text interleaved with injected
-    tool observations, plus the token bookkeeping GRPO needs. ``completion_tokens``
-    is the FULL spliced sequence (policy tokens + injected ``<obs>`` tokens), so
-    the forward pass conditions on the observations; ``loss_mask`` marks which of
-    those are policy-sampled (1) vs injected (0)."""
-
-    text: str
-    prompt_tokens: list[int]
-    completion_tokens: list[int]
-    loss_mask: list[int]
-    n_rounds: int = 0
-    n_tool_calls: int = 0
-
-
-def assemble_react(segments: list[tuple[list[int], bool]]) -> tuple[list[int], list[int]]:
-    """Flatten ``(tokens, is_policy)`` segments into ``(completion_ids,
-    loss_mask)``. Pure bookkeeping, factored out so the masking is unit-testable
-    without loading the model."""
-    ids: list[int] = []
-    mask: list[int] = []
-    for tokens, is_policy in segments:
-        ids.extend(tokens)
-        mask.extend([1 if is_policy else 0] * len(tokens))
-    return ids, mask
+__all__ = ["TwinBase", "GenResult", "ReactResult", "assemble_react"]
 
 
 class TwinBase:

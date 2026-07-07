@@ -28,13 +28,10 @@ import json
 import random
 from pathlib import Path
 
-import mlx.core as mx
-import mlx.optimizers as optim
-
 from twin.analysis.diversity import cross_suite_penalties, mean_pairwise_similarity
+from twin.backends import get_backend
 from twin.config import Config
 from twin.log import JsonlLogger, TranscriptLogger
-from twin.models import Adapters, TwinBase
 from twin.problems.schema import (
     ProblemSuite,
     SuiteParseError,
@@ -56,7 +53,7 @@ from twin.prompts import (
     solver_user,
 )
 from twin.rewards import RewardEngine, solve_rate
-from twin.rl import Trajectory, all_zero_advantages, group_advantages, grpo_update
+from twin.rl import Trajectory, all_zero_advantages, group_advantages
 from twin.roles import RoleManager
 from twin.tools import (
     NATIVE_STOP,
@@ -86,17 +83,22 @@ def _mean(xs: list[float]) -> float:
 class SelfPlayTrainer:
     def __init__(
         self,
-        base: TwinBase,
-        adapters: Adapters,
+        base,
+        adapters,
         cfg: Config,
         *,
         logger: JsonlLogger | None = None,
         transcript: TranscriptLogger | None = None,
         seed: int | None = None,
+        backend=None,
     ):
         self.base = base
         self.adapters = adapters
         self.cfg = cfg
+        # Compute backend (mlx | torch). Resolved from cfg by default so scripted
+        # test trainers built without one still work; the framework-specific ops
+        # (optimizer, RNG seed, array realize, GRPO step) all route through it.
+        self.backend = backend if backend is not None else get_backend(cfg.compute.backend)
         self.engine = RewardEngine(cfg.rewards)
         self.roles = RoleManager(
             swap_interval=cfg.roles.swap_interval,
@@ -107,7 +109,7 @@ class SelfPlayTrainer:
         # One AdamW per adapter so the moment estimates don't bleed across A/B.
         # weight_decay=0: decaying LoRA toward zero would fight the RL signal.
         self.optimizers = {
-            name: optim.AdamW(learning_rate=cfg.train.learning_rate, weight_decay=0.0)
+            name: self.backend.make_optimizer(adapters, name, cfg.train.learning_rate)
             for name in adapters.NAMES
         }
         self.logger = logger
@@ -116,17 +118,17 @@ class SelfPlayTrainer:
         self.transcript = transcript
         seed_val = cfg.train.seed if seed is None else seed
         self.rng = random.Random(seed_val)
-        # Seed MLX's global RNG too: sampling (make_sampler) draws from it, so
+        # Seed the backend's global sampling RNG too: sampling draws from it, so
         # without this the domain/theme schedule is reproducible but every
         # generation differs run-to-run. (A --resume-step run reseeds from the
         # start, so its sample stream matches a fresh run's *schedule*, not the
         # interrupted run's mid-stream state — acceptable for our purposes.)
-        mx.random.seed(seed_val)
+        self.backend.seed(seed_val)
         # Init snapshot of each adapter tree, so every iteration can report how
         # far that adapter has drifted from its starting point (adapter-drift
         # curve, DESIGN.md §11). Taken before any training touches the trees.
         self._init_trees = {n: adapters.snapshot(n) for n in adapters.NAMES}
-        mx.eval([t for t in self._init_trees.values()])
+        self.backend.realize(list(self._init_trees.values()))
         # Sprint 9 — grounded theme weights (game.theme_weights): loaded once;
         # None keeps the uniform static pool.
         self._theme_weights = None
@@ -430,20 +432,23 @@ class SelfPlayTrainer:
             return {"n_traj": len(trajs), "n_tokens": 0, "loss": 0.0, "pg": 0.0,
                     "kl": 0.0, "grad_norm": 0.0, "skipped_zero_adv": True}
         # Reference log-probs from the frozen base (zeroed adapter), no grad.
-        # Realize each immediately (mx.eval) rather than batching the eval: a
-        # single completion's [T,V] logits is ~2.5GB at a 4096 budget, so
-        # deferring would hold every trajectory's forward graph live at once and
-        # OOM. (Lazy eval would also reference whatever adapter is active later.)
+        # Realize each immediately (backend.realize == mx.eval on MLX) rather
+        # than batching: a single completion's [T,V] logits is ~2.5GB at a 4096
+        # budget, so deferring would hold every trajectory's forward graph live
+        # at once and OOM. backend.no_grad() keeps the torch reference pass off
+        # the autograd tape (a null context on MLX, where grad comes only from
+        # value_and_grad tracing).
         self.adapters.activate("base")
-        for t in trajs:
-            t.ref_logprobs = self.base.completion_logprobs(
-                t.prompt_ids, t.completion_ids,
-                logit_chunk=self.cfg.train.logit_chunk or None,
-            )
-            mx.eval(t.ref_logprobs)
+        with self.backend.no_grad():
+            for t in trajs:
+                t.ref_logprobs = self.base.completion_logprobs(
+                    t.prompt_ids, t.completion_ids,
+                    logit_chunk=self.cfg.train.logit_chunk or None,
+                )
+                self.backend.realize(t.ref_logprobs)
         # Policy update on this adapter.
         self.adapters.activate(adapter)
-        metrics = grpo_update(
+        metrics = self.backend.grpo_update(
             self.base.model,
             self.optimizers[adapter],
             trajs,
