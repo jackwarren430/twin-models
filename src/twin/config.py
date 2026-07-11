@@ -165,6 +165,12 @@ class TwentyQConfig:
     creator_thinking: bool = False
     guesser_thinking: bool = False
     answerer_thinking: bool = False
+    # The twentyq judge (validity / truthfulness audit / closeness Φ) is pure
+    # NL judgment with no arithmetic, so it runs thinking OFF by default: a
+    # thinking budget truncated the closeness trace before the CLOSENESS line
+    # (q-shakeout-03, Φ None on every episode → dead shaping signal). ON (with
+    # a large oracle budget) is a judge-quality Q8 ablation.
+    judge_thinking: bool = False
     # Solver episode reward (DESIGN §2.5). Keep w_close < w_guess so a
     # near-miss never outearns a win, and w_efficiency gated on success so
     # rushing can never beat guessing right.

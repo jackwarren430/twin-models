@@ -93,7 +93,8 @@ def _make_trainer(cfg, creator_script, guesser_script, *,
         return GenResult(text="ANSWER: YES",
                          prompt_tokens=[7], completion_tokens=[8])
 
-    def fake_judge(question):
+    def fake_judge(question, *, enable_thinking=None):
+        t.captured.setdefault("judge_thinking", []).append(enable_thinking)
         t.captured["judge"].append(question)
         if "vetting a secret" in question:
             m = re.search(r"Secret: (.+)", question)
@@ -202,6 +203,13 @@ def test_thinking_flags_are_configurable():
     t.run_iteration(0)
     assert t.captured["thinking"] == {
         "creator": True, "guesser": True, "answerer": False}
+
+
+def test_judge_graded_without_thinking_by_default(record_and_trainer):
+    _, t = record_and_trainer
+    # All three NL contracts grade with thinking OFF (q-shakeout-03 fix).
+    assert t.captured["judge_thinking"]
+    assert all(x is False for x in t.captured["judge_thinking"])
 
 
 def test_judge_called_per_contract(record_and_trainer):

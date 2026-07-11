@@ -71,10 +71,38 @@ twentyq ×2): a *thinking budget* on Qwen3 is a truncation trap; constrain by
 turning thinking off, not by tightening the budget. Relaunched as
 q-shakeout-03.
 
-## q-shakeout-03 (Sprint Q6 gate, re-run) — launched 2026-07-11
+## q-shakeout-03 (Sprint Q6 gate, re-run) — 2026-07-11
 
-All roles thinking OFF (creator 256 / guesser 200 / answerer 64). Judge keeps
-thinking. Same gates. This is the first run where the loop *should* actually
-play episodes.
+All player roles thinking OFF (creator 256 / guesser 200 / answerer 64). Judge
+still thinking. Same gates.
+
+Result: **STOPPED after iter 0 — the loop finally plays real episodes; one last
+truncation, this time on the judge.**
+
+    [0] ... Rc=+1.100 | parse=1.00 valid=1.00 | eps 0/4 void=0 fmt=0 | phi=0.00
+
+- **parse 1.00, valid 1.00, 4 episodes played, 0 format-fails, 0 voids.** The
+  loop runs end-to-end. Transcript shows a *coherent* game: guesser narrows
+  "fruit? vegetable? grain? legume? cereal grain?" then guesses Rice; answerer
+  truthfully answers about the secret "bread" (grain YES, cereal-grain NO with
+  the correct distinction). This is the milestone — self-play 20-questions
+  works.
+- **New (final) FAIL: phi=None on every episode.** The *closeness judge*
+  truncated — thinking ON, it reasoned through all 6 questions and hit the
+  budget before the `CLOSENESS:` line. Validity/audit survived (VALID/INVALID
+  needs far less reasoning than a 0-10 score). Dead phi ⇒ the w_close partial-
+  credit shaping is inert.
+- Also slow: ~10 thinking judge calls/iteration dominated wall-clock.
+
+Fix (committed): `twentyq.judge_thinking` default OFF — the judge's three
+contracts are pure NL judgment (no arithmetic), so it emits its verdict line
+directly. Faster *and* revives phi. (`_judge` gained an `enable_thinking`
+override; SelfPlayTrainer's CAS math-judge is unchanged.)
+
+## q-shakeout-04 (Sprint Q6 gate, re-run) — launched 2026-07-11
+
+Every model call (all 3 players + judge) thinking OFF. Definitive gate run:
+episodes already proven; this confirms phi parses and measures wall-clock at
+non-thinking speed across 5 iterations.
 
 Result: PENDING

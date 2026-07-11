@@ -70,6 +70,13 @@ def _mean(xs: list[float]) -> float:
 
 class TwentyQTrainer(BaseTrainer):
 
+    # Frozen-base grader for the three NL judge contracts (validity / audit /
+    # closeness). Binds twentyq.judge_thinking so these tasks run thinking OFF
+    # by default — a thinking budget truncated the closeness trace before its
+    # verdict line (q-shakeout-03). Passed as the ``oracle`` to the judge fns.
+    def _grade(self, question: str) -> str:
+        return self._judge(question, enable_thinking=self.cfg.twentyq.judge_thinking)
+
     # ----- player closures --------------------------------------------------
     def _make_guesser(self, adapter: str, category: str):
         qcfg = self.cfg.twentyq
@@ -173,7 +180,7 @@ class TwentyQTrainer(BaseTrainer):
 
         parsed_ranks = [r["rank"] for r in rollouts if r["parsed"]]
         for si, secret in enumerate(secrets):
-            valid = judge_secret_validity(secret, self._judge).correct
+            valid = judge_secret_validity(secret, self._grade).correct
             self._tr(f"secret[{si}] '{secret.secret}' valid={valid}")
             summary = {
                 "secret": secret.secret, "difficulty": secret.difficulty,
@@ -215,7 +222,7 @@ class TwentyQTrainer(BaseTrainer):
                             lines.append(f"      answerer<< {t.answer_raw.strip()[:200]}")
                 transcript = "\n".join(lines)
                 # Truthfulness audit over creator-authored answers only.
-                audit = judge_answer_audit(secret, ep.audited_pairs, self._judge)
+                audit = judge_answer_audit(secret, ep.audited_pairs, self._grade)
                 if audit is None and ep.audited_pairs:
                     n_unauditable += 1
                 void = audit is not None and not all(audit)
@@ -227,7 +234,7 @@ class TwentyQTrainer(BaseTrainer):
                     final_guess = (ep.turns[-1].content
                                    if ep.turns and ep.turns[-1].kind == "guess"
                                    else None)
-                    phi = judge_closeness(secret, ep.qa_pairs, self._judge,
+                    phi = judge_closeness(secret, ep.qa_pairs, self._grade,
                                           final_guess=final_guess)
                     if phi is not None:
                         phi_vals.append(phi)
@@ -263,7 +270,7 @@ class TwentyQTrainer(BaseTrainer):
                     returns = []
                     for ep, rew in zip(kept_eps, kept_rewards):
                         inter = [
-                            judge_closeness(secret, ep.qa_pairs[:t + 1], self._judge)
+                            judge_closeness(secret, ep.qa_pairs[:t + 1], self._grade)
                             for t in range(ep.turns_used - 1)
                         ]
                         returns.append(shaped_returns(

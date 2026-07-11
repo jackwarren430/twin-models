@@ -34,6 +34,7 @@ twentyq:
   creator_thinking: false
   guesser_thinking: false
   answerer_thinking: false
+  judge_thinking: false          # NL grading; thinking truncated closeness Φ (q-shakeout-03)
   secret_max_tokens: 256         # no thinking: one JSON object
   question_max_tokens: 200       # no thinking: one QUESTION/GUESS line
   answer_max_tokens: 64          # no thinking: one ANSWER line
