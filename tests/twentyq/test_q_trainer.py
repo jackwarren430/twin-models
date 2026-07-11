@@ -93,8 +93,9 @@ def _make_trainer(cfg, creator_script, guesser_script, *,
         return GenResult(text="ANSWER: YES",
                          prompt_tokens=[7], completion_tokens=[8])
 
-    def fake_judge(question, *, enable_thinking=None):
+    def fake_judge(question, *, enable_thinking=None, system=None):
         t.captured.setdefault("judge_thinking", []).append(enable_thinking)
+        t.captured.setdefault("judge_system", []).append(system)
         t.captured["judge"].append(question)
         if "vetting a secret" in question:
             m = re.search(r"Secret: (.+)", question)
@@ -210,6 +211,17 @@ def test_judge_graded_without_thinking_by_default(record_and_trainer):
     # All three NL contracts grade with thinking OFF (q-shakeout-03 fix).
     assert t.captured["judge_thinking"]
     assert all(x is False for x in t.captured["judge_thinking"])
+
+
+def test_judge_uses_neutral_twentyq_system(record_and_trainer):
+    from twin.games.twentyq.prompts import JUDGE_SYSTEM
+    from twin.prompts import JUDGE_SYSTEM as MATH_JUDGE_SYSTEM
+    _, t = record_and_trainer
+    # Neutral twentyq grader, NOT the CAS math grader whose VERDICT contract
+    # hijacked CLOSENESS (q-shakeout-04).
+    assert t.captured["judge_system"]
+    assert all(s is JUDGE_SYSTEM for s in t.captured["judge_system"])
+    assert JUDGE_SYSTEM is not MATH_JUDGE_SYSTEM
 
 
 def test_judge_called_per_contract(record_and_trainer):

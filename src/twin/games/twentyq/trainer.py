@@ -44,6 +44,7 @@ from twin.games.twentyq.prompts import (
     ANSWERER_SYSTEM,
     CREATOR_SYSTEM,
     GUESSER_SYSTEM,
+    JUDGE_SYSTEM,
     answerer_user,
     creator_secret_user,
     guesser_user,
@@ -71,11 +72,14 @@ def _mean(xs: list[float]) -> float:
 class TwentyQTrainer(BaseTrainer):
 
     # Frozen-base grader for the three NL judge contracts (validity / audit /
-    # closeness). Binds twentyq.judge_thinking so these tasks run thinking OFF
-    # by default — a thinking budget truncated the closeness trace before its
-    # verdict line (q-shakeout-03). Passed as the ``oracle`` to the judge fns.
+    # closeness). Uses the neutral twentyq JUDGE_SYSTEM (not the CAS math
+    # grader, whose "VERDICT: CORRECT/INCORRECT" instruction hijacked the
+    # CLOSENESS contract — q-shakeout-04) and binds twentyq.judge_thinking
+    # (OFF by default; a thinking budget truncated the closeness trace before
+    # its verdict line — q-shakeout-03). Passed as the ``oracle`` to the fns.
     def _grade(self, question: str) -> str:
-        return self._judge(question, enable_thinking=self.cfg.twentyq.judge_thinking)
+        return self._judge(question, system=JUDGE_SYSTEM,
+                           enable_thinking=self.cfg.twentyq.judge_thinking)
 
     # ----- player closures --------------------------------------------------
     def _make_guesser(self, adapter: str, category: str):

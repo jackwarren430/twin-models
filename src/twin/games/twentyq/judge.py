@@ -46,16 +46,18 @@ VERDICT: VALID   or   VERDICT: INVALID"""
 
 _AUDIT_PROMPT = """You are auditing the answers given in a 20-questions game. The \
 answerer knew the secret and answered each question. For EACH numbered question, \
-decide whether the given answer is truthful for the secret (T) or false/misleading \
-(F). Judge only truthfulness for the secret — not helpfulness.
+mark T if the answer is truthful for the secret, or F ONLY if it is clearly, \
+definitely false. A defensible, borderline, or reasonable-judgment-call answer is \
+T — mark F only for an unambiguous lie. Answers of SOMETIMES and UNKNOWN are T \
+unless plainly contradicted. Judge only truthfulness, not helpfulness.
 
 Secret: {secret}  (category: {category})
 
 Question/answer pairs:
 {pairs}
 
-Think briefly, then end with exactly one line containing one T or F per question, \
-in order, space-separated, e.g. for three questions: AUDIT: T T F
+End with exactly one line containing one T or F per question, in order, \
+space-separated, e.g. for three questions: AUDIT: T T F
 AUDIT: {slots}"""
 
 

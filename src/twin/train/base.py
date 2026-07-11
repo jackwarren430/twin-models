@@ -110,24 +110,32 @@ class BaseTrainer:
     # arithmetic). Tool use here is untaxed and never scored — it's verification,
     # not a trained rollout. JUDGE_SYSTEM carries the tool protocol; the grading
     # task + VERDICT contract come in `question` from twin.verifiers.judge.
-    def _judge(self, question: str, *, enable_thinking=None) -> str:
+    def _judge(self, question: str, *, enable_thinking=None, system=None) -> str:
         tcfg = self.cfg.tools
         # The judge stays on the legacy ReAct protocol regardless of
         # tools.protocol (native migration queued for Sprint 8) and never gets
-        # a persona — it must remain a neutral grader. ``enable_thinking``
-        # defaults to the global model setting (SelfPlayTrainer's math judge
-        # keeps its CAS-backed reasoning); the twentyq grader passes False —
-        # its tasks are pure NL judgment (VALID/AUDIT/CLOSENESS), and a
-        # thinking budget truncated the closeness trace before the verdict
-        # line (q-shakeout-03: phi None on every episode).
+        # a persona — it must remain a neutral grader.
+        #
+        # ``system`` defaults to the CAS math-grader JUDGE_SYSTEM (SelfPlayTrainer
+        # recomputes numeric answers with solve()); the twentyq grader passes
+        # its own neutral system, because the math system's "finish with
+        # VERDICT: CORRECT/INCORRECT" instruction hijacked the CLOSENESS
+        # contract (q-shakeout-04: the closeness judge emitted VERDICT:
+        # INCORRECT, not a 0-10 score).
+        #
+        # ``enable_thinking`` defaults to the global model setting (the math
+        # judge keeps its reasoning); the twentyq grader passes False — its
+        # tasks are pure NL judgment and a thinking budget truncated the
+        # closeness trace before the verdict line (q-shakeout-03).
         think = (self.cfg.model.enable_thinking if enable_thinking is None
                  else enable_thinking)
+        judge_system = JUDGE_SYSTEM if system is None else system
         judge_runner, _ = self._build_tool_runner(
             tcfg.judge_tools, tcfg.judge_max_tool_calls
         )
         with self.adapters.using("base"):
             prompt = self.base.render(
-                question, system=JUDGE_SYSTEM, enable_thinking=think,
+                question, system=judge_system, enable_thinking=think,
             )
             result = self.base.generate_react(
                 prompt,

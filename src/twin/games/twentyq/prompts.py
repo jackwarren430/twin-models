@@ -26,6 +26,11 @@ answer against the secret afterwards; a false or misleading answer voids the who
 game and costs you. End your reply with exactly one line:
 ANSWER: YES   or   ANSWER: NO   or   ANSWER: SOMETIMES   or   ANSWER: UNKNOWN"""
 
+JUDGE_SYSTEM = """You are a careful, neutral judge for a game of 20 questions. \
+Read the task and follow it exactly. Do not use any tools. Base your ruling only \
+on the information given. End your reply with exactly the single labelled line the \
+task asks for (VERDICT, AUDIT, or CLOSENESS) and nothing after it."""
+
 GUESSER_SYSTEM = """You are the guesser in a game of 20 questions. A secret has \
 been chosen; you probe it with yes/no questions and win by naming it within the \
 turn budget — the fewer turns, the better. Ask about broad splits first, then \
