@@ -46,8 +46,35 @@ Fix (committed): per-role thinking — creator ON (budget 1024), guesser &
 answerer OFF (budgets 200 / 64). DESIGN §2.7 revised. Relaunched as
 q-shakeout-02.
 
-## q-shakeout-02 (Sprint Q6 gate, re-run) — launched 2026-07-11
+## q-shakeout-02 (Sprint Q6 gate, re-run) — 2026-07-11
 
-Identical to q-shakeout-01 except the per-role thinking fix above. Same gates.
+Identical to q-shakeout-01 except the per-role thinking fix (guesser/answerer
+OFF, creator ON @ 1024). Same gates.
+
+Result: **STOPPED after iter 1 — guesser fixed, creator broke.**
+
+    [0] ... parse=0.50 valid=0.00 | eps 0/0 void=0 fmt=0 | phi=0.00
+    [1] ... parse=0.00 valid=0.00 | eps 0/0 void=0 fmt=0 | phi=0.00
+
+- **fmt=0 both iters — the guesser format-fail is fixed.** No episode ever
+  format-failed again.
+- **New FAIL: creator truncation.** With thinking ON @ 1024, the creator
+  brainstormed candidates ("Truffle? Wasabi? Escargot?…" — 3958 chars, no
+  JSON) past the budget: parse 0.50 then 0.00, zero valid secrets, **zero
+  episodes**. Same truncation disease as the guesser, one role over.
+- Also: creator picked "water" for easy-food again → judge INVALID (correct).
+
+Fix (committed): creator thinking OFF too (all roles now emit contract output
+directly; budget 256), + creator prompt nudge toward concrete in-category
+picks and a single direct choice. The recurring lesson (mini-04a/05, now
+twentyq ×2): a *thinking budget* on Qwen3 is a truncation trap; constrain by
+turning thinking off, not by tightening the budget. Relaunched as
+q-shakeout-03.
+
+## q-shakeout-03 (Sprint Q6 gate, re-run) — launched 2026-07-11
+
+All roles thinking OFF (creator 256 / guesser 200 / answerer 64). Judge keeps
+thinking. Same gates. This is the first run where the loop *should* actually
+play episodes.
 
 Result: PENDING
