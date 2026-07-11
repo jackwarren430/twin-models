@@ -112,6 +112,17 @@ rubrics, all parsed with strict regex + graceful degradation:
    determined). Mapped to Φ ∈ [0,1]. Parse failure ⇒ Φ contribution 0 (no
    shaping), never a crash.
 
+**Implementation (learned in q-shakeout-03/04):** the grader must run with a
+**neutral twentyq system prompt** (`twentyq.prompts.JUDGE_SYSTEM`), NOT the
+self-play CAS math-grader `twin.prompts.JUDGE_SYSTEM` — the math system's
+"recompute with solve()… finish with VERDICT: CORRECT/INCORRECT" instruction
+overrode the CLOSENESS contract and the judge scored VERDICT instead of a
+number. And it runs **thinking OFF** (`twentyq.judge_thinking`): a thinking
+budget truncated the closeness trace before its verdict line. `_judge` takes
+`system=` and `enable_thinking=` overrides; the audit prompt is tuned
+fail-open (mark F only for clear lies) so a sloppy non-thinking audit doesn't
+false-void honest episodes and drag creator consistency.
+
 ### 2.5 Rewards
 
 Solver, per episode (v1 scalar):
