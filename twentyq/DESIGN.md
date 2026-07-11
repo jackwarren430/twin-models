@@ -125,8 +125,16 @@ pinning. Consistency flag per secret = valid AND no voided episodes from lying.
 
 Creator answering turns are **not trained in v1** (reward attribution for an
 individual "yes" is murky; lying already handled by voiding). The creator
-trains on its N secret-emission rollouts, broadcast/decomposed exactly like
-per-problem mode. Training answer turns = future ablation (§7).
+trains on its N secret-emission rollouts. Training answer turns = future
+ablation (§7).
+
+**Creator credit is per-secret, not broadcast (decided at Q5 implementation):**
+the self-play loop gets creator advantage variance from G_c candidate suites
+per iteration, but an episode-based iteration can afford only ONE set of N
+secrets — a broadcast suite reward would make every creator advantage
+identically zero (all-tied group; the creator would train on nothing but
+parse failures). `RewardEngine.creator_problem_rewards` gives each secret its
+own calibration fit + consistency, making the N rollouts a real GRPO group.
 
 ### 2.6 Roles, rotation, control
 

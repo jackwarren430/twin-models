@@ -1,0 +1,46 @@
+# 21-questions shakeout config (twentyq/DESIGN.md Sprint Q6): prove the
+# multi-turn loop end-to-end as fast as possible on the M5.
+model:
+  path: ~/.cache/lm-studio/models/mlx-community/Qwen3-8B-6bit
+  enable_thinking: true          # tight per-turn budgets keep this affordable
+
+lora:
+  num_layers: 4
+  rank: 64
+  alpha: 128.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2               # judge AND answerer sampling
+
+twentyq:
+  n_secrets: 2                   # N (shakeout; q-01 uses 3)
+  episodes_per_secret: 2         # K (shakeout; q-01 uses 4)
+  max_turns: 6                   # T (shakeout; q-01 uses 10)
+  categories: ["animal", "food", "household object"]
+  credit: broadcast              # v1; per_turn lands in Sprint Q7
+  w_guess: 1.0
+  w_efficiency: 0.3
+  w_close: 0.5
+  w_format: 0.5
+  secret_max_tokens: 512
+  question_max_tokens: 256
+  answer_max_tokens: 128
+
+rewards:
+  target_hi: 0.9                 # interior band keeps episode outcomes stochastic
+  target_lo: 0.1
+
+roles:
+  swap_interval: 20              # 0 = the no-rotation control arm
+  warmup_iterations: 0
+  injection_rate: 0.0
+
+train:
+  iters: 5
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  checkpoint_every: 5
+  log_every: 1
