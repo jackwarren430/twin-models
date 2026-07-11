@@ -2,7 +2,7 @@
 # multi-turn loop end-to-end as fast as possible on the M5.
 model:
   path: ~/.cache/lm-studio/models/mlx-community/Qwen3-8B-6bit
-  enable_thinking: true          # tight per-turn budgets keep this affordable
+  enable_thinking: true          # judge validation reasoning (per-role knobs below)
 
 lora:
   num_layers: 4
@@ -25,9 +25,15 @@ twentyq:
   w_efficiency: 0.3
   w_close: 0.5
   w_format: 0.5
-  secret_max_tokens: 768         # thinking ON: leave room for <think> + JSON
-  question_max_tokens: 512       # <think> + one QUESTION/GUESS line
-  answer_max_tokens: 256
+  # Per-role thinking (q-shakeout-01): tight per-turn thinking truncated the
+  # guesser mid-<think> into all-format-fail turns. Creator thinks (calibration
+  # reasoning); guesser/answerer emit their contract line directly.
+  creator_thinking: true
+  guesser_thinking: false
+  answerer_thinking: false
+  secret_max_tokens: 1024        # thinking ON: clear the trace + the JSON
+  question_max_tokens: 200       # no thinking: one QUESTION/GUESS line
+  answer_max_tokens: 64          # no thinking: one ANSWER line
 
 rewards:
   target_hi: 0.9                 # interior band keeps episode outcomes stochastic

@@ -149,13 +149,33 @@ own calibration fit + consistency, making the N rollouts a real GRPO group.
 guesses every `roles.swap_interval` iterations; **`swap_interval: 0` is the
 no-rotation control arm** — already implemented, free.
 
-### 2.7 Token budgets
+### 2.7 Token budgets and per-role thinking (revised after q-shakeout-01)
 
 History grows linearly in turns (turn T's prompt carries T−1 Q/A pairs).
 Mitigations, all config: T_max default **10** (not 21) for the first runs;
-tight per-turn guesser thinking budget (mini-05 lesson); answers constrained
-to `ANSWER: YES | NO | SOMETIMES | UNKNOWN` + optional one clarifying sentence,
-so history stays compact.
+answers constrained to `ANSWER: YES | NO | SOMETIMES | UNKNOWN`, so history
+stays compact.
+
+**Thinking is per-role, not global** (`twentyq.creator_thinking` /
+`guesser_thinking` / `answerer_thinking`). q-shakeout-01 killed the original
+"tight per-turn guesser thinking budget" idea: at 512 tokens with thinking ON,
+Qwen3 ran the whole budget inside an unclosed `<think>` and never emitted a
+`QUESTION:` line — think-share 1.0, **every** episode a turn-1 format fail.
+A tight thinking budget is the worst case (full cost, zero usable output), so
+v1 splits by role:
+- **creator ON** — secret calibration is genuine reasoning; `secret_max_tokens`
+  must clear the trace *and* the JSON (768 was borderline at 0.955 share → use
+  1024).
+- **guesser OFF** — a direct `QUESTION:`/`GUESS:` line is reliable and ~10×
+  cheaper across T·K·N generations. `question_max_tokens` drops to ~200.
+- **answerer OFF** — a truthfulness lookup; the audit voids drift anyway.
+  `answer_max_tokens` ~64.
+
+Guesser thinking ON (with a *generous* budget, never a tight one) is a
+Sprint-Q8 ablation, not the v1 default. Judge keeps `model.enable_thinking`
+(validation reasoning). Format-failed episodes now always dump the raw guesser
+completion to the transcript (the summary alone read `[format_fail] -> None`,
+undebuggable).
 
 ## 3. Reuse map
 

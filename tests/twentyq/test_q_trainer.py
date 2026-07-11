@@ -73,12 +73,16 @@ def _make_trainer(cfg, creator_script, guesser_script, *,
     t.transcript = None
     t.adapters = _FakeAdapters()
     t._init_trees = {"A": None, "B": None}
-    t.captured = {"grpo": {}, "judge": []}
+    t.captured = {"grpo": {}, "judge": [], "thinking": {}}
 
     creator_q = list(creator_script)
     guesser_q = list(guesser_script)
 
-    def fake_generate(adapter, system, user, *, max_tokens, temp):
+    def fake_generate(adapter, system, user, *, max_tokens, temp,
+                      enable_thinking=None):
+        role = ("creator" if system is CREATOR_SYSTEM
+                else "guesser" if system is GUESSER_SYSTEM else "answerer")
+        t.captured["thinking"][role] = enable_thinking
         if system is CREATOR_SYSTEM:
             return GenResult(text=creator_q.pop(0),
                              prompt_tokens=[1], completion_tokens=[2, 3])
@@ -178,6 +182,13 @@ def test_creator_credit_per_secret(record_and_trainer):
     for traj in trajs:
         assert traj.reward == pytest.approx(expected, abs=1e-4)
     assert sum(tr.advantage for tr in trajs) == pytest.approx(0.0)
+
+
+def test_per_role_thinking_flags_threaded(record_and_trainer):
+    _, t = record_and_trainer
+    # Defaults (q-shakeout-01 fix): creator thinks, guesser/answerer don't.
+    assert t.captured["thinking"] == {
+        "creator": True, "guesser": False, "answerer": False}
 
 
 def test_judge_called_per_contract(record_and_trainer):

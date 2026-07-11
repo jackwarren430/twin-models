@@ -80,6 +80,7 @@ class TwentyQTrainer(BaseTrainer):
                 adapter, GUESSER_SYSTEM, user,
                 max_tokens=qcfg.question_max_tokens,
                 temp=self.cfg.gen.solver_temp,
+                enable_thinking=qcfg.guesser_thinking,
             )
         return guesser_fn
 
@@ -92,6 +93,7 @@ class TwentyQTrainer(BaseTrainer):
                 adapter, ANSWERER_SYSTEM, user,
                 max_tokens=self.cfg.twentyq.answer_max_tokens,
                 temp=self.cfg.gen.oracle_temp,
+                enable_thinking=self.cfg.twentyq.answerer_thinking,
             )
             return gen.text
         return answerer_fn
@@ -131,6 +133,7 @@ class TwentyQTrainer(BaseTrainer):
             gen = self._generate(
                 assign.creator, CREATOR_SYSTEM, user,
                 max_tokens=qcfg.secret_max_tokens, temp=cfg.gen.creator_temp,
+                enable_thinking=qcfg.creator_thinking,
             )
             roll = {
                 "rank": i,
@@ -198,9 +201,19 @@ class TwentyQTrainer(BaseTrainer):
                 if ep.ended == "format":
                     n_format_ended += 1
                 guesser_think.extend(think_share(t.raw_text) for t in ep.turns)
-                transcript = "\n".join(
-                    f"  {t.index}: [{t.kind}] {t.content} -> {t.answer}"
-                    for t in ep.turns)
+                lines = []
+                # A format-failed episode is always shown with the raw guesser
+                # completion that broke the contract — otherwise its summary is
+                # `[format_fail]  -> None`, undebuggable (q-shakeout-01). Under
+                # log_prompts, every turn's raw text is shown.
+                show_raw = cfg.train.log_prompts or ep.ended == "format"
+                for t in ep.turns:
+                    lines.append(f"  {t.index}: [{t.kind}] {t.content} -> {t.answer}")
+                    if show_raw:
+                        lines.append(f"      guesser<< {t.raw_text.strip()[:400]}")
+                        if t.answer_raw:
+                            lines.append(f"      answerer<< {t.answer_raw.strip()[:200]}")
+                transcript = "\n".join(lines)
                 # Truthfulness audit over creator-authored answers only.
                 audit = judge_answer_audit(secret, ep.audited_pairs, self._judge)
                 if audit is None and ep.audited_pairs:

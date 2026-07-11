@@ -152,6 +152,20 @@ class TwentyQConfig:
     # call per turn instead of per episode).
     credit: str = "broadcast"
     gamma: float = 1.0            # per-turn discount (per_turn credit only)
+    # Per-role thinking (q-shakeout-01 finding). A tight per-turn thinking
+    # budget truncates Qwen3 mid-<think> into a zero-output turn, so v1 keeps
+    # thinking only where it pays and the budget can absorb it:
+    #   creator  ON  — secret calibration is real reasoning (secret_max_tokens
+    #                  must clear the trace + JSON; 768 was borderline at 0.955
+    #                  think-share, so give it room).
+    #   guesser  OFF — a direct QUESTION/GUESS line is reliable and ~10x
+    #                  cheaper across T·K·N generations; flip ON only with a
+    #                  generous question budget as a Sprint-Q8 ablation.
+    #   answerer OFF — a truthfulness lookup ("is miso a mammal? NO"); the
+    #                  audit voids drift anyway, no reasoning needed.
+    creator_thinking: bool = True
+    guesser_thinking: bool = False
+    answerer_thinking: bool = False
     # Solver episode reward (DESIGN §2.5). Keep w_close < w_guess so a
     # near-miss never outearns a win, and w_efficiency gated on success so
     # rushing can never beat guessing right.

@@ -135,11 +135,17 @@ class BaseTrainer:
                  n_tool_calls=result.n_tool_calls)
         return result.text
 
-    def _generate(self, adapter, system, user, *, max_tokens, temp):
+    def _generate(self, adapter, system, user, *, max_tokens, temp,
+                  enable_thinking=None):
+        """Plain single-turn generation on ``adapter``. ``enable_thinking``
+        defaults to the global ``model.enable_thinking`` (so SelfPlayTrainer is
+        unchanged); the twentyq loop passes a per-role override, because a
+        tight thinking budget truncates mid-trace into a zero-output turn
+        (q-shakeout-01: guesser think-share 1.0, every turn a format fail)."""
         self.adapters.activate(adapter)
-        prompt = self.base.render(
-            user, system=system, enable_thinking=self.cfg.model.enable_thinking
-        )
+        think = (self.cfg.model.enable_thinking if enable_thinking is None
+                 else enable_thinking)
+        prompt = self.base.render(user, system=system, enable_thinking=think)
         return self.base.generate(
             prompt, max_tokens=max_tokens, temp=temp, top_p=self.cfg.gen.top_p
         )
