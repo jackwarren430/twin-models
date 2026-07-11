@@ -25,9 +25,9 @@ twentyq:
   w_efficiency: 0.3
   w_close: 0.5
   w_format: 0.5
-  secret_max_tokens: 512
-  question_max_tokens: 256
-  answer_max_tokens: 128
+  secret_max_tokens: 768         # thinking ON: leave room for <think> + JSON
+  question_max_tokens: 512       # <think> + one QUESTION/GUESS line
+  answer_max_tokens: 256
 
 rewards:
   target_hi: 0.9                 # interior band keeps episode outcomes stochastic
@@ -44,3 +44,7 @@ train:
   kl_beta: 0.02
   checkpoint_every: 5
   log_every: 1
+
+paths:
+  checkpoints: checkpoints/twentyq   # keep clear of the self-play step files
+  runs: runs

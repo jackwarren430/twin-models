@@ -11,6 +11,7 @@ calibration-fit apparatus, scored-fraction scaling, expected_n semantics —
 apply verbatim with per-secret guess rates standing in for solve rates.
 """
 
+from collections import defaultdict
 from dataclasses import dataclass
 
 from twin.config import TwentyQConfig
@@ -101,6 +102,97 @@ def secret_turn_trajectories(
                     "kind": turn.kind,
                     "guessed": rew.guessed,
                     "ended": ep.ended,
+                },
+            ))
+    return trajs
+
+
+def shaped_returns(
+    intermediate_phis: list[float | None],
+    terminal: float,
+    *,
+    gamma: float,
+    w_close: float,
+) -> list[float]:
+    """Per-turn reward-to-go for ONE episode under potential-based shaping
+    (Sprint Q7, DESIGN §2.3 v2).
+
+    ``intermediate_phis[t]`` is the judge's closeness Φ of the state after
+    turn ``t`` (``t = 0..T-2`` — the non-terminal states). Terminal-state
+    potential is pinned to 0 (the Ng et al. condition for policy invariance),
+    and the start-state potential is 0 by definition ("nothing established").
+    A ``None`` (judge gave no signal) carries the previous potential forward
+    (that turn's shaping delta is 0).
+
+        r_t     = w_close · (γ·Φ_{t+1} − Φ_t)          t = 0..T-1
+        r_{T-1} += terminal                             (the v1 episode scalar)
+        R_t     = r_t + γ·R_{t+1}
+
+    Because the shaping telescopes to zero at γ=1, ``R_0 == terminal``
+    exactly: per-turn credit REDISTRIBUTES the episode total across turns
+    without changing it — the broadcast-vs-per-turn ablation compares credit
+    schemes, not reward scales."""
+    pots = [0.0]
+    prev = 0.0
+    for p in intermediate_phis:
+        if p is not None:
+            prev = float(p)
+        pots.append(prev)
+    pots.append(0.0)                        # terminal state, both outcomes
+    n_turns = len(intermediate_phis) + 1
+    rs = [w_close * (gamma * pots[t + 1] - pots[t]) for t in range(n_turns)]
+    rs[-1] += terminal
+    returns = [0.0] * n_turns
+    acc = 0.0
+    for t in reversed(range(n_turns)):
+        acc = rs[t] + gamma * acc
+        returns[t] = acc
+    return returns
+
+
+def per_turn_secret_trajectories(
+    episodes: list[Episode],
+    returns_by_episode: list[list[float]],
+    *,
+    adv_mode: str = "mean",
+) -> list[Trajectory]:
+    """Per-turn credit for ONE secret's K episodes: turn t of episode k
+    carries its own reward-to-go ``R_{k,t}``, baselined against the same turn
+    index of the sibling episodes (``group_advantages`` per index). A turn
+    index only one episode reached has no counterfactual — its advantage is 0
+    (a singleton group mean-centers to zero anyway). Voided episodes must be
+    filtered by the caller, same as :func:`secret_turn_trajectories`."""
+    if len(episodes) != len(returns_by_episode):
+        raise ValueError(f"{len(episodes)} episodes vs {len(returns_by_episode)} returns")
+    for ep, rets in zip(episodes, returns_by_episode):
+        if len(rets) != ep.turns_used:
+            raise ValueError(
+                f"episode has {ep.turns_used} turns but {len(rets)} returns")
+    by_index: dict[int, list[float]] = defaultdict(list)
+    for rets in returns_by_episode:
+        for t, r in enumerate(rets):
+            by_index[t].append(r)
+    adv_by_index = {t: group_advantages(v, mode=adv_mode)
+                    for t, v in by_index.items()}
+    cursor = {t: 0 for t in by_index}
+    trajs: list[Trajectory] = []
+    for ep, rets in zip(episodes, returns_by_episode):
+        for turn, ret in zip(ep.turns, rets):
+            adv = adv_by_index[turn.index][cursor[turn.index]]
+            cursor[turn.index] += 1
+            if turn.prompt_tokens is None or turn.completion_tokens is None:
+                continue
+            trajs.append(Trajectory(
+                prompt_ids=turn.prompt_tokens,
+                completion_ids=turn.completion_tokens,
+                reward=ret,
+                advantage=adv,
+                meta={
+                    "secret_id": ep.secret.secret_id,
+                    "turn": turn.index,
+                    "kind": turn.kind,
+                    "ended": ep.ended,
+                    "credit": "per_turn",
                 },
             ))
     return trajs

@@ -52,8 +52,10 @@ from twin.games.twentyq.prompts import (
 from twin.games.twentyq.rewards import (
     episode_reward,
     guess_rate,
+    per_turn_secret_trajectories,
     secret_turn_trajectories,
     secrets_as_suite,
+    shaped_returns,
 )
 from twin.games.twentyq.schema import SecretParseError, parse_secret
 from twin.problems.schema import ProblemSuite
@@ -239,8 +241,26 @@ class TwentyQTrainer(BaseTrainer):
                 kept_rewards.append(rew)
 
             if kept_eps:
-                solver_trajs.extend(secret_turn_trajectories(
-                    kept_eps, kept_rewards, adv_mode=cfg.train.adv_mode))
+                if qcfg.credit == "per_turn":
+                    # Sprint Q7: judge Φ after every non-terminal turn, shape
+                    # into reward-to-go, baseline per turn index across the
+                    # sibling episodes. Costs one closeness call per
+                    # intermediate state (the per-episode final call above is
+                    # unchanged) — the reason this is not the default.
+                    returns = []
+                    for ep, rew in zip(kept_eps, kept_rewards):
+                        inter = [
+                            judge_closeness(secret, ep.qa_pairs[:t + 1], self._judge)
+                            for t in range(ep.turns_used - 1)
+                        ]
+                        returns.append(shaped_returns(
+                            inter, rew.total,
+                            gamma=qcfg.gamma, w_close=qcfg.w_close))
+                    solver_trajs.extend(per_turn_secret_trajectories(
+                        kept_eps, returns, adv_mode=cfg.train.adv_mode))
+                else:
+                    solver_trajs.extend(secret_turn_trajectories(
+                        kept_eps, kept_rewards, adv_mode=cfg.train.adv_mode))
                 rates[si] = guess_rate([e.guessed for e in kept_eps])
                 scored[si] = True
             consistent[si] = valid and not lied
@@ -300,6 +320,7 @@ class TwentyQTrainer(BaseTrainer):
         record = {
             "iter": iteration,
             "mode": "twentyq",
+            "credit": qcfg.credit,
             "category": category,
             "creator": assign.creator,
             "solver": assign.solver,

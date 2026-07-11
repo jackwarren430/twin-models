@@ -71,12 +71,19 @@ microbatching consume this unchanged.
   batched truthfulness audit per episode.
 - **v2 (per-turn, config `twentyq.credit: per_turn`):** turn t of episode k
   gets its own return R_{k,t} = Σ_{t'≥t} γ^{t'−t} r_{t'}, with per-turn
-  r_t = γ·Φ(h_{t+1}) − Φ(h_t) (judge closeness deltas, potential-based shaping,
-  policy-invariant per Ng et al.) plus the terminal reward at the last turn.
-  Baseline: mean of same-turn-index returns across the K sibling episodes;
-  fall back to the episode-mean baseline where episode lengths differ.
-  Judge cost: one closeness call after **every** turn (K·N·T per iteration) —
-  this is why it is not v1.
+  r_t = w_close·(γ·Φ(h_{t+1}) − Φ(h_t)) (judge closeness deltas,
+  potential-based shaping, policy-invariant per Ng et al.), plus the FULL v1
+  episode scalar as the terminal reward at the last turn. Terminal- and
+  start-state potentials are pinned to 0 (the Ng condition), so at γ=1 the
+  shaping telescopes to zero and R_{k,0} equals the v1 episode scalar exactly
+  — per-turn credit redistributes the total without changing it, making the
+  broadcast-vs-per-turn ablation a pure credit-scheme comparison.
+  Baseline: same-turn-index returns across the K sibling episodes
+  (group_advantages per index); a turn index only one episode reached has no
+  counterfactual and gets advantage 0 (an episode-mean fallback would compare
+  reward-to-go against full-episode returns — wrong scale — so it was
+  dropped at implementation). Judge cost: one closeness call per intermediate
+  state (≈K·N·T per iteration) — this is why it is not v1.
 
 Because shaping telescopes, v1's episode scalar still inherits Φ(final) as
 **partial credit on failed episodes** — direct mitigation of the mini-02
