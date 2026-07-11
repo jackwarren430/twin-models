@@ -156,26 +156,29 @@ Mitigations, all config: T_max default **10** (not 21) for the first runs;
 answers constrained to `ANSWER: YES | NO | SOMETIMES | UNKNOWN`, so history
 stays compact.
 
-**Thinking is per-role, not global** (`twentyq.creator_thinking` /
-`guesser_thinking` / `answerer_thinking`). q-shakeout-01 killed the original
-"tight per-turn guesser thinking budget" idea: at 512 tokens with thinking ON,
-Qwen3 ran the whole budget inside an unclosed `<think>` and never emitted a
-`QUESTION:` line — think-share 1.0, **every** episode a turn-1 format fail.
-A tight thinking budget is the worst case (full cost, zero usable output), so
-v1 splits by role:
-- **creator ON** — secret calibration is genuine reasoning; `secret_max_tokens`
-  must clear the trace *and* the JSON (768 was borderline at 0.955 share → use
-  1024).
-- **guesser OFF** — a direct `QUESTION:`/`GUESS:` line is reliable and ~10×
-  cheaper across T·K·N generations. `question_max_tokens` drops to ~200.
-- **answerer OFF** — a truthfulness lookup; the audit voids drift anyway.
-  `answer_max_tokens` ~64.
+**Thinking is per-role (`twentyq.creator_thinking` / `guesser_thinking` /
+`answerer_thinking`), all OFF for v1.** Two shakeouts killed the original
+"thinking ON where it reasons" plan — a thinking *budget* is the worst case
+(full cost, zero usable output), and prompt constraints don't bind inside
+`<think>`:
+- q-shakeout-01: **guesser** at 512 tokens ran the whole budget inside an
+  unclosed `<think>`, never wrote a `QUESTION:` line — think-share 1.0,
+  **every** episode a turn-1 format fail.
+- q-shakeout-02: with the guesser fixed, the **creator** at 1024 tokens
+  brainstormed candidates ("Truffle? Wasabi? Escargot?…") past the budget and
+  emitted no JSON — 0/2 then 2/2 parse failures across two iterations.
 
-Guesser thinking ON (with a *generous* budget, never a tight one) is a
-Sprint-Q8 ablation, not the v1 default. Judge keeps `model.enable_thinking`
-(validation reasoning). Format-failed episodes now always dump the raw guesser
-completion to the transcript (the summary alone read `[format_fail] -> None`,
-undebuggable).
+So v1 emits contract output directly from every role (creator JSON ~256 tok,
+guesser `QUESTION:`/`GUESS:` ~200, answerer `ANSWER:` ~64) and relies on the
+**reward**, not visible reasoning, to train calibration. Turning any role's
+thinking back ON is a Sprint-Q8 ablation and only safe with a *generous*
+budget — and for the creator it carries the mini-04b caution that reward alone
+may under-ratchet difficulty without a reasoning trace (an open q-01 risk: if
+creator calibration stalls, the lever is creator-thinking-ON at a 2048+
+budget). Judge keeps `model.enable_thinking` (validation reasoning; its budget
+is the untaxed oracle budget, not a per-turn one). Format-failed episodes now
+dump the raw guesser completion to the transcript (the summary alone read
+`[format_fail] -> None`, undebuggable).
 
 ## 3. Reuse map
 

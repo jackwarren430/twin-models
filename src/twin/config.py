@@ -152,18 +152,17 @@ class TwentyQConfig:
     # call per turn instead of per episode).
     credit: str = "broadcast"
     gamma: float = 1.0            # per-turn discount (per_turn credit only)
-    # Per-role thinking (q-shakeout-01 finding). A tight per-turn thinking
-    # budget truncates Qwen3 mid-<think> into a zero-output turn, so v1 keeps
-    # thinking only where it pays and the budget can absorb it:
-    #   creator  ON  — secret calibration is real reasoning (secret_max_tokens
-    #                  must clear the trace + JSON; 768 was borderline at 0.955
-    #                  think-share, so give it room).
-    #   guesser  OFF — a direct QUESTION/GUESS line is reliable and ~10x
-    #                  cheaper across T·K·N generations; flip ON only with a
-    #                  generous question budget as a Sprint-Q8 ablation.
-    #   answerer OFF — a truthfulness lookup ("is miso a mammal? NO"); the
-    #                  audit voids drift anyway, no reasoning needed.
-    creator_thinking: bool = True
+    # Per-role thinking, all OFF by default (q-shakeout-01/02 findings). A
+    # thinking budget truncates Qwen3 mid-<think> into unusable output: the
+    # guesser spent 512 tokens thinking and never wrote a QUESTION line (every
+    # turn a format-fail); the creator brainstormed candidates past a 1024
+    # budget and emitted no JSON (0/2 secrets parsed). Prompt constraints don't
+    # bind inside <think>, so v1 emits contract output directly and lets the
+    # REWARD (not visible reasoning) train calibration. Turning a role's
+    # thinking back ON is only safe with a GENEROUS budget and is a Sprint-Q8
+    # ablation (esp. creator calibration — the mini-04b caution that reward
+    # alone may under-ratchet difficulty for a non-thinking creator).
+    creator_thinking: bool = False
     guesser_thinking: bool = False
     answerer_thinking: bool = False
     # Solver episode reward (DESIGN §2.5). Keep w_close < w_guess so a

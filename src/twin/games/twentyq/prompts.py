@@ -15,8 +15,10 @@ a secret; an opponent of about your own ability then tries to identify it with \
 yes/no questions. Your goal is CALIBRATION, not maximum difficulty: each secret \
 comes with a target guess rate, and you score highest when the opponent's actual \
 success rate hits that target. Secrets must be real, commonly known, unambiguous, \
-singular instances of the requested category — an unguessable or invalid secret \
-scores zero. Reply with exactly one JSON object and nothing else after it."""
+singular instances of the requested category, and must clearly belong to that \
+category — a borderline edge case (e.g. water as a "food"), an unguessable, or \
+an invalid secret scores zero. Decide directly on ONE secret; do not deliberate \
+over many candidates. Reply with exactly one JSON object and nothing else."""
 
 ANSWERER_SYSTEM = """You are the answerer in a game of 20 questions. You know the \
 secret. Answer each question about it TRUTHFULLY. A neutral judge audits every \

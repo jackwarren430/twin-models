@@ -186,9 +186,22 @@ def test_creator_credit_per_secret(record_and_trainer):
 
 def test_per_role_thinking_flags_threaded(record_and_trainer):
     _, t = record_and_trainer
-    # Defaults (q-shakeout-01 fix): creator thinks, guesser/answerer don't.
+    # Defaults (q-shakeout-01/02 fix): all roles emit contract output directly;
+    # a thinking budget truncated both guesser and creator into unusable output.
     assert t.captured["thinking"] == {
-        "creator": True, "guesser": False, "answerer": False}
+        "creator": False, "guesser": False, "answerer": False}
+
+
+def test_thinking_flags_are_configurable():
+    from twin.config import Config
+    cfg = Config.from_dict({"twentyq": {
+        "n_secrets": 2, "episodes_per_secret": 2, "max_turns": 2,
+        "categories": ["animal"], "creator_thinking": True,
+        "guesser_thinking": True}})
+    t = _make_trainer(cfg, list(CREATOR_OK), list(GUESSER_OK))
+    t.run_iteration(0)
+    assert t.captured["thinking"] == {
+        "creator": True, "guesser": True, "answerer": False}
 
 
 def test_judge_called_per_contract(record_and_trainer):

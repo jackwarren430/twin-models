@@ -25,13 +25,16 @@ twentyq:
   w_efficiency: 0.3
   w_close: 0.5
   w_format: 0.5
-  # Per-role thinking (q-shakeout-01): tight per-turn thinking truncated the
-  # guesser mid-<think> into all-format-fail turns. Creator thinks (calibration
-  # reasoning); guesser/answerer emit their contract line directly.
-  creator_thinking: true
+  # Per-role thinking, all OFF for v1 (q-shakeout-01/02): a thinking budget
+  # truncated first the guesser then the creator mid-<think> into unusable
+  # output (guesser: all format-fails; creator: 0/2 secrets parsed as it
+  # brainstormed candidates past the budget). Calibration is trained by the
+  # REWARD, not the creator's visible reasoning, so v1 emits contract output
+  # directly. Guesser-thinking-ON with a GENEROUS budget is a Q8 ablation.
+  creator_thinking: false
   guesser_thinking: false
   answerer_thinking: false
-  secret_max_tokens: 1024        # thinking ON: clear the trace + the JSON
+  secret_max_tokens: 256         # no thinking: one JSON object
   question_max_tokens: 200       # no thinking: one QUESTION/GUESS line
   answer_max_tokens: 64          # no thinking: one ANSWER line
 
