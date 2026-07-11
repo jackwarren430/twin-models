@@ -137,6 +137,36 @@ class GameConfig:
 
 
 @dataclass
+class TwentyQConfig:
+    """21-questions mode (twentyq/DESIGN.md). Read only by TwentyQTrainer;
+    the single-step self-play loop ignores this section entirely."""
+    n_secrets: int = 3            # N: secrets per iteration (difficulty ramp)
+    episodes_per_secret: int = 4  # K: episodes per secret (the GRPO group)
+    max_turns: int = 10           # T: guesser turn budget per episode
+    categories: list[str] = field(default_factory=lambda: [
+        "animal", "food", "household object", "place", "occupation",
+    ])
+    # Credit granularity (DESIGN §2.3). "broadcast": every turn of episode k
+    # carries the episode advantage (v1). "per_turn": reward-to-go from judge
+    # closeness deltas + terminal reward (Sprint Q7 ablation; needs a judge
+    # call per turn instead of per episode).
+    credit: str = "broadcast"
+    gamma: float = 1.0            # per-turn discount (per_turn credit only)
+    # Solver episode reward (DESIGN §2.5). Keep w_close < w_guess so a
+    # near-miss never outearns a win, and w_efficiency gated on success so
+    # rushing can never beat guessing right.
+    w_guess: float = 1.0
+    w_efficiency: float = 0.3
+    w_close: float = 0.5
+    w_format: float = 0.5         # penalty when the guesser broke the contract
+    # Per-turn generation budgets (history grows linearly in turns — keep
+    # these tight; mini-05's uncapped-thinking lesson applies per turn here).
+    secret_max_tokens: int = 512
+    question_max_tokens: int = 256
+    answer_max_tokens: int = 128
+
+
+@dataclass
 class RewardsConfig:
     w_gradient: float = 1.0
     w_consistency: float = 0.5
@@ -291,6 +321,7 @@ class Config:
     lora: LoraConfig = field(default_factory=LoraConfig)
     gen: GenConfig = field(default_factory=GenConfig)
     game: GameConfig = field(default_factory=GameConfig)
+    twentyq: TwentyQConfig = field(default_factory=TwentyQConfig)
     rewards: RewardsConfig = field(default_factory=RewardsConfig)
     oracle: OracleConfig = field(default_factory=OracleConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
