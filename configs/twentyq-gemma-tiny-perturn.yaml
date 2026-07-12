@@ -1,0 +1,69 @@
+# 21-questions shakeout config on GEMMA-4-E2B (twentyq/DESIGN.md Sprint Q6,
+# re-validated for the model swap 2026-07-11). Same shape as twentyq-tiny.yaml
+# but pointed at google/gemma-4-E2B-it with the gemma4 load overrides.
+model:
+  path: ~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/snapshots/9dbdf8a839e4e9e0eb56ed80cc8886661d3817cf
+  enable_thinking: false         # gemma4 thinks by default; ON = truncation trap (as Qwen3)
+  # gemma4-E2B ships vestigial per-layer k/v for its 20 KV-shared layers (15-34)
+  # that mlx-lm reuses from earlier layers -> strict load raises; drop them.
+  load_strict: false
+  # gemma4's turn terminator <turn|>=106 lives ONLY in generation_config, which
+  # mlx-lm's load() ignores; without it generation never stops (pads max_tokens).
+  eos_token_ids: [1, 106, 50]
+
+lora:
+  num_layers: 4
+  rank: 64
+  alpha: 128.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2               # judge AND answerer sampling
+
+twentyq:
+  n_secrets: 2                   # N (shakeout; q-01 uses 3)
+  episodes_per_secret: 2         # K (shakeout; q-01 uses 4)
+  max_turns: 6                   # T (shakeout; q-01 uses 10)
+  categories: ["animal", "food", "household object"]
+  credit: per_turn              # Q7 per-turn reward-to-go path (VALIDATION run)
+  w_guess: 1.0
+  w_efficiency: 0.3
+  w_close: 0.5
+  w_format: 0.5
+  # gemma4-E2B audit false-flags truthful answers; void only on a majority of
+  # flagged lies so one bad F doesn't sink a good episode (q-gemma-shakeout-02).
+  audit_void_fraction: 0.5
+  # All roles + judge thinking OFF. gemma4-E2B reasons by DEFAULT via a
+  # <|channel>thought ... <channel|> block (different syntax from Qwen3's
+  # <think>), which truncates before the contract line at any sane budget.
+  # enable_thinking=False removes the <|think|> injection and yields direct,
+  # parseable contract output (verified: probe_nothink 2026-07-11).
+  creator_thinking: false
+  guesser_thinking: false
+  answerer_thinking: false
+  judge_thinking: false
+  secret_max_tokens: 256         # no thinking: one JSON object
+  question_max_tokens: 200       # no thinking: one QUESTION/GUESS line
+  answer_max_tokens: 64          # no thinking: one ANSWER line
+
+rewards:
+  target_hi: 0.9                 # interior band keeps episode outcomes stochastic
+  target_lo: 0.1
+
+roles:
+  swap_interval: 20              # 0 = the no-rotation control arm
+  warmup_iterations: 0
+  injection_rate: 0.0
+
+train:
+  iters: 5
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  checkpoint_every: 5
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints/twentyq-gemma   # keep clear of the Qwen3 twentyq files
+  runs: runs

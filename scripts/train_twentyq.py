@@ -36,11 +36,26 @@ def main() -> None:
     ap.add_argument("--no-transcript", action="store_true")
     ap.add_argument("--log-prompts", action="store_true",
                     help="also write input prompts to the transcript")
+    # Q8 matrix knobs: drive all arms from ONE base config so they differ only in
+    # the varied factors (no config drift), with per-arm checkpoint dirs.
+    ap.add_argument("--credit", choices=["broadcast", "per_turn"], default=None,
+                    help="override twentyq.credit (Q8 credit-granularity arm)")
+    ap.add_argument("--swap-interval", type=int, default=None,
+                    help="override roles.swap_interval (0 = no-rotation control)")
+    ap.add_argument("--checkpoints-dir", default=None,
+                    help="override paths.checkpoints (keep arms from clobbering)")
     args = ap.parse_args()
 
     cfg = Config.from_yaml(args.config)
     if args.log_prompts:
         cfg.train.log_prompts = True
+    if args.credit is not None:
+        cfg.twentyq.credit = args.credit
+    if args.swap_interval is not None:
+        cfg.roles.swap_interval = args.swap_interval
+    if args.checkpoints_dir is not None:
+        cfg.paths.checkpoints = args.checkpoints_dir
+    Path(cfg.paths.checkpoints).mkdir(parents=True, exist_ok=True)
     backend = get_backend(cfg.compute.backend)
     print(f"Backend: {backend.name} | loading base: {cfg.model.path}")
     base = backend.load_base(cfg.model, cfg.compute)
@@ -63,6 +78,8 @@ def main() -> None:
     log_path = Path(cfg.paths.runs) / f"{run_name}.jsonl"
     logger = JsonlLogger(log_path, meta={"config": args.config, "run": run_name,
                                          "mode": "twentyq",
+                                         "credit": cfg.twentyq.credit,
+                                         "swap_interval": cfg.roles.swap_interval,
                                          "resume_step": start_iter})
     transcript = None
     if not args.no_transcript:

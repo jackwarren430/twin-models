@@ -217,3 +217,40 @@ T6, 5 iters, all thinking OFF):
 All fixes are principled weak-model adaptations, config-gated, no RL-machinery
 bugs. Pipeline is **Q8-ready on gemma4**; residual caveat is noisier creator-side
 signal (validity gate + audit) vs a cleaner solver-side Φ.
+
+Pre-launch validation for Q8: **per-turn credit ran end-to-end for the first
+time** (q-gemma-perturn-01, 5 iters: void ~0-10%, Φ 0.60-0.78, Rs>0, 2 wins) —
+it had only ever been unit-tested; both credit paths are now real-model proven.
+Q8 base config **`configs/twentyq-gemma-q8.yaml`** smoke-tested at N3 K4 T10
+(16-layer LoRA = 50.9M params/adapter, 1 iter clean).
+
+## Q8 — credit-granularity × rotation matrix (launched 2026-07-12)
+
+The headline experiment: **broadcast vs per-turn credit** (does per-turn
+reward-to-go with potential-based Φ shaping beat episode-broadcast?) crossed with
+the **rotation control** (periodic A/B role swap vs none). Four arms, one base
+config, differing only by CLI override:
+
+    arm                    credit     swap_interval (rotation)
+    q8-A1-broadcast-rot    broadcast  10  (ON)
+    q8-A2-perturn-rot      per_turn   10  (ON)
+    q8-A3-broadcast-norot  broadcast   0  (OFF, control)
+    q8-A4-perturn-norot    per_turn    0  (OFF, control)
+
+Each: N3 K4 T10, 30 iters, num_layers 16, lr 1e-5, kl_beta 0.02, all thinking
+OFF, audit_void_fraction 0.5. Run sequentially (each loads a 9.26 GB base;
+parallel would thrash 32 GB). Logs `runs/q8-A*.jsonl` + scratchpad `.log`,
+checkpoints `checkpoints/q8-A*/` at steps 10/20/30.
+
+Pre-registered read-outs (comparison, not pass/fail — this is the science):
+- **solver learning curve** `Rs` and **guess-rate** trend over 30 iters, per arm.
+- **broadcast vs per-turn:** does per-turn Φ-shaping lift guess-rate / Rs faster
+  or higher? (per-turn telescopes to the same episode scalar at γ=1, so a
+  difference is a *credit-assignment* effect, not a reward-magnitude one.)
+- **rotation effect:** does A/B swapping change the creator↔solver co-adaptation
+  (creator calibration `Rc`/`rgrad`, solver guess-rate) vs the frozen-role
+  control?
+- health throughout: parse/valid ~1.0, fmt ~0, void ≲15%, Φ live.
+
+Watch (from the gemma4 shakeouts, not blockers): validity VALID-bias (weak
+secret gate), category-dependent difficulty (food voids > animals).

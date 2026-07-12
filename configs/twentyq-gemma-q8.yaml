@@ -1,0 +1,59 @@
+# Q8 experiment matrix BASE config on gemma-4-E2B (twentyq/DESIGN.md Sprint Q8).
+# The four arms share this file verbatim and differ ONLY via CLI overrides
+# (--credit {broadcast,per_turn}, --swap-interval {10,0}, --checkpoints-dir) so
+# the comparison is clean. Sized N3 K4 T10 x 30 iters (~1.5-2h/arm on gemma4).
+model:
+  path: ~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/snapshots/9dbdf8a839e4e9e0eb56ed80cc8886661d3817cf
+  enable_thinking: false
+  load_strict: false             # drop vestigial KV-shared-layer k/v (gemma4)
+  eos_token_ids: [1, 106, 50]    # include <turn|>=106 so generation stops
+
+lora:
+  num_layers: 16                 # last 16 blocks (matches the self-play pipeline)
+  rank: 64
+  alpha: 128.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2               # judge AND answerer sampling
+
+twentyq:
+  n_secrets: 3                   # N: difficulty ramp across 3 secrets/iter
+  episodes_per_secret: 4         # K: the GRPO group per secret
+  max_turns: 10                  # T
+  categories: ["animal", "food", "household object", "place", "occupation"]
+  credit: broadcast              # OVERRIDDEN per arm (--credit)
+  w_guess: 1.0
+  w_efficiency: 0.3
+  w_close: 0.5
+  w_format: 0.5
+  audit_void_fraction: 0.5       # gemma4 audit false-flags; majority-lie void
+  creator_thinking: false
+  guesser_thinking: false
+  answerer_thinking: false
+  judge_thinking: false
+  secret_max_tokens: 256
+  question_max_tokens: 200
+  answer_max_tokens: 64
+
+rewards:
+  target_hi: 0.9                 # interior band keeps episode outcomes stochastic
+  target_lo: 0.1
+
+roles:
+  swap_interval: 10              # OVERRIDDEN per arm (--swap-interval; 0 = control)
+  warmup_iterations: 0
+  injection_rate: 0.0
+
+train:
+  iters: 30
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  checkpoint_every: 10           # checkpoints at 10/20/30 (resumable)
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints/twentyq-gemma-q8   # OVERRIDDEN per arm (--checkpoints-dir)
+  runs: runs
