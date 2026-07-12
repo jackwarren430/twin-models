@@ -34,8 +34,14 @@ from typing import Any, Callable, Optional
 from twin.games.twentyq.schema import Secret, guess_matches
 from twin.think import strip_think
 
-_QUESTION = re.compile(r"^\s*QUESTION\s*[:=]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+# Accept "QUESTION:" and the natural abbreviation "Q:" — weaker models (gemma4)
+# drift to "Q:" by mimicking the flattened Q/A history. Semantically identical.
+_QUESTION = re.compile(r"^\s*(?:QUESTION|Q)\s*[:=]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 _GUESS = re.compile(r"^\s*(?:FINAL\s+)?GUESS\s*[:=]\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+# Last resort: a line that simply reads as a question (ends with '?'). Keeps an
+# episode alive when a weak guesser drops the contract prefix entirely, so the
+# closeness shaping signal still flows instead of the turn format-failing.
+_BARE_QUESTION = re.compile(r"^\s*(\S.*\?)\s*$", re.MULTILINE)
 _ANSWER = re.compile(r"ANSWER\s*[:=]\s*(YES|NO|SOMETIMES|UNKNOWN)\b", re.IGNORECASE)
 
 ANSWER_TOKENS = ("YES", "NO", "SOMETIMES", "UNKNOWN")
@@ -53,6 +59,9 @@ def parse_guesser_turn(text: str) -> tuple[Optional[str], str]:
     questions = _QUESTION.findall(visible)
     if questions:
         return "question", questions[-1].strip()
+    bare = _BARE_QUESTION.findall(visible)
+    if bare:
+        return "question", bare[-1].strip()
     return None, ""
 
 

@@ -30,8 +30,30 @@ __all__ = ["TwinBase", "GenResult", "ReactResult", "assemble_react"]
 
 
 class TwinBase:
-    def __init__(self, model_path: str):
-        self.model, self.tokenizer = load(os.path.expanduser(model_path))
+    def __init__(
+        self,
+        model_path: str,
+        *,
+        strict: bool = True,
+        eos_token_ids: list[int] | None = None,
+    ):
+        path = os.path.expanduser(model_path)
+        if strict and eos_token_ids is None:
+            # Verbatim mlx-lm load — the historical (Qwen3 / self-play) path,
+            # kept bit-identical.
+            self.model, self.tokenizer = load(path)
+        else:
+            # gemma4 needs strict=False (drop vestigial KV-shared-layer weights)
+            # and/or an explicit eos set (its <turn|> terminator lives only in
+            # generation_config, which mlx-lm's load() ignores). Replicate load()
+            # exactly minus those two overrides. See ModelConfig.load_strict.
+            from pathlib import Path
+            from mlx_lm.utils import load_model, load_tokenizer
+            mpath = Path(path)
+            self.model, config = load_model(mpath, lazy=False, strict=strict)
+            eos = eos_token_ids if eos_token_ids is not None else config.get(
+                "eos_token_id", None)
+            self.tokenizer = load_tokenizer(mpath, eos_token_ids=eos)
         # mlx-lm models default to eval; be explicit so dropout etc. are off
         # for inference paths. Training code re-enables train() as needed.
         self.model.eval()

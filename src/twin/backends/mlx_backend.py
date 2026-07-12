@@ -16,7 +16,13 @@ class MlxBackend:
         from twin.models import TwinBase
         # TwinBase owns the mlx-lm load; compute_cfg carries no mlx levers today
         # (max_kv_size etc. live on model_cfg and are applied at generate time).
-        return TwinBase(model_cfg.path)
+        # load_strict / eos_token_ids default to the historical Qwen3 behaviour;
+        # the gemma4 twentyq config sets them (see ModelConfig).
+        return TwinBase(
+            model_cfg.path,
+            strict=getattr(model_cfg, "load_strict", True),
+            eos_token_ids=getattr(model_cfg, "eos_token_ids", None),
+        )
 
     def build_adapters(self, base, lora_cfg) -> Any:
         from twin.models import Adapters

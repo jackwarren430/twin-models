@@ -154,3 +154,66 @@ Notably, **all four shakeout fixes were model-interaction/prompt issues
 (thinking truncation ×3, wrong system prompt ×1) — zero were bugs in the RL
 machinery** (trajectories, advantages, rewards, GRPO worked from iter 0). Good
 signal for the architecture.
+
+## Model swap → gemma-4-E2B (2026-07-11)
+
+User directive: run Q8 on **`google/gemma-4-E2B-it`** instead of Qwen3-8B (the
+sibling `litert-community/...-litert-lm` is LiteRT/MediaPipe format, **cannot**
+load in MLX — ruled out immediately). gemma-4-E2B is a `gemma4`
+(Gemma4ForConditionalGeneration) multimodal checkpoint; mlx-lm 0.31.3 loads its
+text tower (`gemma4`/`gemma4_text`), dropping vision/audio at load. ~2B-effective
+(MatFormer), 10.2 GB bf16 on disk → **9.26 GB resident** (heavier than Qwen3-8B-
+6bit's ~6.5 GB, still fine on 32 GB).
+
+**Two load-time infra fixes** (production code, gated behind new `ModelConfig`
+fields so the Qwen3/self-play path is untouched — `load()` verbatim there):
+1. `load_strict: false` — the checkpoint ships per-layer k/v for its 20 KV-shared
+   layers (15-34) that mlx-lm reuses from earlier layers; strict load raises on
+   the 60 vestigial tensors. `strict=False` drops them; generation is coherent,
+   so they really are vestigial.
+2. `eos_token_ids: [1, 106, 50]` — gemma4's turn terminator `<turn|>`=106 lives
+   ONLY in generation_config (mlx-lm's `load()` reads config.json's scalar eos=1),
+   so without it generation never stops and pads to max_tokens.
+
+**Thinking:** gemma4-E2B reasons by default via `<|channel>thought … <channel|>`
+(different syntax from Qwen3's `<think>`). `enable_thinking=False` removes the
+`<|think|>` injection and yields direct, parseable contract output — same
+all-roles-thinking-OFF posture as Qwen3, for the same truncation reason.
+
+**Judge quality (probes):** materially weaker than Qwen3-8B. Validity is
+VALID-biased (3/6 — passes water/"happiness"/"the number seven" as valid); the
+answerer and guesser are actually coherent, but the **audit false-flags truthful
+answers as lies**. Closeness Φ is the most reliable contract (directional,
+range-compressed) — good, since Φ is the solver's partial-credit and the headline
+Q8 credit-granularity signal.
+
+### q-gemma-shakeout-01/02/03 — **PASS ✅** (Sprint Q6 gate re-run on gemma4)
+
+Three rounds, each fixing one weak-model failure the tiny config surfaced (N2 K2
+T6, 5 iters, all thinking OFF):
+- **-01:** `fmt=4` every iter — the guesser drifted from `QUESTION:` to `Q:`,
+  mimicking the flattened `Q:`/`A:` history. Fix: **3-tier lenient parser**
+  (`GUESS:` → `QUESTION:`/`Q:` → bare trailing `?` line) + history reworded to
+  drop the `Q:` prefix cue.
+- **-02:** `fmt=0` (format fixed) but `void≈55%` — the audit false-flagged
+  all-truthful episodes (e.g. a perfect Apple game: vegetable NO / sweet YES /
+  fruit YES / dessert NO / dairy NO, all correct) and one false-`F` voided the
+  lot. Fix: **`audit_void_fraction`** — void only on a MAJORITY of flagged lies
+  (gemma4 config 0.5; default 0.0 = historical "any F voids", Qwen3 unchanged).
+- **-03 (PASS):**
+
+      it cat               parse valid  phi     Rs     Rc void fmt guess%
+       0 food               1.0   1.0  0.72  +0.362 +1.10   0   0   0.00
+       1 food               1.0   1.0  0.68  +0.338 +1.10   0   0   0.00
+       2 animal             1.0   1.0  0.80  +0.400 +0.85   1   0   0.00
+       3 food               1.0   1.0  0.70  +0.270 +0.85   1   1   0.00
+       4 household object   1.0   1.0  0.70  +0.512 +0.88   0   0   0.25
+
+  Void ~10% (was ~55%), fmt ~0, **Φ live 0.68-0.80 (higher than Qwen3's
+  0.23-0.50)**, Rs>0 from Φ partial-credit, a real guesser win at T=6 (household)
+  — untrained Qwen3 never won at T=6. Coherent games; answerer truthful. Healthy
+  as the Qwen3 q-shakeout-05 gate. Wall-clock ~3-4 min for 5 iters (gemma4 fast).
+
+All fixes are principled weak-model adaptations, config-gated, no RL-machinery
+bugs. Pipeline is **Q8-ready on gemma4**; residual caveat is noisier creator-side
+signal (validity gate + audit) vs a cleaner solver-side Φ.

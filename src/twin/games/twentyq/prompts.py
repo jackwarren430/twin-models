@@ -82,8 +82,12 @@ def guesser_user(
     max_turns: int,
 ) -> str:
     if qa_pairs:
+        # Deliberately avoid a "Q:" prefix here: weaker guessers mimic the
+        # transcript's notation and emit "Q: ..." instead of the "QUESTION:"
+        # contract line (observed on gemma4-E2B). Quote-and-arrow carries no
+        # prefix token to copy.
         transcript = "\n".join(
-            f"{i + 1}. Q: {q} -> {a}" for i, (q, a) in enumerate(qa_pairs)
+            f'{i + 1}. "{q}" -> {a}' for i, (q, a) in enumerate(qa_pairs)
         )
     else:
         transcript = "(none yet — this is your first question)"

@@ -55,6 +55,17 @@ def test_parse_guesser_last_line_wins():
     assert parse_guesser_turn(text) == ("question", "Is it small?")
 
 
+def test_parse_guesser_lenient_q_prefix_and_bare_question():
+    # Weaker models (gemma4-E2B) drop the "QUESTION:" contract, emitting "Q:"
+    # (mimicking the history) or a bare question line. Both parse as a question
+    # so the episode stays alive; genuine non-question text still fails.
+    assert parse_guesser_turn("Q: Is it a fruit?") == ("question", "Is it a fruit?")
+    assert parse_guesser_turn("Is the food sweet?") == ("question", "Is the food sweet?")
+    assert parse_guesser_turn("I really can't tell what it is.") == (None, "")
+    # a real GUESS still wins over a trailing bare question
+    assert parse_guesser_turn("Could it be a squid?\nGUESS: octopus") == ("guess", "octopus")
+
+
 def test_parse_guesser_ignores_thinking():
     only_think = "<think>QUESTION: Is it alive?</think>I wonder..."
     assert parse_guesser_turn(only_think) == (None, "")
@@ -91,7 +102,9 @@ def test_budget_exhaustion():
 
 
 def test_format_failure_ends_episode_as_failure():
-    g = scripted_guesser(["QUESTION: Is it alive?", "I think it might be a fish?"])
+    # A genuine non-question statement (no "?" and no contract line) fails; a
+    # bare question would now be accepted (see the lenient-parse test above).
+    g = scripted_guesser(["QUESTION: Is it alive?", "I give up, I have no idea."])
     ep = run_episode(g, yes_answerer, SECRET, max_turns=6)
     assert not ep.guessed and ep.ended == "format"
     assert ep.turns_used == 2

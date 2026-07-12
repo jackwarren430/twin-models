@@ -38,6 +38,17 @@ class ModelConfig:
     # pressure can't produce real tool calls, and an ablation lever besides.
     creator_enable_thinking: bool | None = None
     max_kv_size: int | None = None
+    # Weight-loading overrides (2026-07-11, gemma4). load_strict=False drops
+    # checkpoint tensors absent from the mlx-lm model: gemma4-E2B ships per-layer
+    # k/v for its 20 KV-shared layers (15-34) that mlx-lm reuses from earlier
+    # layers, so they're vestigial and MUST be dropped or load raises. Qwen3
+    # keeps the default True (its checkpoint matches exactly, so this is a no-op
+    # safety net there). eos_token_ids overrides the stop-token set: mlx-lm reads
+    # config.json's scalar eos_token_id (gemma4 = <eos> only), missing that
+    # gemma4 declares its turn terminator <turn|>=106 ONLY in generation_config
+    # ([1,106,50]) — without it generation never stops and pads to max_tokens.
+    load_strict: bool = True
+    eos_token_ids: list[int] | None = None
 
 
 # Every linear projection in a Qwen3 transformer block, by module path relative
@@ -178,6 +189,13 @@ class TwentyQConfig:
     w_efficiency: float = 0.3
     w_close: float = 0.5
     w_format: float = 0.5         # penalty when the guesser broke the contract
+    # Consistency-void tolerance. An episode is voided (creator lied to the
+    # guesser) only when the truthfulness audit flags MORE than this fraction of
+    # the answers as lies. 0.0 = the historical "any single F voids" gate (fine
+    # for a strong judge like Qwen3-8B). A weaker judge (gemma4-E2B) false-flags
+    # truthful answers, sinking good episodes; 0.5 voids only on a clear majority
+    # of lies. See trainer.py and q-gemma-shakeout-02.
+    audit_void_fraction: float = 0.0
     # Per-turn generation budgets (history grows linearly in turns — keep
     # these tight; mini-05's uncapped-thinking lesson applies per turn here).
     secret_max_tokens: int = 512

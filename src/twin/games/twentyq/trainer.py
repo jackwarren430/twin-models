@@ -229,7 +229,18 @@ class TwentyQTrainer(BaseTrainer):
                 audit = judge_answer_audit(secret, ep.audited_pairs, self._grade)
                 if audit is None and ep.audited_pairs:
                     n_unauditable += 1
-                void = audit is not None and not all(audit)
+                # Void only when MORE than audit_void_fraction of the answers are
+                # flagged as lies (and at least one). The default 0.0 is the
+                # historical "any single F voids" gate. A noisy judge over-voids
+                # under it: on gemma4-E2B one false-F sank otherwise-perfect
+                # episodes (all-truthful Apple games, q-gemma-shakeout-02). A
+                # majority threshold tolerates that noise yet still catches a
+                # systematically-lying answerer — same fail-open spirit as
+                # counting unauditable episodes as consistent.
+                void = False
+                if audit is not None:
+                    n_lies = sum(1 for a in audit if not a)
+                    void = n_lies > 0 and n_lies > qcfg.audit_void_fraction * len(audit)
                 if void:
                     n_void += 1
                     lied = True
