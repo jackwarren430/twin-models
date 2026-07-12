@@ -7,9 +7,12 @@ name = "twin-models"
 version = "0.1.0"
 description = "Self-play RLVR with two LoRA adapters over one frozen MLX base (Qwen3-8B)"
 requires-python = ">=3.11"
+# Core deps are framework-neutral. The two compute backends (mlx / torch) each
+# live behind their own extra so a host installs only the one it can run: an
+# Apple-silicon Mac takes `.[mlx]`, the DGX Spark / CUDA takes `.[torch]`
+# (mlx has no usable aarch64-Linux build — see DGX_SPARK.md). twin.backends
+# imports each framework lazily, so neither is needed to import the package.
 dependencies = [
-    "mlx>=0.30.0",
-    "mlx-lm>=0.28.0",
     "numpy>=2.0",
     "sympy>=1.13",
     "pyyaml>=6.0",
@@ -17,6 +20,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# Apple-silicon backend (compute.backend: mlx). The historical default platform.
+mlx = [
+    "mlx>=0.30.0",
+    "mlx-lm>=0.28.0",
+]
 # DGX Spark / CUDA native backend (compute.backend: torch). Kept optional so a
 # Mac / mlx install pulls in none of it. On the Spark, install the sm_121 torch
 # build FIRST from the nightly cu13 index (see DGX_SPARK.md) — the bare "torch"

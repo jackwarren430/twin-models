@@ -46,6 +46,7 @@ def test_get_backend_unknown_raises():
 
 
 def test_mlx_backend_realize_tolerates_none_and_no_grad_is_context():
+    pytest.importorskip("mlx.core")  # mlx backend behaviour; skip on torch-only hosts (DGX Spark)
     b = get_backend("mlx")
     b.realize(None)  # None args are ignored, no error
     with b.no_grad():

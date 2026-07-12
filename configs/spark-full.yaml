@@ -1,0 +1,132 @@
+# "spark-full-01" — first FULL multi-domain self-play run on the DGX Spark
+# (torch/CUDA backend, GB10, 128GB). Built on the mini-05 proven recipe
+# (bounded-deliberation creator, per-problem generation, personas, native tool
+# calling, w_diversity + w_brevity, 0.9->0.1 target band, Dr.GRPO mean
+# advantages) with three deliberate changes for this run:
+#
+#   1. domains = math + coding + logic (ALL). One domain is drawn at random per
+#      iteration (rng.choice). NOTE: coding & logic have only ever been shaken
+#      out in isolation (configs/{coding,logic}-shakeout.yaml) — this is the
+#      first run that mixes all three. creator_tools is the UNION of the three
+#      domains' tools; the loop declares all of them every iteration and the
+#      domain-specific creator prompt selects the relevant one (native calling
+#      handles multiple declared tools). theme_weights is null (uniform): the
+#      grounded file is math-centric (6 math / 1 coding / 0 logic), the wrong
+#      curriculum bias when we're deliberately spanning domains.
+#
+#   2. Groups cranked: G_c=6 (from 4), K=16 (from 8). K doubles nearly for free
+#      on this box — solver_batch=16 decodes all K attempts per problem in one
+#      batch, and decode is bandwidth-bound (batching amortizes). G_c is the
+#      serial-expensive lever; 6 is a measured step up.
+#
+#   3. Spark memory levers ON (unattended-run safety): grpo_microbatch=8 bounds
+#      the backward (N*K=80 solver trajectories can't share one graph at 4096
+#      tokens), logit_chunk=512 bounds the [T,V] LM head. Both are numerically
+#      identical to the one-graph path — memory bound only. 128GB has room; keep
+#      these until a probe_memory pass says otherwise.
+#
+# creator_max_tokens stays 4096 (user choice). WATCH: hard-rank thinking spirals
+# (mini-04a failure mode) — if n_parse_failed spikes on the hard ranks, the
+# 2048 cap from mini-05/logic-shakeout is the fix. Other watch items: coding
+# void rate under require_tool_use (coding shakeout ran the gate OFF); per-iter
+# wall-clock; r_gradient lifting off the all-solved floor (THE success signal).
+
+compute:
+  backend: torch
+  device: cuda
+  dtype: bfloat16
+  attn_impl: sdpa            # flash_attention_2 if the wheel gets installed (faster on Blackwell)
+  tf32: true
+  matmul_precision: high
+  compile: false
+  # grad_checkpointing MUST stay on here. The first launch (2026-07-08, this off)
+  # OOM'd the WHOLE box: the un-checkpointed scoring backward at microbatch=8 /
+  # 4096 tokens grew to ~153GB (activations across all 36 layers, all 8
+  # trajectories live at once — logit_chunk only bounds the LM head, not the
+  # trunk), exhausted the 128GB UNIFIED pool, and the global OOM killer took out
+  # the desktop session too. With checkpointing on, the same backward peaks at
+  # ~30GB (probe: torch.cuda.max_alloc, microbatch=8). Rematerializes activations
+  # in the backward; numerically identical. See DGX_SPARK.md perf table.
+  grad_checkpointing: true
+
+model:
+  path: Qwen/Qwen3-8B
+  enable_thinking: true
+  creator_enable_thinking: true   # bounded deliberation (mini-05)
+  max_kv_size: null
+
+lora:
+  num_layers: 16
+  rank: 64
+  alpha: 128.0              # effective scale alpha/rank = 2.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+  top_p: 0.95
+  creator_max_tokens: 4096  # kept at 4096 (user); spirals are a watch item
+  solver_max_tokens: 4096
+  oracle_max_tokens: 4096
+  solver_batch: 16          # match K: all attempts for a problem decode in one batch
+
+game:
+  n_problems: 5             # N (difficulty ramp)
+  creator_group: 6          # G_c
+  solver_attempts: 16       # K
+  domains: ["math", "coding", "logic"]
+  creator_mode: per_problem
+  condition_on_previous: true
+  personas: true
+  require_tool_use: true    # protects answer correctness; voiding is a safe no-op (watch coding)
+  credit: broadcast         # mini-05 default (one advantage per suite)
+  theme_weights: null       # uniform over each domain's static theme pool
+
+rewards:
+  w_gradient: 1.0
+  w_consistency: 0.5
+  w_oracle: 0.1
+  w_valid: 0.1
+  w_solve: 1.0
+  w_oracle_solver: 0.05
+  w_brevity: 0.25
+  w_diversity: 0.3
+  mse_beta: 4.0
+  clip: 10.0
+  target_hi: 0.9
+  target_lo: 0.1
+
+oracle:
+  enabled: true
+  cost_per_query: 1.0
+  max_calls_per_turn: 4
+
+tools:
+  creator_tools: ["solve", "calc", "run_python", "logic_solve"]  # union across all 3 domains
+  creator_max_tool_calls: 4
+  creator_tool_rounds: 5
+  cas_timeout_s: 3.0
+  run_python_timeout_s: 5.0
+  protocol: native
+
+roles:
+  swap_interval: 5
+  warmup_iterations: 5
+  injection_rate: 0.0
+
+train:
+  iters: 60
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  grad_accumulation_steps: 1
+  grpo_microbatch: 8        # bounds the GRPO backward (N*K=80 trajectories)
+  logit_chunk: 512          # bounds the [T,V] LM head at 4096 tokens
+  adv_mode: mean            # Dr.GRPO mean baseline
+  seed: 0
+  checkpoint_every: 5
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints
+  runs: runs
