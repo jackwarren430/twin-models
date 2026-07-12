@@ -51,6 +51,16 @@ train:
   iters: 30
   learning_rate: 1.0e-5
   kl_beta: 0.02
+  # Memory: gemma4's 262k vocab makes the [T,V] logits ~1.7x Qwen3's, and one
+  # broadcast iteration scores ~120 turn-trajectories. Unchunked (the default 0)
+  # the whole GRPO batch builds in ONE graph and peaked 103GB -> OOM-killed on
+  # 32GB. These are the same 32GB memory-savers every self-play config uses.
+  grpo_microbatch: 1             # score ONE trajectory per backward chunk (accumulate grads):
+                                 # THE fix — caps live graphs from ~120 trajectories to 1
+                                 # (unchunked one-traj [<=256,262144] logits ~0.5GB, ~12GB peak).
+  logit_chunk: 0                 # keep 0: the chunked LM-head path reaches self.model.model,
+                                 # which gemma4 (top-level Model -> language_model, no .model/.lm_head)
+                                 # does not expose. Completions are <=256 tok, so unchunked is fine.
   checkpoint_every: 10           # checkpoints at 10/20/30 (resumable)
   log_every: 1
 

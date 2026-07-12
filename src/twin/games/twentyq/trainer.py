@@ -386,6 +386,25 @@ class TwentyQTrainer(BaseTrainer):
             "creator_update": creator_metrics,
             "secrets": secret_summaries,
         }
+        # Memory: log this iteration's peak (the instrument that caught gemma4's
+        # 103GB within-iteration spike — the real fix was train.grpo_microbatch=1
+        # so the GRPO batch is scored one trajectory at a time, not ~120 full
+        # [T,262144] logit graphs at once), then clear the buffer cache and reset
+        # the peak counter at the boundary. Guarded on `backend` so the scripted,
+        # __new__-built test trainer (no backend, patched _grpo) still runs the
+        # real run_iteration; a real backend always has these protocol methods.
+        backend = getattr(self, "backend", None)
+        if backend is not None:
+            peak_gb = backend.peak_memory_gb()
+            record["peak_mem_gb"] = round(peak_gb, 2) if peak_gb is not None else None
+            active_fn = getattr(backend, "active_memory_gb", None)
+            if active_fn is not None:
+                active_gb = active_fn()
+                record["active_mem_gb"] = (round(active_gb, 2)
+                                           if active_gb is not None else None)
         if self.logger is not None:
             self.logger.log(record)
+        if backend is not None:
+            backend.clear_cache()
+            backend.reset_peak_memory()
         return record

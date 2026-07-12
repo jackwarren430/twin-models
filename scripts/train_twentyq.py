@@ -107,6 +107,7 @@ def main() -> None:
                 f"parse={rec['parse_ok_rate']:.2f} valid={rec['validity_rate']:.2f} | "
                 f"eps {ep['guessed']}/{ep['total']} void={ep['void']} "
                 f"fmt={ep['format_ended']} | phi={rec['phi_mean']:.2f}"
+                f" | mem={rec.get('peak_mem_gb', '?')}G"
             )
             ce = cfg.train.checkpoint_every
             if ce and (it + 1) % ce == 0:

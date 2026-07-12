@@ -76,6 +76,12 @@ class Backend(Protocol):
     def reset_peak_memory(self) -> None:
         """Reset the peak-memory counter (no-op if unavailable)."""
 
+    def clear_cache(self) -> None:
+        """Release the framework's cached-but-unused device buffers back to the
+        OS (``mx.clear_cache`` on MLX, ``torch.cuda.empty_cache`` on CUDA).
+        Called at iteration boundaries so a large unquantized base does not let
+        the buffer cache creep into swap and get OOM-killed across iterations."""
+
 
 def get_backend(name: str) -> Backend:
     """Instantiate the backend named ``name`` ('mlx' | 'torch').

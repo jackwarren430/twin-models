@@ -74,3 +74,16 @@ class MlxBackend:
             getattr(mx, "metal", None), "reset_peak_memory", None)
         if reset is not None:
             reset()
+
+    def active_memory_gb(self) -> float | None:
+        import mlx.core as mx
+        get_active = getattr(mx, "get_active_memory", None) or getattr(
+            getattr(mx, "metal", None), "get_active_memory", None)
+        return None if get_active is None else get_active() / 1e9
+
+    def clear_cache(self) -> None:
+        import mlx.core as mx
+        clear = getattr(mx, "clear_cache", None) or getattr(
+            getattr(mx, "metal", None), "clear_cache", None)
+        if clear is not None:
+            clear()

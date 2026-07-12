@@ -683,3 +683,7 @@ class TorchBackend:
     def reset_peak_memory(self) -> None:
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
+
+    def clear_cache(self) -> None:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
