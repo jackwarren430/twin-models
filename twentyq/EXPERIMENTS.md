@@ -254,3 +254,69 @@ Pre-registered read-outs (comparison, not pass/fail — this is the science):
 
 Watch (from the gemma4 shakeouts, not blockers): validity VALID-bias (weak
 secret gate), category-dependent difficulty (food voids > animals).
+
+### Q8 RESULTS (completed 2026-07-12, ~8 h wall)
+
+Infra note first: the launch OOM-died 3× before running. Root cause was NOT in
+the pre-registered plan — gemma4's **262k vocab** (1.7× Qwen3) made one broadcast
+iteration's ~120 turn-trajectories build in a single GRPO graph, peaking
+**103.58 GB** → SIGKILL on 32 GB. Fix (commit 7ada896): `grpo_microbatch: 1` +
+`logit_chunk: 0` (the chunked LM-head path reaches `self.model.model`, which
+gemma4's `Model→language_model` layout doesn't expose). Peak → **14.98 GB**;
+all four arms then held 14.6–15.8 GB with zero OOM. Added per-iter `peak_mem_gb`
+telemetry (it's what made the spike visible).
+
+**Full 2×2 — overall guess-rate (mean over 30 iters):**
+
+    |            | rotation-ON | rotation-OFF |
+    | broadcast  | 0.083 (A1)  | 0.225 (A3)   |
+    | per-turn   | 0.162 (A2)  | 0.213 (A4)   |
+
+    Main effects:  ROTATION  off−on   = +0.097  (on 0.123 → off 0.219)
+                   CREDIT    pt−bcast = +0.034  (bcast 0.154 → pt 0.188)
+
+**Learning trajectories (guess-rate by third | overall Φ):**
+
+    A1 broadcast+rot : 0.087 0.119 0.042  | Φ 0.58   declines (rotation damage late)
+    A2 per-turn +rot : 0.154 0.000 0.333  | Φ 0.65   COLLAPSE@10-19, recovery@20-29
+    A3 broadcast norot 0.193 0.275 0.208  | Φ 0.64   climbs then plateaus/dips
+    A4 per-turn  norot 0.117 0.240 0.283  | Φ 0.62   ONLY monotonic climb; finishes top
+
+**Findings (ranked by robustness):**
+
+1. **ROTATION IS THE DOMINANT EFFECT AND IT HURTS (+0.097, ~78% rel).** Both
+   credit types roughly double guess-rate with rotation OFF. The hard A/B swap at
+   `swap_interval=10` **evicts the guess-trained adapter from the solver seat**;
+   on a weak model with 30 iters there is no time to rebuild.
+2. **A2's collapse is the cleanest proof of the mechanism.** guess-rate went
+   0.62 (i9) → **0.00 for all of i10–19** (post-swap) → snapped back to 0.33+
+   after the i20 swap-back. The competence is adapter-bound; rotation moves it in
+   and out of the solver seat. The collapse coincided with a **void spike to
+   0.35** (the guess-adapter, now the answerer, answers inconsistently → episodes
+   void → no solver data) vs ≤0.12 elsewhere.
+3. **CREDIT GRANULARITY IS SECOND-ORDER (+0.034, within noise).** Per-turn's big
+   edge under rotation-ON (0.162 vs 0.083) was mostly **rotation-robustness**, not
+   better credit. In the clean rotation-OFF test the two are ~tied overall
+   (per-turn 0.213 vs broadcast 0.225) — BUT per-turn (A4) is the **only
+   monotonic climber and finishes highest** (final third 0.283 vs 0.208), hinting
+   at better *sustained* learning that a longer run might separate.
+4. **Per-turn has a mild Φ-vs-guess tension even without rotation.** A4 shows
+   recurring high-Φ (0.76–0.84) / zero-guess iters — potential-based shaping does
+   slightly reward "get close, don't close." It doesn't run away when the guesser
+   stays seated, but under rotation (A2) it deepened the post-swap collapse.
+
+**CAVEAT — N=1, large variance.** A1 vs A3 differ 2× over iters 0–9 despite
+*identical* pre-swap config (0.087 vs 0.193): temp-0.8/0.9 sampling gives a ~2×
+run-to-run variance floor. The credit effect (+0.034) sits inside that noise; the
+rotation effect (+0.097) is larger and consistent across both rows, so more
+credible — but everything here is a single seed per arm. Treat as directional.
+
+**Answer to the pre-registered question** ("does per-turn lift guess-rate faster/
+higher?"): **not decisively.** ~tied in the clean comparison, with a late-climb
+edge for per-turn. The experiment's real payload is the **rotation** result.
+
+**Next (not launched — ask user):** (a) rotation redesign — longer interval /
+soft blend / pre-swap warmup, since hard eviction is too costly at 30 iters;
+(b) a longer per-turn no-rotation run to test whether A4's monotonic climb
+continues; (c) N≥3 seeds to beat the variance floor before trusting the credit
+effect. Checkpoints for all arms saved at steps 10/20/30 in `checkpoints/q8-A*/`.
