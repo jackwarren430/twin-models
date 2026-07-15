@@ -320,3 +320,190 @@ soft blend / pre-swap warmup, since hard eviction is too costly at 30 iters;
 (b) a longer per-turn no-rotation run to test whether A4's monotonic climb
 continues; (c) N≥3 seeds to beat the variance floor before trusting the credit
 effect. Checkpoints for all arms saved at steps 10/20/30 in `checkpoints/q8-A*/`.
+
+## exp-ensemble-full v1 — ENSEMBLE dense reward, full-scale (2026-07-12/13)
+
+First full-scale run of the **ensemble-logprob dense reward** (`credit:
+ensemble`; see `twentyq-ensemble-reward` memory): the frozen 4-model ensemble's
+mean log-prob of the secret at each Q/A prefix replaces the per-turn judge Φ.
+Config `configs/twentyq-full.yaml` — gemma-4-E2B, torch/CUDA (Spark), N5·K8·T21,
+LoRA num_layers=16 rank=64, 30 iters, w_ensemble=0.3, grpo_microbatch=1. Two
+arms by `--swap-interval`: **rotation** (5) → `tq-runs/q-full-rot.jsonl`,
+**control** (0) → `tq-runs/q-full-ctrl.jsonl`. Full per-iteration play-by-play
+in `tq-runs/OBSERVATIONS.md`.
+
+Result: **ARM A (rotation) completed 30/30 clean; ARM B (control) stopped by
+user at iter 11/30** (enough to iterate on the design). Solver learned (guess%
+0.187 → 0.279 over the run; Rs 0.66 → 0.81), creator calibration improved
+(r_gradient 0.45 → 0.56), adapters drifted healthily (0.055 → 0.435, no
+collapse), mem flat ~46–50 GB. The ensemble reward works end-to-end at scale and
+Φ is correctly skipped (phi_mean=0 every iter). Rotation-swap cost reproduced
+from Q8 (post-swap guess% dips) and then *faded* late as both adapters
+cross-trained into competent guessers.
+
+**KEY FINDING (drove the next change): the truthfulness audit is not working.**
+Reading the transcripts, the frozen gemma4-E2B auditor voided a steady ~6
+episodes/iter AND returned **unauditable on up to 13 of 40 episodes/iter** — it
+false-flagged truthful games as lies and abstained on many more. Both outcomes
+discard good on-policy data (voided episodes leave the solver GRPO group and the
+creator's realized guess rate), shrinking effective batch size and adding noise
+to creator calibration — all to police a lying incentive a cooperative-
+calibration creator barely has. **Decision (2026-07-13): remove the audit
+entirely; assume the creator answers truthfully.** Code + rationale in
+`twentyq/DESIGN.md §2.8`. `judge_answer_audit` is retained but disconnected.
+
+## exp-fullv2 — no-audit re-run of the ensemble experiment (QUEUED 2026-07-13)
+
+Re-run of exp-ensemble-full with the audit removed (DESIGN §2.8), so the
+rot-vs-control comparison is no longer confounded by audit voiding/abstention.
+Config `configs/twentyq-full-v2.yaml` (identical to v1 minus `audit_void_fraction`
+and with the truthful-creator answerer prompt). Same two arms:
+
+    arm                 swap_interval   run-name         checkpoints
+    q-fullv2-rot        5   (rotation)  q-fullv2-rot     checkpoints/twentyq-fullv2-rot
+    q-fullv2-ctrl       0   (control)   q-fullv2-ctrl    checkpoints/twentyq-fullv2-ctrl
+
+Each: N5·K8·T21, 30 iters, `credit: ensemble`, w_ensemble=0.3, all thinking OFF.
+Launch commands are in the config header. Run the arms sequentially (each loads
+the 9.26 GB base + 4 resident ensemble models; v1 held ~46–50 GB — safe on 128 GB).
+
+Pre-registered read-outs (comparison, not pass/fail):
+- **effective batch size / data yield:** with no voids, every played episode now
+  trains — `episodes.total == episodes.guessed + failures`, no `void`/
+  `unauditable` fields. Expect fuller GRPO groups than v1 and steadier creator
+  calibration (`r_gradient`) iteration-to-iteration.
+- **solver learning:** guess% and Rs trend over 30 iters, per arm — does removing
+  the void noise lift the learning curve or its stability vs v1's rot arm
+  (0.187 → 0.279)?
+- **rotation vs control:** does the frozen-role control (B always guesses) reach
+  a higher single-role guess% than rotation's oscillating mean, at the cost of a
+  one-sided (A-can't-guess) specialization? (v1's control was only 11 iters.)
+- health: parse/valid ~1.0, fmt low, phi_mean=0 (Φ skipped under ensemble), mem
+  flat. **Watch:** does answerer honesty actually hold without the audit? Spot-
+  check transcripts for the creator giving wrong answers about its own secret;
+  if it becomes a real problem, the frozen-base-answerer control (DESIGN §5) is
+  the principled fix, not re-adding the broken audit.
+
+Stats: `python scripts/twentyq_run_stats.py tq-runs/q-fullv2-rot.jsonl tq-runs/q-fullv2-ctrl.jsonl --md tq-runs/REPORT-v2.md`.
+
+**Mid-run finding — validity gate false-rejects valid secrets (2026-07-13).**
+Spot-checking `q-fullv2-rot` transcripts, ~6.6% of secrets (6/91) were voided as
+INVALID and **all 6 were valid, guessable** (Axolotl ×4, Salmon, Octopus). Cause:
+gemma4-E2B ignores the vetting instruction, role-plays the guesser (`1. Is it a
+mammal?`), and ends its turn before any `VERDICT:` line; the old **fail-closed**
+gate then voided the secret (DESIGN §2.10). Same data-loss pathology as the audit
+(§2.8), and it clusters on the hardest slot (creator_4) — biasing against the
+difficult secrets the curriculum wants. **Fix:** `judge_secret_validity` gained a
+`mode` (config `twentyq.secret_validity` / CLI `--secret-validity`); default is
+now `fail_open` (only a clear INVALID voids), with `off` to disable the gate.
+**This run was NOT stopped** — the rot arm had already run under fail-closed, so
+to keep the control comparable the v2 config pins **both** arms to
+`secret_validity: fail_closed`. Launch `q-fullv2-ctrl` from the config as-is
+(fail_closed inherited). `fail_open` is the standing default for the *next*
+experiment. When reading exp-fullv2 results, treat ~6% of hard secrets as voided
+in both arms — a shared, matched handicap, not a rot-vs-ctrl confound.
+
+## exp-fullv3 — rebalanced reward + larger GRPO groups (QUEUED 2026-07-13)
+
+Follows exp-fullv2. Config `configs/twentyq-full-v3.yaml`. Two arms (rot/ctrl)
+via the same `--swap-interval` overrides:
+
+    arm                 swap_interval   run-name         checkpoints
+    q-fullv3-rot        5   (rotation)  q-fullv3-rot     checkpoints/twentyq-fullv3-rot
+    q-fullv3-ctrl       0   (control)   q-fullv3-ctrl    checkpoints/twentyq-fullv3-ctrl
+
+**Motivating analysis — ensemble reward dominated the goal (from q-fullv2-rot,
+712 episodes / 19 iters).** Decomposing each episode's return into the terminal
+(goal) reward and the telescoped ensemble-shaping total (`R_0 = ensemble_total +
+terminal`):
+
+    outcome   n    terminal   ensemble   total
+    WIN       92    1.086      3.046      4.132     ensemble ~2.8x the goal
+    MISS      612   0.000      1.650      1.650     a LOSS still banks 1.65 ensemble
+    FMTFAIL   8    -0.500      1.525      1.025
+
+- Per successful episode the ensemble total (~3.05) was ~2.8x the terminal goal
+  (~1.09). A *losing* episode still earned ~1.65 of ensemble reward just for
+  narrowing questions — 1.5x a win's whole terminal reward, with no guess.
+- GRPO keys on within-secret advantage, not raw magnitude. There the news was
+  mixed: in mixed win/loss groups the win still took the top total return 31/32
+  (97%) and the ensemble gap (+0.69) pointed the SAME way as terminal (+1.06) —
+  so ensemble reinforced winning where wins existed. BUT its within-group SD
+  (0.54) exceeded terminal's (0.44), and **64% of secret-groups (57/89) had zero
+  wins**, so in the majority of groups 100% of the advantage was ensemble-driven
+  — pure "raise the belief," no pressure to commit to a guess. `w_efficiency`
+  (the guess-fast bonus) only fires on a win, so it rarely operated.
+- (The apparent guess-rate decline over iters is heavily confounded by ROTATION
+  — roles flip at iters 5/10/15 — and is noisy; the control arm is the clean read.)
+
+**v3 changes (see config header):**
+1. **w_ensemble 0.3 -> 0.1.** Puts ensemble within-group SD (~0.18) cleanly below
+   terminal's (~0.44): the win/loss signal dominates the advantage again while the
+   dense signal still guides questioning. Per-episode ensemble total falls to ~1.0,
+   comparable to (not 2.8x) the terminal win. NOT zeroed — the dense shaping is the
+   pipeline's point (sparse-reward credit assignment).
+2. **N 5 -> 8, K 8 -> 12 (96 eps/iter).** Lower-variance GRPO baselines. Peak
+   memory is DECOUPLED from N*K (sequential episodes + grpo_microbatch=1), so peak
+   stays ~46-50 GB; cost is wall-clock only (~32 min/iter, ~16 h/arm).
+3. **secret_validity fail_open** (the new default; v2 pinned fail_closed only to
+   match its pre-fix rot arm).
+
+Pre-registered read-outs:
+- **does guess rate recover?** with the goal reward no longer swamped, expect a
+  higher/steadier guess% than v2, esp. in the control arm's clean single-role curve.
+- **structural check:** even at w_ensemble=0.1, all-miss groups still have zero
+  guess pressure (terminal flat). If guess rate stays low, the next lever is a
+  small reward for *making a guess at all* (or an efficiency term not gated on a
+  win) — flagged for exp-fullv4, not done here.
+- health: parse/valid ~1.0 (validity now fail-open), fmt low, phi_mean=0, mem flat
+  ~48 GB despite 2.4x the episodes (confirms the N*K/memory decoupling).
+
+Stats: `python scripts/twentyq_run_stats.py tq-runs/q-fullv3-rot.jsonl tq-runs/q-fullv3-ctrl.jsonl --md tq-runs/REPORT-v3.md`.
+
+### exp-fullv3 RESULTS (both arms completed 2026-07-14/15, ~16 h/arm)
+
+Both arms ran 30/30 clean: `result=success`, parse=valid=1.00 every iter (fail-open
+gate — zero false voids), fmt low, mem flat ~47 GB across 96 eps/iter (N*K/memory
+decoupling confirmed a second time). Control ran fixed roles (A creates, B guesses
+every iter) — the clean single-role read.
+
+    run                 mean g%  first10  last10  slope/it  meanRs
+    v3-ROT  (swap=5)     0.118    0.059    0.131   +0.0028   0.275
+    v3-CTRL (swap=0)     0.118    0.069    0.154   +0.0034   0.274
+
+v3-CTRL guess% per iter:
+  0.02 0.06 0.04 0.05 0.25 0.01 0.03 0.05 0.10 0.06 | 0.21 0.15 0.23 0.10 0.10
+  0.12 0.06 0.16 0.06 0.11 | 0.16 0.17 0.15 0.08 0.25 0.18 0.17 0.18 0.10 0.11
+
+**Findings:**
+1. **Reward rebalance did what it was designed to.** For successful episodes the
+   ensemble-total fell from ~2.8x the terminal goal (v2 @ w=0.3) to **0.93x**
+   (v3 @ w=0.1, n=341 wins: terminal 1.059 vs ensemble 0.983) — parity, goal no
+   longer swamped.
+2. **Learning is NOT broken — but modest.** The clean control trends UP (slope
+   +0.0034/it; first-10 0.069 -> last-10 0.154, roughly doubling), plateauing
+   ~0.15. The earlier "guess rate decreasing" fear was rotation noise, not real.
+3. **Rotation ≈ control at w=0.1.** Both arms 0.118 mean with near-identical
+   slopes — the rot/ctrl distinction that mattered in Q8/v1 collapsed at this low
+   ensemble weight. A finding in itself.
+4. **Cross-version guess% (all rotation arms, CONFOUNDED — audit/weight/N-K all
+   differ):** v1-rot 0.233 (audit, w=0.3, N5K8) > v2-rot 0.154 (25 iters, no-audit,
+   w=0.3) > v3-rot 0.118 (no-audit, w=0.1, N8K12). Lowering the ensemble weight did
+   NOT raise guess rate — consistent with the ensemble dense reward being net-
+   HELPFUL for guessing (it teaches narrowing), not merely a distractor. w=0.1 is
+   likely a touch LOW.
+
+**Caveat on attribution:** v3 changed w_ensemble AND N/K together, so v2->v3 isn't
+a clean weight ablation (flagged at launch). A one-variable read (w=0.2, N5K8) is
+the exp-fullv3b candidate.
+
+**Open structural issue (unaddressed by reweighting):** ~64% of secret-groups have
+zero wins, so their entire GRPO advantage is ensemble-driven with no pressure to
+commit to a guess — independent of w_ensemble. The next lever is a small reward for
+making a guess at all (or a closeness/efficiency term not gated on winning), not
+further reweighting. Candidate exp-fullv4.
+
+**Measurement note:** these guess% are noisy TRAINING rollouts. The in-loop
+`validation_every` stationary eval (greedy, frozen-base answerer, sparse/dense/
+combined split) added after v3 launched is the intended clean metric going forward;
+neither v3 arm has validation rows (both predate that code).

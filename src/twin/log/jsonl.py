@@ -29,6 +29,10 @@ class JsonlLogger:
     def log(self, record: dict[str, Any]) -> None:
         self._write({"type": "iteration", **record})
 
+    def log_validation(self, record: dict[str, Any]) -> None:
+        """Append a stationary-evaluation record alongside iteration rows."""
+        self._write({"type": "validation", **record})
+
     def close(self) -> None:
         if not self._f.closed:
             self._f.close()

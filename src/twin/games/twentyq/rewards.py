@@ -31,6 +31,71 @@ class QEpisodeReward:
     format_fail: bool
 
 
+@dataclass(frozen=True)
+class StepReward:
+    """The reward signals attached to one solver turn.
+
+    ``dense`` is the immediate potential-shaping term, ``terminal`` is the
+    sparse episode scalar (non-zero only on the final turn), ``total`` is their
+    immediate sum, and ``return_`` is the value actually assigned to that
+    turn's GRPO trajectory.  Potentials are included so logs can be audited
+    without reconstructing the shaping calculation.
+    """
+
+    dense: float
+    terminal: float
+    total: float
+    return_: float
+    potential_before: float | None = None
+    potential_after: float | None = None
+
+
+def _step_trace(
+    dense: list[float],
+    terminal: float,
+    *,
+    gamma: float,
+    potentials: list[float] | None = None,
+    broadcast_return: bool = False,
+) -> list[StepReward]:
+    """Build an auditable per-step trace from immediate dense rewards."""
+    if not dense:
+        return []
+    terminal_by_step = [0.0] * len(dense)
+    terminal_by_step[-1] = float(terminal)
+    immediate = [d + term for d, term in zip(dense, terminal_by_step)]
+    if broadcast_return:
+        returns = [float(terminal)] * len(dense)
+    else:
+        returns = [0.0] * len(dense)
+        acc = 0.0
+        for t in reversed(range(len(dense))):
+            acc = immediate[t] + gamma * acc
+            returns[t] = acc
+    return [
+        StepReward(
+            dense=float(dense[t]),
+            terminal=terminal_by_step[t],
+            total=immediate[t],
+            return_=returns[t],
+            potential_before=(potentials[t] if potentials is not None else None),
+            potential_after=(potentials[t + 1] if potentials is not None else None),
+        )
+        for t in range(len(dense))
+    ]
+
+
+def broadcast_reward_trace(n_turns: int, terminal: float) -> list[StepReward]:
+    """Trace for legacy broadcast credit.
+
+    The sparse scalar occurs at episode termination, while the legacy GRPO
+    assignment broadcasts that same scalar to every turn (hence
+    ``return_ == terminal`` for every row).
+    """
+    return _step_trace(
+        [0.0] * n_turns, terminal, gamma=1.0, broadcast_return=True)
+
+
 def episode_reward(
     cfg: TwentyQConfig,
     *,
@@ -87,7 +152,7 @@ def secret_turn_trajectories(
         raise ValueError(f"{len(episodes)} episodes vs {len(rewards)} rewards")
     advantages = group_advantages([r.total for r in rewards], mode=adv_mode)
     trajs: list[Trajectory] = []
-    for ep, rew, adv in zip(episodes, rewards, advantages):
+    for ki, (ep, rew, adv) in enumerate(zip(episodes, rewards, advantages)):
         for turn in ep.turns:
             if turn.prompt_tokens is None or turn.completion_tokens is None:
                 continue
@@ -98,6 +163,7 @@ def secret_turn_trajectories(
                 advantage=adv,
                 meta={
                     "secret_id": ep.secret.secret_id,
+                    "ep_in_secret": ki,
                     "turn": turn.index,
                     "kind": turn.kind,
                     "guessed": rew.guessed,
@@ -132,6 +198,18 @@ def shaped_returns(
     exactly: per-turn credit REDISTRIBUTES the episode total across turns
     without changing it — the broadcast-vs-per-turn ablation compares credit
     schemes, not reward scales."""
+    return [s.return_ for s in shaped_reward_trace(
+        intermediate_phis, terminal, gamma=gamma, w_close=w_close)]
+
+
+def shaped_reward_trace(
+    intermediate_phis: list[float | None],
+    terminal: float,
+    *,
+    gamma: float,
+    w_close: float,
+) -> list[StepReward]:
+    """Component-level counterpart of :func:`shaped_returns`."""
     pots = [0.0]
     prev = 0.0
     for p in intermediate_phis:
@@ -140,14 +218,74 @@ def shaped_returns(
         pots.append(prev)
     pots.append(0.0)                        # terminal state, both outcomes
     n_turns = len(intermediate_phis) + 1
-    rs = [w_close * (gamma * pots[t + 1] - pots[t]) for t in range(n_turns)]
-    rs[-1] += terminal
-    returns = [0.0] * n_turns
-    acc = 0.0
-    for t in reversed(range(n_turns)):
-        acc = rs[t] + gamma * acc
-        returns[t] = acc
-    return returns
+    dense = [w_close * (gamma * pots[t + 1] - pots[t])
+             for t in range(n_turns)]
+    return _step_trace(dense, terminal, gamma=gamma, potentials=pots)
+
+
+def history_states(ep: Episode) -> list[list[tuple[str, str]]]:
+    """The Q/A history visible AFTER each turn, as a list of length
+    ``turns_used + 1``: ``states[0]`` is empty (the score(history_0) baseline,
+    before turn 0) and ``states[i + 1]`` is the history after turn ``i``.
+
+    A turn that produced no answer (a correct GUESS or a format fail ends the
+    episode; both have ``answer is None``) carries the previous history forward
+    unchanged — the ensemble sees no new evidence, so that turn's shaping delta
+    is ~0 and the credit for it flows from the sparse terminal reward instead.
+    Wrong guesses appear as ``('Is it <x>?', 'NO')``, matching :attr:`qa_pairs`."""
+    states = [[]]
+    pairs: list[tuple[str, str]] = []
+    for t in ep.turns:
+        if t.answer is not None:
+            q = f"Is it {t.content}?" if t.kind == "guess" else t.content
+            pairs = pairs + [(q, t.answer)]
+        states.append(list(pairs))
+    return states
+
+
+def ensemble_shaped_returns(
+    potentials: list[float],
+    terminal: float,
+    *,
+    gamma: float,
+    scale: float = 1.0,
+) -> list[float]:
+    """Per-turn reward-to-go for ONE episode under ENSEMBLE-potential shaping
+    (the new dense reward). ``potentials[i]`` is the ensemble score Φ of the
+    secret given history state ``i`` (``potentials = [Φ_0, Φ_1, ..., Φ_T]`` from
+    :func:`history_states`, length ``turns_used + 1``). Turn ``t`` earns the
+    potential-based shaping reward
+
+        r_t = scale · (γ·Φ_{t+1} − Φ_t)            t = 0..T-1
+
+    exactly the ``r_t = γ·score(history_t) − score(history_{t-1})`` form of the
+    reward spec, and the LAST turn additionally carries the sparse episode
+    scalar (``terminal`` — the w_guess/efficiency/format reward), so the dense
+    ensemble signal is paid ALONGSIDE the terminal outcome. Reward-to-go is the
+    usual γ-discounted accumulation ``R_t = r_t + γ·R_{t+1}``.
+
+    Unlike :func:`shaped_returns` (judge-Φ, start/terminal potentials pinned to
+    0 for policy invariance) the ensemble potentials are used raw — score(history_0)
+    is a real baseline, per the reward spec — so the shaping does NOT telescope to
+    ``terminal`` at γ=1; it adds the honest ensemble-belief gain across the game."""
+    return [s.return_ for s in ensemble_reward_trace(
+        potentials, terminal, gamma=gamma, scale=scale)]
+
+
+def ensemble_reward_trace(
+    potentials: list[float],
+    terminal: float,
+    *,
+    gamma: float,
+    scale: float = 1.0,
+) -> list[StepReward]:
+    """Component-level counterpart of :func:`ensemble_shaped_returns`."""
+    n_turns = len(potentials) - 1
+    if n_turns <= 0:
+        return []
+    dense = [scale * (gamma * potentials[t + 1] - potentials[t])
+             for t in range(n_turns)]
+    return _step_trace(dense, terminal, gamma=gamma, potentials=potentials)
 
 
 def per_turn_secret_trajectories(
@@ -176,7 +314,7 @@ def per_turn_secret_trajectories(
                     for t, v in by_index.items()}
     cursor = {t: 0 for t in by_index}
     trajs: list[Trajectory] = []
-    for ep, rets in zip(episodes, returns_by_episode):
+    for ki, (ep, rets) in enumerate(zip(episodes, returns_by_episode)):
         for turn, ret in zip(ep.turns, rets):
             adv = adv_by_index[turn.index][cursor[turn.index]]
             cursor[turn.index] += 1
@@ -189,6 +327,7 @@ def per_turn_secret_trajectories(
                 advantage=adv,
                 meta={
                     "secret_id": ep.secret.secret_id,
+                    "ep_in_secret": ki,
                     "turn": turn.index,
                     "kind": turn.kind,
                     "ended": ep.ended,

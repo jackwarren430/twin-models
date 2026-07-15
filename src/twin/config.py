@@ -161,8 +161,20 @@ class TwentyQConfig:
     # carries the episode advantage (v1). "per_turn": reward-to-go from judge
     # closeness deltas + terminal reward (Sprint Q7 ablation; needs a judge
     # call per turn instead of per episode).
+    # "ensemble": dense per-turn shaping from an ensemble of FROZEN base LLMs
+    # scoring the secret's log-prob given the Q/A history (r_t = gamma*score_t -
+    # score_{t-1}, score(history_0) = empty-history baseline), paid alongside the
+    # sparse terminal reward. Replaces the judge closeness Φ signal (no per-turn
+    # judge call). See games/twentyq/ensemble_reward.py + twentyq-ensemble-reward.
     credit: str = "broadcast"
-    gamma: float = 1.0            # per-turn discount (per_turn credit only)
+    gamma: float = 1.0            # per-turn discount (per_turn / ensemble credit)
+    # Ensemble-reward knobs (credit="ensemble" only). Empty models list = the
+    # whole ENSEMBLE_MODELS registry. w_ensemble scales the per-turn shaping
+    # delta (the terminal reward is never scaled); 1.0 = the bare spec formula.
+    ensemble_models: list[str] = field(default_factory=list)
+    ensemble_device: str = "cuda"
+    ensemble_dtype: str = "bfloat16"
+    w_ensemble: float = 1.0
     # Per-role thinking, all OFF by default (q-shakeout-01/02 findings). A
     # thinking budget truncates Qwen3 mid-<think> into unusable output: the
     # guesser spent 512 tokens thinking and never wrote a QUESTION line (every
@@ -176,7 +188,7 @@ class TwentyQConfig:
     creator_thinking: bool = False
     guesser_thinking: bool = False
     answerer_thinking: bool = False
-    # The twentyq judge (validity / truthfulness audit / closeness Φ) is pure
+    # The twentyq judge (validity / closeness Φ) is pure
     # NL judgment with no arithmetic, so it runs thinking OFF by default: a
     # thinking budget truncated the closeness trace before the CLOSENESS line
     # (q-shakeout-03, Φ None on every episode → dead shaping signal). ON (with
@@ -189,18 +201,37 @@ class TwentyQConfig:
     w_efficiency: float = 0.3
     w_close: float = 0.5
     w_format: float = 0.5         # penalty when the guesser broke the contract
-    # Consistency-void tolerance. An episode is voided (creator lied to the
-    # guesser) only when the truthfulness audit flags MORE than this fraction of
-    # the answers as lies. 0.0 = the historical "any single F voids" gate (fine
-    # for a strong judge like Qwen3-8B). A weaker judge (gemma4-E2B) false-flags
-    # truthful answers, sinking good episodes; 0.5 voids only on a clear majority
-    # of lies. See trainer.py and q-gemma-shakeout-02.
-    audit_void_fraction: float = 0.0
+    # Secret validity gate (judge_secret_validity, DESIGN §2.4). gemma4-E2B
+    # often ignores the vetting instruction and role-plays the guesser, ending
+    # its turn before any VERDICT line; the pre-fix fail-CLOSED default then
+    # voided valid, guessable secrets (Axolotl/Salmon/Octopus in q-fullv2-rot),
+    # discarding all their episodes — the same data-loss pathology that retired
+    # the answer audit. Modes:
+    #   "fail_open"   (default, new strategy) — no parseable verdict => VALID;
+    #                 only a clear "VERDICT: INVALID" voids.
+    #   "fail_closed" — unparseable => INVALID (pre-fix posture; the v2 CONTROL
+    #                 arm uses this so it matches the rotation arm that already ran).
+    #   "off"         — skip the gate entirely; every parsed secret is played.
+    secret_validity: str = "fail_open"
+    # NOTE (2026-07-13): the LLM truthfulness-audit / consistency-void mechanism
+    # was removed — the creator is assumed to answer truthfully. On gemma4-E2B
+    # the audit false-flagged truthful episodes and abstained on many others,
+    # voiding good training data (see twentyq/DESIGN.md). The former
+    # `audit_void_fraction` knob is gone; judge_answer_audit() is retained but
+    # no longer wired into the training loop.
     # Per-turn generation budgets (history grows linearly in turns — keep
     # these tight; mini-05's uncapped-thinking lesson applies per turn here).
     secret_max_tokens: int = 512
     question_max_tokens: int = 256
     answer_max_tokens: int = 128
+    # Stationary evaluation. 0 disables it; otherwise the launch script runs a
+    # post-update validation after every X completed training iterations. The
+    # fixed, versioned set is played by BOTH adapters as guesser against the
+    # frozen base answerer, with greedy decoding so checkpoints see identical
+    # prompts and validation does not consume the training sampling stream.
+    validation_every: int = 0
+    validation_secret_set: str = "data/twentyq-validation-v1.json"
+    validation_max_turns: int | None = None  # null => use max_turns
 
 
 @dataclass

@@ -1,9 +1,11 @@
 """Sprint Q5 — TwentyQTrainer end-to-end through the REAL ``run_iteration``:
 secret rollouts with dictated difficulty, parse/validity gates, K scripted
-episodes per secret, truthfulness-audit voiding, per-secret creator credit,
-broadcast solver advantages, rotation + the no-rotation control. Every model
-call and judge call is stubbed; the machinery around them is the real code."""
+episodes per secret, per-secret creator credit, broadcast solver advantages,
+rotation + the no-rotation control. Every model call and judge call is stubbed;
+the machinery around them is the real code. (The creator is assumed truthful:
+the LLM answer-audit / voiding path was removed 2026-07-13.)"""
 
+import json
 import math
 import random
 import re
@@ -17,7 +19,7 @@ from twin.games.twentyq.prompts import (
     GUESSER_SYSTEM,
 )
 from twin.games.twentyq.trainer import TwentyQTrainer
-from twin.models.base import GenResult
+from twin.models.types import GenResult
 from twin.rewards import RewardEngine
 from twin.roles import RoleManager
 
@@ -54,12 +56,11 @@ def _config(**overrides):
 
 
 def _make_trainer(cfg, creator_script, guesser_script, *,
-                  validity=None, audit_lies=False):
+                  validity=None):
     """A TwentyQTrainer with real reward/role/episode machinery and scripted
     generation + judging. ``creator_script``/``guesser_script`` are consumed
     in order; the answerer always replies ANSWER: YES. ``validity`` maps
-    secret text -> bool (default: everything VALID). ``audit_lies``: the
-    audit flags every creator-answered pair False (lying creator)."""
+    secret text -> bool (default: everything VALID)."""
     t = TwentyQTrainer.__new__(TwentyQTrainer)
     t.cfg = cfg
     t.engine = RewardEngine(cfg.rewards)
@@ -101,10 +102,6 @@ def _make_trainer(cfg, creator_script, guesser_script, *,
             m = re.search(r"Secret: (.+)", question)
             ok = True if validity is None else validity.get(m.group(1).strip(), True)
             return f"VERDICT: {'VALID' if ok else 'INVALID'}"
-        if "auditing the answers" in question:
-            n_pairs = len(re.findall(r"^\d+\. Q:", question, re.MULTILINE))
-            tok = "F" if audit_lies else "T"
-            return "AUDIT: " + " ".join([tok] * n_pairs)
         assert "scoring how close" in question
         return "CLOSENESS: 4"
 
@@ -147,7 +144,7 @@ def test_iteration_record_shape(record_and_trainer):
     # rates [1.0, 0.0] vs targets [0.9, 0.1]: mse = 0.01, exp(-4*0.01)
     assert rec["r_gradient"] == pytest.approx(math.exp(-0.04), abs=1e-4)
     assert rec["episodes"] == {
-        "total": 4, "guessed": 2, "void": 0, "unauditable": 0,
+        "total": 4, "guessed": 2,
         "format_ended": 1, "answer_format_fails": 0,
     }
     assert rec["phi_mean"] == pytest.approx(0.4)
@@ -228,9 +225,8 @@ def test_judge_called_per_contract(record_and_trainer):
     _, t = record_and_trainer
     calls = t.captured["judge"]
     assert sum(1 for q in calls if "vetting a secret" in q) == 2      # validity
-    # audits only for episodes WITH creator-answered pairs: A2 and B1 (A1 is
-    # an instant guess; B2's only pair is the engine-answered wrong guess).
-    assert sum(1 for q in calls if "auditing the answers" in q) == 2
+    # The creator-answer audit was removed (2026-07-13): no audit calls.
+    assert sum(1 for q in calls if "auditing the answers" in q) == 0
     # closeness only for failed episodes (B1, B2) — v1 budget: 1/episode.
     assert sum(1 for q in calls if "scoring how close" in q) == 2
 
@@ -267,16 +263,16 @@ def test_invalid_secret_plays_no_episodes_and_drags_consistency():
     assert trajs[1].reward < trajs[0].reward - 0.5
 
 
-def test_lying_creator_voids_episodes_and_solver_data():
-    t = _make_trainer(_config(), CREATOR_OK, GUESSER_OK, audit_lies=True)
+def test_truthful_creator_trains_all_episodes():
+    # No audit/voiding: every non-format-failed episode trains the solver.
+    # A1 (instant guess), A2 (guessed turn 2), B1 (budget fail) and B2
+    # (wrong guess then a format fail — still a real turn) all survive.
+    t = _make_trainer(_config(), CREATOR_OK, GUESSER_OK)
     rec = t.run_iteration(0)
-    # Episodes with creator-answered pairs (A2, B1) are voided; A1 (instant
-    # guess) and B2 (only an engine-answered wrong guess) have nothing to
-    # audit and survive to train the solver: 1 + 2 turn trajectories.
-    assert rec["episodes"]["void"] == 2
-    assert len(t.captured["grpo"]["B"]) == 3
-    assert rec["secrets"][0]["consistent"] is False
-    assert rec["secrets"][1]["consistent"] is False
+    assert len(t.captured["grpo"]["B"]) == 7   # 1 + 2 + 2 + 2 guesser turns
+    # Consistency now tracks validity alone (both secrets valid here).
+    assert rec["secrets"][0]["consistent"] is True
+    assert rec["secrets"][1]["consistent"] is True
 
 
 # ----- rotation ----------------------------------------------------------------
@@ -295,3 +291,37 @@ def test_rotation_flips_and_control_never_does():
         t = _make_trainer(cfg_ctl, list(CREATOR_OK), list(GUESSER_OK))
         rec = t.run_iteration(it)
         assert (rec["creator"], rec["solver"]) == ("A", "B")
+
+
+def test_fixed_validation_evaluates_both_adapters_without_grpo(tmp_path):
+    secret_set = tmp_path / "validation.json"
+    secret_set.write_text(json.dumps({
+        "name": "test-set",
+        "version": 1,
+        "secrets": [{
+            "secret_id": "fixed-dog",
+            "secret": "dog",
+            "category": "animal",
+            "difficulty": 0.2,
+        }],
+    }))
+    cfg = _config(twentyq={
+        "n_secrets": 2,
+        "episodes_per_secret": 2,
+        "max_turns": 2,
+        "categories": ["animal"],
+        "credit": "ensemble",
+        "w_ensemble": 0.1,
+        "validation_every": 1,
+        "validation_secret_set": str(secret_set),
+    })
+    t = _make_trainer(cfg, [], ["GUESS: dog", "GUESS: dog"])
+    t._ensemble_potentials = lambda ep, secret: [-2.0, -1.0]
+
+    rec = t.run_validation(1)
+
+    assert set(rec["adapters"]) == {"A", "B"}
+    assert all(m["guess_rate"] == 1.0 for m in rec["adapters"].values())
+    assert rec["reward_signals"]["terminal_mean"] > 1.0
+    assert rec["reward_signals"]["dense_immediate_mean"] == pytest.approx(0.1)
+    assert t.captured["grpo"] == {}

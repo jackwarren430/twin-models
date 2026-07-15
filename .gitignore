@@ -11,6 +11,7 @@ dist/
 # Project artifacts
 checkpoints/
 runs/
+tq-runs/
 *.safetensors
 *.log
 

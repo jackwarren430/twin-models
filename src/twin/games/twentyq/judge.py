@@ -6,8 +6,14 @@ that rambles or fails to answer NEVER raises.
 
 Degradation policy per contract:
 
-- validity: no clear verdict => INVALID (fail-closed — an unjudgeable secret
-  must not enter play, same posture as ``_parse_verdict`` returning None).
+- validity: degradation posture is configurable via ``mode`` (default
+  "fail_open"). fail-open => no clear verdict counts as VALID; only a clear
+  ``VERDICT: INVALID`` voids. This is the default because gemma4-E2B routinely
+  role-plays the guesser and ends its turn before emitting any verdict, so
+  fail-CLOSED voided valid, guessable secrets (Axolotl/Salmon/Octopus in
+  q-fullv2-rot) and discarded all their episodes — the same "throws away good
+  data" pathology that retired the answer audit. "fail_closed" keeps the old
+  posture (unjudgeable => INVALID); "off" skips the judge call entirely.
 - answer audit: unparseable / wrong count => ``None`` (unauditable). The
   trainer treats None as "not proven lying" (episode counts) but logs it —
   fail-open, because voiding on judge failure would punish the creator for
@@ -87,17 +93,32 @@ def _format_pairs(qa_pairs: list[tuple[str, str]]) -> str:
     ) or "(no questions asked)"
 
 
-def judge_secret_validity(secret: Secret, oracle: Callable[[str], str]) -> VerificationResult:
-    """VALID/INVALID vetting of one secret before any episode. Fail-closed."""
+def judge_secret_validity(
+    secret: Secret, oracle: Callable[[str], str], mode: str = "fail_open"
+) -> VerificationResult:
+    """VALID/INVALID vetting of one secret before any episode.
+
+    ``mode`` sets what happens when the judge emits no parseable ``VERDICT:``
+    line (gemma4-E2B frequently role-plays the guesser and ends its turn first):
+      - "fail_open" (default): unparseable / judge error => VALID; only a clear
+        ``VERDICT: INVALID`` voids. Stops discarding valid secrets on format flakiness.
+      - "fail_closed": unparseable => INVALID (original posture).
+      - "off": skip the judge call entirely — every parsed secret is played.
+    A clear verdict is always honoured; ``mode`` only decides the fallback.
+    """
+    if mode == "off":
+        return VerificationResult.ok("q_validity", "validity gate off")
+    # Fallback when the judge gives us nothing usable.
+    unresolved = VerificationResult.ok if mode == "fail_open" else VerificationResult.fail
     prompt = _VALIDITY_PROMPT.format(category=secret.category, secret=secret.secret)
     try:
         reply = oracle(prompt)
     except Exception as e:  # noqa: BLE001 - judge boundary, never crash a run
-        return VerificationResult.fail("q_validity", f"judge error: {e}")
+        return unresolved("q_validity", f"judge error ({mode}): {e}")
     matches = _VALIDITY.findall(reply or "")
     if not matches:
-        return VerificationResult.fail(
-            "q_validity", f"no clear verdict: {(reply or '')[:120]!r}")
+        return unresolved(
+            "q_validity", f"no clear verdict ({mode}): {(reply or '')[:120]!r}")
     ok = matches[-1].upper() == "VALID"
     return (VerificationResult.ok if ok else VerificationResult.fail)(
         "q_validity", "judge: secret validity")

@@ -23,6 +23,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from twin.problems.schema import SuiteParseError, _extract_json_object
+from twin.think import strip_think
 
 
 class SecretParseError(SuiteParseError):
@@ -62,8 +63,11 @@ def parse_secret(text: str, *, default_category: str = "thing") -> Secret:
     """Parse creator output text into a Secret, raising SecretParseError on
     failure. Tolerates a ``{"secrets": [...]}`` wrapper (first entry taken),
     the same forgiveness ``parse_problem`` extends to suite wrappers."""
+    # Extract from post-think text only: a draft secret JSON inside a closed
+    # reasoning block (Qwen <think> or gemma-4 <|channel>) must never out-rank
+    # the final one (parse order is by start index). Same posture as parse_problem.
     try:
-        obj = _extract_json_object(text)
+        obj = _extract_json_object(strip_think(text or ""))
     except SuiteParseError as e:
         raise SecretParseError(str(e)) from e
     if "secrets" in obj and isinstance(obj["secrets"], list):

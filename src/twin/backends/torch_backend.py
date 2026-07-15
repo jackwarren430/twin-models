@@ -24,6 +24,7 @@ pays for — or needs — them. peft/safetensors import lazily where used.
 """
 
 import os
+import re
 
 try:
     import torch
@@ -430,18 +431,43 @@ class TorchAdapters:
         from peft import LoraConfig, get_peft_model
 
         model = base.model
-        n_layers_total = model.config.num_hidden_layers
+        cfg = model.config
+        # Multimodal checkpoints (e.g. Gemma4ForConditionalGeneration) nest the
+        # text stack's depth under `text_config` and put the decoder layers under
+        # `...language_model.layers`, sharing leaf names (q_proj, ...) with vision
+        # /audio towers. A flat `num_hidden_layers` + leaf-only target would then
+        # (a) KeyError here and (b) risk adapting a tower. So resolve the text
+        # depth from text_config when the top level lacks it, and — only then —
+        # pin LoRA to the text decoder's last N layers by module-name regex.
+        n_layers_total = getattr(cfg, "num_hidden_layers", None)
+        nested = n_layers_total is None
+        if nested:
+            text_cfg = getattr(cfg, "text_config", None)
+            n_layers_total = getattr(text_cfg, "num_hidden_layers", None)
+            if n_layers_total is None:
+                raise ValueError(
+                    f"cannot find num_hidden_layers on {type(cfg).__name__} "
+                    "(nor its text_config) to place LoRA layers")
         # Adapt only the LAST num_layers blocks (matches the mlx target set).
         layers = list(range(max(0, n_layers_total - num_layers), n_layers_total))
-        lc = LoraConfig(
-            r=rank,
-            lora_alpha=alpha,
-            lora_dropout=dropout,
-            target_modules=self._leaves(keys),
-            layers_to_transform=layers,
-            bias="none",
-            task_type="CAUSAL_LM",
-        )
+        leaves = self._leaves(keys)
+        if nested:
+            prefix = self._decoder_layers_prefix(model, n_layers_total)
+            idx_alt = "|".join(str(i) for i in layers)
+            leaf_alt = "|".join(re.escape(l) for l in leaves)
+            # PEFT regex-fullmatches module names when target_modules is a str.
+            target_modules = (rf"{re.escape(prefix)}\.(?:{idx_alt})\..*\."
+                              rf"(?:{leaf_alt})")
+            lc = LoraConfig(
+                r=rank, lora_alpha=alpha, lora_dropout=dropout,
+                target_modules=target_modules, bias="none", task_type="CAUSAL_LM",
+            )
+        else:
+            lc = LoraConfig(
+                r=rank, lora_alpha=alpha, lora_dropout=dropout,
+                target_modules=leaves, layers_to_transform=layers,
+                bias="none", task_type="CAUSAL_LM",
+            )
         peft_model = get_peft_model(model, lc, adapter_name="A")
         peft_model.add_adapter("B", lc)
         if getattr(base, "_compile", False):
@@ -474,6 +500,26 @@ class TorchAdapters:
         if not keys:
             return list(cls._DEFAULT_LEAVES)
         return sorted({k.split(".")[-1] for k in keys})
+
+    @staticmethod
+    def _decoder_layers_prefix(model, n_layers_total: int) -> str:
+        """Module-name prefix of the TEXT decoder's layer list (e.g.
+        ``model.language_model.layers``) on a multimodal model. Chosen as the
+        ``*.layers`` container whose block count equals the text depth — so the
+        vision/audio towers (different depths, same leaf names) are excluded.
+        Prefers a ``language_model`` container on ties."""
+        counts: dict[str, set[int]] = {}
+        for name, _ in model.named_modules():
+            m = re.match(r"(.*\blayers)\.(\d+)$", name)
+            if m:
+                counts.setdefault(m.group(1), set()).add(int(m.group(2)))
+        exact = [p for p, idxs in counts.items() if len(idxs) == n_layers_total]
+        for cands in (exact, list(counts)):
+            if not cands:
+                continue
+            lm = [p for p in cands if "language_model" in p]
+            return (lm or cands)[0]
+        raise ValueError("no '*.layers' decoder container found for LoRA placement")
 
     # ----- per-adapter param access ---------------------------------------
     def _named_adapter_params(self, name: str):

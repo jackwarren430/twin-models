@@ -35,13 +35,31 @@ def test_validity_last_verdict_wins_and_case_insensitive():
 
 
 @pytest.mark.parametrize("reply", ["", "it seems fine to me", "VERDICT: MAYBE"])
-def test_validity_fails_closed_without_verdict(reply):
-    res = judge_secret_validity(SECRET, oracle_returning(reply))
-    assert not res.correct
+def test_validity_default_fails_open_without_verdict(reply):
+    # New default (fail_open): no parseable verdict counts as VALID so gemma's
+    # format flakiness stops discarding valid secrets (q-fullv2-rot fix).
+    assert judge_secret_validity(SECRET, oracle_returning(reply)).correct
+    # Opt back into the pre-fix posture explicitly.
+    assert not judge_secret_validity(
+        SECRET, oracle_returning(reply), mode="fail_closed").correct
 
 
-def test_validity_judge_exception_fails_closed():
-    assert not judge_secret_validity(SECRET, raising_oracle).correct
+def test_validity_clear_invalid_voids_in_every_mode():
+    # A clear INVALID is always honoured; mode only decides the fallback.
+    for mode in ("fail_open", "fail_closed"):
+        assert not judge_secret_validity(
+            SECRET, oracle_returning("VERDICT: INVALID"), mode=mode).correct
+
+
+def test_validity_off_skips_judge_and_passes():
+    # "off" never calls the oracle and always returns VALID.
+    assert judge_secret_validity(SECRET, raising_oracle, mode="off").correct
+
+
+def test_validity_judge_exception_respects_mode():
+    assert judge_secret_validity(SECRET, raising_oracle).correct  # fail_open default
+    assert not judge_secret_validity(
+        SECRET, raising_oracle, mode="fail_closed").correct
 
 
 def test_validity_prompt_carries_secret_and_category():

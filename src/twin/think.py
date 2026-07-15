@@ -15,12 +15,31 @@ whether that should count is the caller's fallback policy, not ours.
 
 import re
 
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
-_THINK_OPEN_RE = re.compile(r"<think>", re.IGNORECASE)
+# Known reasoning-trace delimiters as (open, close) special-token pairs whose
+# enclosed span is scratch reasoning to be dropped before extraction:
+#   - Qwen3 / generic:  <think> ... </think>
+#   - gemma-4 channels: <|channel>thought ... <channel|>   (open id 100, close 101)
+# Matching is by PRESENCE in the text — no model identity is threaded through the
+# pure-text parsers — so one extractor path handles either family; add a pair
+# here (regex-escaped) to teach it a new model's thinking tokens. `|` in a token
+# must be escaped (\|) or the alternation swallows it.
+_THINK_PAIRS = [
+    (r"<think>", r"</think>"),
+    (r"<\|channel>", r"<channel\|>"),
+]
+_THINK_RE = re.compile(
+    "|".join(rf"{o}.*?{c}" for o, c in _THINK_PAIRS), re.DOTALL | re.IGNORECASE
+)
+_THINK_OPEN_RE = re.compile(
+    "|".join(o for o, _ in _THINK_PAIRS), re.IGNORECASE
+)
 
 
 def strip_think(text: str) -> str:
-    """Drop closed ``<think>...</think>`` spans; leave unclosed blocks alone."""
+    """Drop closed reasoning spans (``<think>...</think>`` or gemma-4's
+    ``<|channel>...<channel|>``) so extraction only sees post-think output;
+    leave an unclosed block alone (the caller's fallback policy decides whether
+    truncated reasoning counts)."""
     return _THINK_RE.sub("", text or "")
 
 

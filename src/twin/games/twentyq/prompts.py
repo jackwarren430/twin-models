@@ -21,9 +21,8 @@ an invalid secret scores zero. Decide directly on ONE secret; do not deliberate 
 over many candidates. Reply with exactly one JSON object and nothing else."""
 
 ANSWERER_SYSTEM = """You are the answerer in a game of 20 questions. You know the \
-secret. Answer each question about it TRUTHFULLY. A neutral judge audits every \
-answer against the secret afterwards; a false or misleading answer voids the whole \
-game and costs you. End your reply with exactly one line:
+secret. Answer each question about it TRUTHFULLY and accurately — a correct game \
+depends on it. End your reply with exactly one line:
 ANSWER: YES   or   ANSWER: NO   or   ANSWER: SOMETIMES   or   ANSWER: UNKNOWN"""
 
 JUDGE_SYSTEM = """You are a careful, neutral judge for a game of 20 questions. \

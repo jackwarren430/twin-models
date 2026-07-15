@@ -1,0 +1,151 @@
+# 21-questions FULL run v3 on the DGX SPARK (torch/CUDA, GB10, 128GB unified)
+# with the ENSEMBLE dense reward. gemma-4-E2B is both the policy AND (via the
+# roster in ensemble_reward.py) one of the frozen scorers. See
+# twentyq-ensemble-reward.
+#
+# CHANGES vs twentyq-full-v2.yaml (2026-07-13):
+#   1. w_ensemble 0.3 -> 0.1. In q-fullv2-rot the ensemble dense reward
+#      DOMINATED the sparse goal reward: per successful episode ensemble total
+#      ~3.05 vs terminal ~1.09 (~2.8x), and its within-secret advantage variance
+#      exceeded terminal's (SD 0.54 vs 0.44). 64% of secret-groups had zero wins,
+#      so in most groups 100% of the GRPO advantage was ensemble-driven with no
+#      pressure to actually guess. Dropping to 0.1 puts ensemble within-group SD
+#      (~0.18) cleanly below terminal's (~0.44) — the win/loss signal dominates
+#      the advantage again while the dense signal still GUIDES questioning. See
+#      twentyq/EXPERIMENTS.md exp-fullv3 + the exp-fullv2 reward-scale analysis.
+#   2. Group sizes up: N 5 -> 8 (creator group), K 8 -> 12 (solver group) = 96
+#      episodes/iter. Lower-variance GRPO baselines. NOTE: peak memory is
+#      DECOUPLED from group size — episodes play sequentially (trainer.py) and
+#      grpo_microbatch=1 scores one trajectory per backward, so peak stays
+#      ~46-50 GB (v2 level); N*K only costs wall-clock (~linear, ~32 min/iter).
+#   3. secret_validity fail_closed -> fail_open (the new default). v2 pinned
+#      fail_closed only to match the rot arm that pre-dated the fix; v3 is a
+#      fresh experiment, so it uses the fail-open gate (only a clear INVALID
+#      voids — no more false-rejecting Axolotl/Salmon/Octopus). See DESIGN §2.10.
+#
+# Two arms differ ONLY by the --swap-interval CLI override (credit stays
+# ensemble; --credit only overrides broadcast/per_turn):
+#   ARM A (rotation): --swap-interval 5   --run-name q-fullv3-rot
+#                     --checkpoints-dir checkpoints/twentyq-fullv3-rot
+#   ARM B (control):  --swap-interval 0   --run-name q-fullv3-ctrl
+#                     --checkpoints-dir checkpoints/twentyq-fullv3-ctrl
+#
+# Launch under a cgroup cap so a runaway OOM kills only this run (unified memory
+# is shared CPU+GPU — see dgx-spark-unified-memory-oom). NOTE from the v1/v2
+# runs: CUDA/unified allocations are NOT charged to the cgroup on this build, so
+# MemoryMax likely won't fire — the real safety metric is system-wide `free`
+# and the record's peak_mem_gb (v1/v2 held ~46-50 GB, safe on 128 GB):
+#   systemd-run --user -p MemoryMax=100G -p MemorySwapMax=0 \
+#     --setenv=PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+#     --working-directory=$PWD \
+#     bash -c '.venv/bin/python -u scripts/train_twentyq.py \
+#        --config configs/twentyq-full-v3.yaml --swap-interval 5 \
+#        --run-name q-fullv3-rot --checkpoints-dir checkpoints/twentyq-fullv3-rot'
+
+compute:
+  backend: torch              # <-- the DGX Spark switch (default is mlx / Apple silicon)
+  device: cuda
+  dtype: bfloat16             # Blackwell-native; full-precision base + bf16 LoRA
+  attn_impl: sdpa             # torch fused attention; "flash_attention_2" if the wheel is built
+  tf32: true                  # TF32 matmul/cuDNN — set once here, applies to the ensemble too
+  matmul_precision: high
+  compile: false              # torch.compile the scoring forward (may recompile on adapter swap)
+  grad_checkpointing: false   # twentyq completions are short (<=256 tok) -> backward is tiny; ON only if you OOM
+
+model:
+  # HF checkpoint snapshot (proven-loading dir; a bare repo id "google/gemma-4-E2B-it"
+  # also resolves from the cache). The torch backend loads it bf16 via transformers;
+  # gemma's <end_of_turn> stop token is read from generation_config automatically,
+  # so the mlx-only load_strict / eos_token_ids knobs are NOT needed here.
+  path: ~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/snapshots/9dbdf8a839e4e9e0eb56ed80cc8886661d3817cf
+  enable_thinking: false      # gemma4 reasons by default; ON = truncation trap (all per-role knobs OFF below)
+
+lora:
+  num_layers: 16
+  rank: 64
+  alpha: 128.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2            # answerer sampling (judge validity too)
+
+twentyq:
+  n_secrets: 8               # N (creator GRPO group size; v2 was 5)
+  episodes_per_secret: 12    # K (solver GRPO group size; v2 was 8)
+  max_turns: 21               # T
+  categories: ["animal", "food", "household object"]
+
+  # ----- ENSEMBLE dense reward (this pipeline's point) -----
+  # Per turn: r_t = w_ensemble * (gamma * score(history_t) - score(history_{t-1})),
+  # with score(history_0) the empty-history baseline, PLUS the sparse terminal
+  # reward on the last turn. The frozen ensemble replaces the per-turn judge Φ.
+  credit: ensemble
+  gamma: 1.0
+  w_ensemble: 0.1            # v2 was 0.3 — dropped so the dense signal guides but
+                             # no longer dominates the terminal goal (exp-fullv2 analysis).
+  ensemble_models: []        # [] = all 4 in ENSEMBLE_MODELS. Subset e.g.
+                             # ["gemma-4-e2b", "qwen3-4b"] trims resident memory.
+  ensemble_device: cuda
+  ensemble_dtype: bfloat16
+
+  w_guess: 1.0
+  w_efficiency: 0.5
+  w_close: 0               # unused under credit: ensemble (no judge Φ call)
+  w_format: 0.5
+  # Secret validity gate: fail_open (new default) — only a clear VERDICT: INVALID
+  # voids; an unparseable reply counts VALID (gemma4 role-plays the guesser and
+  # ends its turn before any verdict ~6.6% of the time — DESIGN §2.10). `off`
+  # disables the gate entirely; `fail_closed` restores the pre-fix strict posture.
+  secret_validity: fail_open
+  # NOTE: the truthfulness audit was removed (2026-07-13) — the creator is
+  # assumed truthful, no episode is voided for lying. No `audit_void_fraction`.
+
+  # All roles + validity-judge thinking OFF: gemma4-E2B reasons by default and
+  # truncates before the contract line at any sane budget (q-shakeout-01/02/03).
+  creator_thinking: false
+  guesser_thinking: false
+  answerer_thinking: false
+  judge_thinking: false
+  secret_max_tokens: 512     # no thinking: one JSON object
+  question_max_tokens: 512   # no thinking: one QUESTION/GUESS line
+  answer_max_tokens: 512      # no thinking: one ANSWER line
+
+  # Post-update, stationary evaluation. Both A and B play the same versioned
+  # secrets as guesser against a greedy frozen-base answerer; no optimizer is
+  # called. Greedy decoding makes checkpoint-to-checkpoint comparisons exact.
+  # JSONL validation rows split sparse terminal, dense ensemble, and combined
+  # returns. Set 0 to disable.
+  validation_every: 5
+  validation_secret_set: data/twentyq-validation-v1.json
+  validation_max_turns: 21
+
+rewards:
+  target_hi: 0.9             # interior band keeps episode outcomes stochastic
+  target_lo: 0.1
+
+roles:
+  swap_interval: 5          # ARM A default; ARM B overrides to 0 (control) via CLI
+  warmup_iterations: 0
+  injection_rate: 0.0
+
+train:
+  iters: 30
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  adv_mode: mean
+  # Memory: score ONE trajectory per backward chunk (grads accumulate — identical
+  # math, peak bounded to one traj). Without this the whole GRPO batch (now up to
+  # N8*K12*T21 turn-trajectories) builds in ONE graph and OOMs even on the Spark's
+  # 128GB. Peak memory is decoupled from N*K under this setting. logit_chunk stays
+  # 0: gemma4 doesn't expose the chunked LM-head path, and short (non-thinking)
+  # completions don't need it. See twentyq-gemma-q8.
+  grpo_microbatch: 1
+  logit_chunk: 0
+  checkpoint_every: 5
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints/twentyq   # override per-arm via --checkpoints-dir
+  runs: tq-runs

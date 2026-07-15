@@ -99,13 +99,19 @@ rubrics, all parsed with strict regex + graceful degradation:
 1. **Secret validity** (per secret, before any episode): is the secret a real,
    unambiguous, guessable entity of the declared category? → `VERDICT:
    VALID | INVALID`. Invalid ⇒ secret voided: no episodes, drags the creator's
-   R_consistency exactly like an inconsistent problem.
+   R_consistency exactly like an inconsistent problem. Degradation posture is
+   configurable via `twentyq.secret_validity` — **default `fail_open`** (a reply
+   with no parseable verdict counts VALID; only a clear INVALID voids), because
+   fail-closed was false-voiding valid secrets on gemma4's format flakiness (see
+   §2.10). `fail_closed` restores the strict posture; `off` skips the gate.
 2. **Answer truthfulness audit** (per episode, one batched call): judge sees
    the secret + all Q/A pairs, returns per-pair verdicts (`AUDIT: T T F T…`).
    Any lie ⇒ episode voided (excluded from solver reward AND from the secret's
    realized guess rate; drags creator consistency). A creator rewarded for
    difficulty has an incentive to answer misleadingly — voiding is the same
    anti-cheat structure as the existing consistency check.
+   **⚠️ REMOVED 2026-07-13 (see §2.8) — no longer wired into the loop; the
+   creator is now assumed to answer truthfully.**
 3. **Closeness Φ** (v1: final state only; v2: every turn): `CLOSENESS: n`,
    integer 0–10 with anchor descriptions in the prompt (0 = category not even
    constrained … 5 = category + several key attributes pinned … 10 = uniquely
@@ -139,10 +145,11 @@ Creator, per iteration: realized "solve rate" of secret i = fraction of its K
 non-void episodes guessed within budget. **`RewardEngine.creator_reward` is
 reused verbatim** — exp(−β·MSE) fit against the target ramp, scored-fraction
 scaling (voided secrets unprofitable), expected_n semantics, target_by_problem
-pinning. Consistency flag per secret = valid AND no voided episodes from lying.
+pinning. Consistency flag per secret = valid (the "no voided episodes from
+lying" term was dropped when the audit was removed — §2.8).
 
 Creator answering turns are **not trained in v1** (reward attribution for an
-individual "yes" is murky; lying already handled by voiding). The creator
+individual "yes" is murky; the creator is assumed truthful — §2.8). The creator
 trains on its N secret-emission rollouts. Training answer turns = future
 ablation (§7).
 
@@ -190,6 +197,110 @@ budget). Judge keeps `model.enable_thinking` (validation reasoning; its budget
 is the untaxed oracle budget, not a per-turn one). Format-failed episodes now
 dump the raw guesser completion to the transcript (the summary alone read
 `[format_fail] -> None`, undebuggable).
+
+### 2.8 Answer audit REMOVED — creator assumed truthful (2026-07-13)
+
+The per-episode truthfulness audit (§2.4 item 2) is **removed from the training
+loop.** The creator is now assumed to answer its own secret truthfully: no
+episode is voided for "lying," every played episode trains the solver, and a
+secret's consistency flag = validity alone (the §2.5 "no voided episodes" term
+is dropped).
+
+**Why:** on gemma4-E2B the audit was net-harmful, not protective. Reading the
+`q-full-rot` / `q-full-ctrl` transcripts, the frozen-base auditor (a) false-
+flagged *truthful* episodes as lies and (b) abstained as **unauditable** on a
+large fraction — ~6 voids **plus up to 13 of 40 episodes unauditable per
+iteration**. Both outcomes throw away good on-policy data: a voided episode is
+excluded from the solver's GRPO group and from the creator's realized guess
+rate, shrinking effective batch size and adding noise to creator calibration,
+all to defend against a lying incentive that a *cooperative-calibration* creator
+(rewarded for hitting a target guess rate, not for stumping — §1) barely has.
+The audit's own graceful-degradation posture already treated unauditable
+episodes as "not proven lying," so removing it is close to the fail-open limit
+the design was trending toward anyway. `audit_void_fraction` (the gemma4
+majority-threshold band, q-gemma-shakeout-02) is deleted with it.
+
+**Kept but disconnected:** `judge.judge_answer_audit()`, the `AUDIT:` prompt,
+and `Episode.audited_pairs` remain (with their unit tests) so a stronger judge
+model could re-enable the mechanism later; nothing in `run_iteration` calls
+them. Record schema drops `episodes.void` / `episodes.unauditable`
+(`twentyq_run_stats.py` reads them with `.get(..., 0)`, so old and new logs both
+parse). ANSWERER_SYSTEM no longer threatens an audit; it just asks for truthful,
+accurate answers. This is a *for-now* simplification, not a claim that answerer
+honesty is a solved problem — the frozen-base-answerer control arm (§5) remains
+the principled long-term fix.
+
+### 2.9 Transcript logging: flat file + GRPO-structured tree (2026-07-13)
+
+Two sinks run side by side (both gated on `--no-transcript`):
+
+1. **Flat** `tq-runs/<run>.transcript.txt` — the existing
+   `TranscriptLogger`, everything in write-order (grep-friendly, unchanged).
+2. **Tree** `tq-runs/<run>.transcript/` — `twin.log.transcript_tree.
+   TwentyQTranscriptTree`, a folder hierarchy mirroring the two GRPO groups an
+   iteration trains:
+
+       <run>.transcript/
+         _run.md                       run header (config, arm, model, N/K/T)
+         iter_NN/
+           _iter.md                    per-iter header + aggregate metrics
+           creator_<rank>__<secret>/   CREATOR GRPO member (one secret rollout)
+             _creator.md               the rollout + its reward/advantage
+             episode_<k>__<outcome>.md SOLVER GRPO member (one game) + per-turn credit
+
+   **Creator-over-solver is forced by the reward math, not chosen:** a solver
+   GRPO group is baselined *per secret* (`rewards.secret_turn_trajectories` /
+   `per_turn_secret_trajectories` each take one secret's K episodes), so every
+   solver group nests inside exactly one creator member. Parse-failed and
+   invalid secrets are still creator members (gate/void reward) with no episode
+   files (`…__PARSE-FAIL/`, `…__INVALID/`). Each `episode_k` file carries the
+   per-turn potential Φ_t, reward-to-go R_t, and per-turn advantage (the credit
+   the trajectories actually train on); outcome tag = `win_t<n>` / `miss` /
+   `fmtfail`.
+
+   **Full visibility:** unlike the flat log (gated on `--log-prompts`), the tree
+   always writes *every* input prompt and model output — the creator rollout
+   (system+user+completion) and, per turn, the guesser and answerer system+user
+   prompts and raw completions. Prompts sit in collapsed `<details>` so the file
+   stays scannable. The per-turn player prompts are **reconstructed** from the
+   finished episode (`TwentyQTrainer._episode_prompts`): the guesser prompt is
+   deterministic in the turn's history slice and the answerer prompt depends only
+   on the question text, so no model is re-run. A wrong GUESS shows an engine-
+   referee ground-truth NO (no answerer call). The tree is a passive sink — the
+   trainer feeds it already-computed values (solver trajectories gained an
+   `ep_in_secret` meta key so turns regroup into episodes for the advantage
+   table).
+
+### 2.10 Secret validity gate → fail-open by default (2026-07-13)
+
+The validity gate (§2.4 item 1) was **fail-closed**: `judge_secret_validity`
+voided any secret whose judge reply had no parseable `VERDICT:` line. On
+gemma4-E2B that default false-rejected *valid* secrets. Reading `q-fullv2-rot`,
+the judge routinely ignores the "think briefly, then `VERDICT:`" instruction and
+**role-plays the guesser** — emitting a numbered 20-questions list (`1. Is it a
+mammal?`) and hitting `<end_of_turn>` before any verdict. Whether a verdict
+survives is pure sampling luck: "Dog" got 7 question lines *then* `VERDICT: VALID`
+and passed; "Axolotl"/"Salmon"/"Octopus" stopped after line 1 and voided. Scale:
+**6 of 91 vetted secrets (~6.6%) voided, 100% of them false rejections**, and
+they cluster on the hardest slot (creator_4, target 0.10 → obscure-but-valid
+picks like Axolotl, hit 4×) — so the gate biased *against* exactly the difficult
+secrets the curriculum wants. Same "throws away good on-policy data" pathology as
+the removed audit (§2.8).
+
+**Fix:** `judge_secret_validity(secret, oracle, mode=…)` now takes a posture,
+default **`fail_open`** — an unparseable reply or judge error counts VALID; only
+a clear `VERDICT: INVALID` voids. A *clear* verdict is always honoured, so real
+mashups/category-mismatches still get caught when the judge actually emits one.
+`fail_closed` keeps the pre-fix posture; `off` skips the judge call entirely.
+Wired via `twentyq.secret_validity` (config) + `--secret-validity` (CLI). This is
+not a budget/truncation issue — the judge stops ~6 tokens in, well under the cap;
+raising the budget wouldn't help. A stronger judge (or a verdict-first prompt /
+constrained decode) could tighten it later; fail-open is the low-risk fix now.
+
+**exp-fullv2 caveat:** the rotation arm (`q-fullv2-rot`) ran under the old
+fail-closed code, so the config pins **both** v2 arms to `secret_validity:
+fail_closed` — the control must match the arm it's compared against. `fail_open`
+becomes the standing default for all runs *after* exp-fullv2.
 
 ## 3. Reuse map
 
@@ -310,3 +421,190 @@ closeness calls); broadcast path bit-identical when flag off.
   grounded category weighting (à la Sprint-9 themes) later.
 - Cross-secret diversity penalty (creator emitting near-duplicate secrets) —
   `analysis/diversity` reuses directly if needed.
+
+## 6. RL/reward audit — concerns logged 2026-07-14
+
+This section records the post-`exp-fullv3` code-and-log audit. The core update
+plumbing appears internally consistent: exact per-turn prompts are rescored,
+advantages are assigned before flattening, `grpo_microbatch: 1` accumulates
+gradients without changing weights between trajectories, the KL reference is the
+frozen zero-adapter base, and the solver and creator use separate AdamW state.
+The concerns below are chiefly about what the experiment identifies, reward
+validity, and a few places where the loss does not quite match the environment.
+
+1. **The no-rotation arm is not a no-RL or reward ablation.** Both adapters still
+   train, and the creator's secret distribution moves throughout the run. Online
+   guess rate therefore mixes solver learning, creator difficulty changes,
+   category effects, and repeated-secret memorization. `swap_interval: 0` cleanly
+   isolates hard role rotation, but cannot by itself establish that GRPO works or
+   that the ensemble reward helps. Required read-outs: evaluate every checkpoint
+   on a fixed held-out secret set with a fixed answerer; compare `w_ensemble: 0`
+   against v3's `0.1` with the terminal reward held fixed; optionally include a
+   zero-LR/no-update sampling baseline.
+
+2. **Most solver groups still have no terminal win signal.** In the completed
+   v3 rotation arm, 147/240 secret groups (61.3%) had zero wins. In the first
+   seven completed v3 control iterations, 41/56 (73.2%) had zero wins. Every
+   advantage in those groups is ensemble-driven: the policy is rewarded for
+   raising frozen-model belief with no pressure to commit to a guess. Lowering
+   `w_ensemble` fixed the scale imbalance found in v2, but not this structural
+   absence. Log the all-miss-group fraction as a first-class metric. Candidate
+   future levers are a small guess-at-all reward, an ungated attempt/commitment
+   term, or a separately tested terminal-reward curriculum; do not silently add
+   one to the current matched experiment.
+
+3. **The learned difficulty ramp is still badly miscalibrated.** Across the
+   completed v3 rotation arm, mean guess rates by rank were approximately
+   `0.217, 0.408, 0.147, 0.033, 0.028, 0.047, 0.050, 0.017` against targets
+   `0.900, 0.786, 0.671, 0.557, 0.443, 0.329, 0.214, 0.100`. The absolute rates
+   are far too low and rank 1 is easier than nominal rank 0. A rising
+   `r_gradient` is therefore only movement in the reward's aggregate fit, not
+   evidence that the requested monotone curriculum has been learned. Report
+   per-rank held-out rates, monotonicity violations, and target MSE alongside the
+   scalar reward.
+
+4. **The answerer is neither trained nor currently verified.** The creator
+   adapter is updated from its secret-emission trajectories, while its answer
+   turns receive no policy gradient. Since the failed truthfulness audit was
+   removed, semantically wrong answers now silently corrupt the solver state,
+   terminal outcome, and ensemble shaping signal. Spot-checking transcripts is
+   necessary but not a scalable contract. The cleanest control is a frozen,
+   stronger answerer conditioned on the secret; lighter alternatives are a
+   sampled audit by a stronger independent judge or deterministic fact handling
+   where the category permits it.
+
+5. **Lenient parsing gives credit to text the environment did not execute.** The
+   guesser parser accepts the last labelled question, `Q:`, or bare question, but
+   GRPO trains every token in the raw completion. Live transcripts contain
+   duplicated questions and cases where an unused preamble asks a different
+   question from the final parsed line. The ensemble and answerer react only to
+   the parsed question, yet its advantage reinforces or suppresses the entire
+   completion. Either enforce one canonical line with constrained/strict decode,
+   mask non-executed completion tokens out of PG/KL, or explicitly penalize extra
+   visible content. Format telemetry must distinguish "parseable" from "exact
+   contract" rather than reporting both as clean.
+
+6. **The loss has a deliberate-but-unresolved length bias.** The torch/MLX GRPO
+   losses sum token log-probabilities per trajectory and divide by total trained
+   tokens. A longer turn therefore receives more gradient mass for the same
+   advantage, and a longer episode contributes more turn trajectories. This is
+   the Dr.GRPO-family length issue already noted in `RELATED_WORK.md`; here it
+   interacts with efficiency pressure and the lenient-preamble problem. Measure
+   completion length versus advantage/gradient contribution and decide explicitly
+   between token-average, per-turn-average, and per-episode-average objectives.
+
+7. **The ensemble path lacks proportionate tests and calibration telemetry.** The
+   older judge-Φ shaping path has arithmetic tests, but the central v3 path lacks
+   direct automated coverage for `ensemble_shaped_returns`, answer-span location,
+   per-model aggregation, and end-to-end advantage assignment under ragged episode
+   lengths. Raw mean log-probability deltas from different tokenizers/models need
+   not have the same scale; an equal arithmetic mean can be dominated by the
+   highest-variance scorer. Log per-model deltas and disagreement, add synthetic
+   invariants (constant potential, increasing/decreasing potential, terminal and
+   format cases, γ != 1), and run leave-one-member-out reward analyses.
+
+8. **`solver_reward_mean` is not mean episode reward under ensemble credit.** It
+   averages per-turn reward-to-go values across flattened solver trajectories.
+   Long failed episodes contribute more entries than early wins, so the console's
+   `Rs` is useful health telemetry but not a clean learning metric. Log separate
+   episode terminal mean, ensemble gain `w*(Phi_final-Phi_0)`, total episode
+   return, per-turn return by index, and the loss's token-weighted mean.
+
+9. **Resume is not experiment-identical and the documentation is inconsistent.**
+   Checkpoints currently save adapter tensors only. A resumed run constructs new
+   optimizers and reseeds Python/backend RNGs; Adam moments, RNG progress, and the
+   original drift baseline are lost. `scripts/train_twentyq.py --help` correctly
+   notes the optimizer/drift reset, while `CONFIG.md` says optimizer state is
+   saved. Until full state checkpointing lands, treat a resumed arm as a marked
+   discontinuity and correct the configuration documentation.
+
+10. **Creator diversity/generalization remains unmeasured.** Prompts prevent
+    duplicates inside one iteration, but there is no cross-iteration diversity
+    reward in twentyq and common secrets recur. The adaptive solver can memorize
+    this distribution, making online gains look like general Twenty Questions
+    skill. Log cross-iteration secret repetition/similarity and make the fixed
+    held-out-secret evaluation the primary capability read-out.
+
+### 6.1 Terminology clarified
+
+Three different meanings of "member" must not be conflated:
+
+- an **ensemble member** is one frozen scoring LLM;
+- a **creator GRPO member** is one of the N secret-emission rollouts;
+- a human-readable **solver member** is one complete episode, but under
+  `credit: per_turn|ensemble` the actual comparison group at `(secret, turn t)`
+  is the turn-t trajectory from every sibling episode that reached t.
+
+The `Trajectory` object is the exact prompt/completion chunk sent through the
+loss. Membership describes which samples are compared to form an advantage; it
+does not imply an optimizer update per member.
+
+### 6.2 Proposed within-game/per-turn optimizer updates
+
+Two superficially similar proposals have very different meanings:
+
+**A. Accumulate gradients by turn, then step once.** After all episodes finish,
+process turn-0 trajectories, then turn-1, etc., call `backward()` on each chunk,
+and call `optimizer.step()` only after the final chunk. If it uses the same
+reward-to-go, advantages, token normalizer, and no parameter changes between
+chunks, this is mathematically the current algorithm in a different batch order
+(up to floating-point summation). `grpo_microbatch: 1` already accumulates every
+trajectory's gradient before the single solver step. It may improve organization
+or memory locality, but it does not create faster within-game learning.
+
+**B. Actually step the optimizer after each turn index.** This is feasible only
+after restructuring episode collection into lockstep rounds: generate turn t for
+all active K episodes (ideally all N*K episodes), observe their answers and
+ensemble deltas, compute same-secret group advantages at t, then take one solver
+step before generating turn t+1. All actions at t were sampled by the same
+pre-step policy, so a one-step update on those fresh transitions is locally
+on-policy. The run would make up to T solver optimizer steps per iteration, and
+later turns would intentionally come from newer policies.
+
+It is **not the current single-inner-step GRPO objective**, and it loses the main
+benefit of delayed reward-to-go. At turn t the dense ensemble delta and any
+terminal event occurring at t are known, but future success is not. Updating on
+only immediate group-relative ensemble reward is myopic and is especially likely
+to worsen the observed "raise belief, never guess" failure. If the eventual
+terminal reward is later attached to already-trained early turns, those stored
+actions are off-policy because the weights changed in between; the ratio=1
+argument no longer holds. Correct reuse would require stored behavior log-probs
+plus importance ratios/clipping (real PPO/GRPO), or a learned value function / GAE
+or another eligibility-trace mechanism for backward credit.
+
+Ragged termination adds another complication: the same-turn group shrinks as
+episodes win or format-end, so late updates are conditioned on the survivor
+population and singleton groups have zero relative advantage. Optimizer state and
+KL behavior also advance T times faster unless LR/KL schedules are retuned.
+
+**Recommendation:** keep the deferred one-step update as the primary design for
+the current experiment. It assigns the known terminal outcome to every preceding
+action without off-policy correction, and it already accumulates gradients across
+all turns. If online updating is tested, pre-register it as a separate
+`online_immediate` algorithmic arm, collect all K episodes synchronously, take at
+most one update per global turn across all per-secret groups, log the changing
+behavior-policy version, and judge it on the fixed held-out evaluation. A safer
+intermediate ablation is horizon-chunked collection (hold weights fixed for H
+turns, then update on an H-step return), but without a value bootstrap it still
+weakens terminal credit for chunks that end before the outcome.
+
+### 6.3 Stationary validation and reward observability (implemented 2026-07-14)
+
+`twentyq.validation_every` now schedules a post-update evaluation every X
+completed iterations (`0` disables it). Both adapters are evaluated as guessers
+on the versioned `data/twentyq-validation-v1.json` set; the answerer is always the
+frozen base adapter. Both sides decode greedily, so validation neither updates
+weights nor advances the stochastic sampling stream used by training. Validation
+is logged as a distinct JSONL `type: validation` record with aggregate,
+per-adapter, per-category, and per-secret results.
+
+Training and validation reports now keep the sparse terminal signal, immediate
+dense shaping gain, combined immediate reward, and discounted combined return at
+turn zero separate. Every episode's JSON summary contains its component trace.
+The flat transcript writes a per-turn reward table only after all K sibling
+episodes are available (so the GRPO advantage is known), and every hierarchical
+episode file shows the same table plus an inline reward line at each turn. Under
+legacy broadcast credit, the table explicitly distinguishes the terminal event
+on the last turn from the episode scalar assigned to every turn trajectory.
+Periodic evaluations also get a hierarchical
+`validation_step_N/adapter_{a,b}/secret_*.md` tree with the same per-turn fields.

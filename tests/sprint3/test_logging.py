@@ -24,3 +24,12 @@ def test_jsonl_handles_nonserializable(tmp_path):
         log.log({"obj": object()})                 # default=str keeps it alive
     records = read_jsonl(path)
     assert len(records) == 1 and "obj" in records[0]
+
+
+def test_jsonl_validation_record_type(tmp_path):
+    path = tmp_path / "run.jsonl"
+    with JsonlLogger(path) as log:
+        log.log_validation({"step": 5, "adapters": {"A": {"guess_rate": 0.5}}})
+    records = read_jsonl(path)
+    assert records[0]["type"] == "validation"
+    assert records[0]["step"] == 5

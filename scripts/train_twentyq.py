@@ -21,6 +21,7 @@ from twin.backends import get_backend              # noqa: E402
 from twin.config import Config                      # noqa: E402
 from twin.games.twentyq.trainer import TwentyQTrainer  # noqa: E402
 from twin.log import JsonlLogger, TranscriptLogger  # noqa: E402
+from twin.log import TwentyQTranscriptTree  # noqa: E402
 
 
 def main() -> None:
@@ -42,6 +43,10 @@ def main() -> None:
                     help="override twentyq.credit (Q8 credit-granularity arm)")
     ap.add_argument("--swap-interval", type=int, default=None,
                     help="override roles.swap_interval (0 = no-rotation control)")
+    ap.add_argument("--secret-validity", choices=["fail_open", "fail_closed", "off"],
+                    default=None,
+                    help="override twentyq.secret_validity (fail_open = new default; "
+                         "fail_closed = pre-fix posture for the v2 control arm)")
     ap.add_argument("--checkpoints-dir", default=None,
                     help="override paths.checkpoints (keep arms from clobbering)")
     args = ap.parse_args()
@@ -53,6 +58,8 @@ def main() -> None:
         cfg.twentyq.credit = args.credit
     if args.swap_interval is not None:
         cfg.roles.swap_interval = args.swap_interval
+    if args.secret_validity is not None:
+        cfg.twentyq.secret_validity = args.secret_validity
     if args.checkpoints_dir is not None:
         cfg.paths.checkpoints = args.checkpoints_dir
     Path(cfg.paths.checkpoints).mkdir(parents=True, exist_ok=True)
@@ -79,17 +86,33 @@ def main() -> None:
     logger = JsonlLogger(log_path, meta={"config": args.config, "run": run_name,
                                          "mode": "twentyq",
                                          "credit": cfg.twentyq.credit,
+                                         "validation_every": cfg.twentyq.validation_every,
+                                         "validation_secret_set": cfg.twentyq.validation_secret_set,
                                          "swap_interval": cfg.roles.swap_interval,
                                          "resume_step": start_iter})
     transcript = None
+    tree = None
     if not args.no_transcript:
         transcript_path = Path(cfg.paths.runs) / f"{run_name}.transcript.txt"
         transcript = TranscriptLogger(
             transcript_path,
             meta={"config": args.config, "run": run_name, "resume_step": start_iter})
         print(f"Transcript: {transcript_path}")
+        # Kept alongside the flat file (per user): a GRPO-structured folder tree.
+        tree_root = Path(cfg.paths.runs) / f"{run_name}.transcript"
+        tree = TwentyQTranscriptTree(tree_root, meta={
+            "run": run_name, "config": args.config, "mode": "twentyq",
+            "credit": cfg.twentyq.credit, "swap_interval": cfg.roles.swap_interval,
+            "model": cfg.model.path, "N_secrets": cfg.twentyq.n_secrets,
+            "K_episodes": cfg.twentyq.episodes_per_secret,
+            "T_max_turns": cfg.twentyq.max_turns,
+            "validation_every": cfg.twentyq.validation_every,
+            "validation_secret_set": cfg.twentyq.validation_secret_set,
+            "resume_step": start_iter})
+        print(f"Transcript tree: {tree_root}/")
     trainer = TwentyQTrainer(base, adapters, cfg, logger=logger,
                              transcript=transcript, backend=backend)
+    trainer.transcript_tree = tree
 
     iters = args.iters if args.iters is not None else cfg.train.iters
     if start_iter >= iters:
@@ -105,14 +128,35 @@ def main() -> None:
                 f"Rc={rec['creator_reward_mean']:+.3f} Rs={rec['solver_reward_mean']:+.3f} "
                 f"guess%={rec['guess_rate_mean']:.2f} rgrad={rec['r_gradient']:.2f} | "
                 f"parse={rec['parse_ok_rate']:.2f} valid={rec['validity_rate']:.2f} | "
-                f"eps {ep['guessed']}/{ep['total']} void={ep['void']} "
+                f"eps {ep['guessed']}/{ep['total']} "
                 f"fmt={ep['format_ended']} | phi={rec['phi_mean']:.2f}"
                 f" | mem={rec.get('peak_mem_gb', '?')}G"
+            )
+            sig = rec["reward_signals"]
+            print(
+                f"       rewards: terminal={sig['terminal_mean']:+.3f} "
+                f"dense={sig['dense_immediate_mean']:+.3f} "
+                f"combined={sig['combined_immediate_mean']:+.3f} "
+                f"combined_R0={sig['combined_return_start_mean']:+.3f}"
             )
             ce = cfg.train.checkpoint_every
             if ce and (it + 1) % ce == 0:
                 trainer.save_checkpoints(it + 1)
                 print(f"       checkpointed at step {it + 1}")
+            ve = cfg.twentyq.validation_every
+            if ve and (it + 1) % ve == 0:
+                val = trainer.run_validation(it + 1)
+                parts = [
+                    f"{name}={metrics['guess_rate']:.3f}"
+                    for name, metrics in val["adapters"].items()
+                ]
+                sig = val["reward_signals"]
+                print(
+                    f"       validation step {it + 1}: guess_rate "
+                    f"{' '.join(parts)} | terminal={sig['terminal_mean']:+.3f} "
+                    f"dense={sig['dense_immediate_mean']:+.3f} "
+                    f"combined_R0={sig['combined_return_start_mean']:+.3f}"
+                )
     finally:
         logger.close()
         if transcript is not None:
