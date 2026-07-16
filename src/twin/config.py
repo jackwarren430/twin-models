@@ -240,9 +240,10 @@ class TwentyQConfig:
     # creator repeated it 8/10 ranks with the exclusion list in-prompt. Modes:
     #   "off"   — prompt-and-measurement only (the v4 arm-A behaviour).
     #   "void"  — a parsed secret that matches the exclusion list it was shown
-    #             (guess_matches: normalized + bare-plural tolerance) is
-    #             voided: NO episodes, fixed repeat_gate_reward in the creator
-    #             GRPO group.
+    #             (repeat_matches: normalized + bare-plural + edit-distance-1
+    #             for 5+ chars, catching ban-evasion misspellings like
+    #             'Wasbi'/'Wasabi') is voided: NO episodes, fixed
+    #             repeat_gate_reward in the creator GRPO group.
     #   "retry" — "void" plus ONE masked resample: the same prompt is decoded
     #             again at creator_temp with every excluded secret banned at
     #             the logits level (the decoder takes the next-most-likely

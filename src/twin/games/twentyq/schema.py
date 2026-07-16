@@ -18,6 +18,7 @@ exactly as the per-problem loop does.
 """
 
 import re
+import unicodedata
 import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -110,3 +111,54 @@ def guess_matches(guess: str, secret: str) -> bool:
     if not g or not s:
         return False
     return g == s or g == s + "s" or s == g + "s"
+
+
+def _edit_distance_leq1(a: str, b: str) -> bool:
+    """Levenshtein distance <= 1 (one insertion, deletion, or substitution)."""
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) > len(b):
+        a, b = b, a
+    i = 0
+    while i < len(a) and a[i] == b[i]:
+        i += 1
+    if len(a) == len(b):
+        return a[i + 1:] == b[i + 1:]     # one substitution
+    return a[i:] == b[i + 1:]             # one deletion from the longer
+
+
+def _ascii_fold(text: str) -> str:
+    """Strip accents and drop non-ASCII entirely: 'Açai' -> 'acai',
+    'axolotல்' -> 'axolot'. Applied inside the repeat gate only, so Unicode
+    decoration can't disguise a banned secret."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in decomposed
+                   if not unicodedata.combining(ch) and ord(ch) < 128)
+
+
+def repeat_matches(candidate: str, secret: str) -> bool:
+    """The creator repeat GATE's matcher (DESIGN §6.5b) — deliberately broader
+    than :func:`guess_matches`, which keeps its exact-match semantics for
+    episode win judging. Adds normalized edit-distance-1 for strings of 5+
+    characters, compared on both the raw and ASCII-folded normalized forms:
+    the v4.5 run showed the logits ban squeezes probability mass into
+    near-miss evasions of the banned attractor — one-letter misspellings
+    ('Okpi' for 'Okapi'; 'Wasbi' for 'Wasabi' passed the fail-open validity
+    judge and earned 1.47 vs a 0.65 creator mean) and Unicode decoration
+    ('Axolotல்' for 'Axolotl', iteration 13). The length floor keeps
+    legitimately distinct short words ('tea'/'pea') apart, and genuinely
+    adjacent entities stay playable ('truffle' vs 'truffle oil' is
+    distance 4)."""
+    if guess_matches(candidate, secret):
+        return True
+    c, s = normalize_guess(candidate), normalize_guess(secret)
+    if not c or not s:
+        return False
+    for a, b in ((c, s), (_ascii_fold(c), _ascii_fold(s))):
+        if not a or not b or max(len(a), len(b)) < 5:
+            continue
+        if a == b or _edit_distance_leq1(a, b):
+            return True
+    return False

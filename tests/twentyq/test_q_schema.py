@@ -86,3 +86,31 @@ def test_normalize_strips_articles_case_punct():
 ])
 def test_guess_matches(guess, secret, expect):
     assert guess_matches(guess, secret) is expect
+
+
+@pytest.mark.parametrize("candidate,secret,expect", [
+    # Everything guess_matches catches is a repeat too.
+    ("The Okapis", "okapi", True),
+    ("cats", "cat", True),
+    # Ban-evasion misspellings observed live in q-fullv45-ctrl-terminal:
+    # one-letter deletions of a banned attractor.
+    ("Okpi", "Okapi", True),
+    ("Wasbi", "Wasabi", True),
+    ("Black Cardamon", "Black Cardamom", True),   # substitution
+    # Unicode decoration (iteration 13): ASCII fold before edit distance.
+    ("Axolotல்", "Axolotl", True),
+    ("Ökapi", "Okapi", True),
+    # Accents on genuinely different entities stay distinct.
+    ("Açai berry", "Jalapeño", False),
+    # Length floor: distinct short words stay distinct.
+    ("tea", "pea", False),
+    ("cat", "bat", False),
+    # Legitimately adjacent entities remain playable.
+    ("Truffle oil", "Truffle", False),
+    ("Truffled Chocolate", "Truffle", False),
+    ("Okapi", "Ocelot", False),
+    ("", "Okapi", False),
+])
+def test_repeat_matches_catches_misspell_evasion(candidate, secret, expect):
+    from twin.games.twentyq.schema import repeat_matches
+    assert repeat_matches(candidate, secret) is expect

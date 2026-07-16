@@ -23,6 +23,7 @@ when ``compute.backend == 'torch'`` is selected, via
 pays for — or needs — them. peft/safetensors import lazily where used.
 """
 
+import bisect
 import os
 import re
 
@@ -32,6 +33,7 @@ try:
     from transformers import (
         AutoModelForCausalLM,
         AutoTokenizer,
+        LogitsProcessorList,
         StoppingCriteria,
         StoppingCriteriaList,
     )
@@ -72,7 +74,14 @@ def banned_phrase_variants(phrase: str) -> list[str]:
 def banned_token_sequences(tokenizer, phrases: list[str]) -> list[list[int]]:
     """``bad_words_ids`` for ``phrases``: the deduplicated token sequences of
     every :func:`banned_phrase_variants` expansion, encoded without special
-    tokens (they ban mid-completion continuations, not full prompts)."""
+    tokens (they ban mid-completion continuations, not full prompts).
+
+    NOTE (2026-07-16, q-fullv45-ctrl-terminal iters 3/7): a token-sequence ban
+    is self-defeating as the ONLY guard — masking the final token of the
+    banned path reroutes the sampler onto an alternate BPE segmentation of the
+    SAME surface string ('Black'+' Card'+'am'+'om' after 'amom' was banned).
+    Generation therefore uses :class:`BannedStringsProcessor`, which masks at
+    the string level; this encoding survives for telemetry/tests."""
     seqs: dict[tuple[int, ...], list[int]] = {}
     for phrase in phrases:
         for variant in banned_phrase_variants(phrase):
@@ -80,6 +89,80 @@ def banned_token_sequences(tokenizer, phrases: list[str]) -> list[list[int]]:
             if ids:
                 seqs.setdefault(tuple(ids), list(ids))
     return list(seqs.values())
+
+
+# Per-tokenizer sorted (casefolded token surface, id) table for prefix-range
+# lookups. Built once per tokenizer (~seconds for a 260k vocab), then every
+# banned-string mask is one binary search + slice per active remainder.
+_VOCAB_TABLES: dict = {}
+
+
+def _vocab_table(tokenizer):
+    key = getattr(tokenizer, "name_or_path", None) or id(tokenizer)
+    table = _VOCAB_TABLES.get(key)
+    if table is None:
+        surfaces = tokenizer.batch_decode([[i] for i in range(len(tokenizer))])
+        pairs = sorted((s.casefold(), i) for i, s in enumerate(surfaces))
+        _VOCAB_TABLES[key] = table = (
+            [text for text, _ in pairs],           # sorted surfaces
+            [tid for _, tid in pairs],             # ids in the same order
+        )
+    return table
+
+
+class BannedStringsProcessor:
+    """STRING-level phrase ban for ``generate`` (a ``LogitsProcessor``).
+
+    At each step the generated-so-far text of each row is decoded; whenever it
+    ends with a (possibly empty) prefix of a banned phrase, every vocab token
+    whose surface begins the remaining characters is masked to -inf. The
+    decoded completion therefore can never contain a banned phrase under ANY
+    tokenization — closing the alternate-segmentation leak that pure
+    ``bad_words_ids`` sequences have (observed live: 3/15 masked retries
+    emitted the exact banned secret through a rerouted BPE split). Matching is
+    casefolded; plural forms come in via :func:`banned_phrase_variants`."""
+
+    def __init__(self, tokenizer, phrases: list[str], prompt_len: int):
+        self.tokenizer = tokenizer
+        self.prompt_len = int(prompt_len)
+        self.phrases = sorted({
+            variant.strip().casefold()
+            for phrase in phrases
+            for variant in banned_phrase_variants(phrase)
+            if variant.strip()
+        })
+        self._max_chars = max((len(p) for p in self.phrases), default=0)
+        self._surfaces, self._ids = _vocab_table(tokenizer)
+
+    def _ban_range(self, scores, row, remainder: str) -> None:
+        lo = bisect.bisect_left(self._surfaces, remainder)
+        hi = bisect.bisect_left(self._surfaces, remainder + "￿")
+        if hi > lo:
+            ids = torch.as_tensor(self._ids[lo:hi], device=scores.device)
+            scores[row, ids] = float("-inf")
+
+    def __call__(self, input_ids, scores):
+        if not self.phrases:
+            return scores
+        # Decode only a bounded tail: a prefix of a banned phrase can span at
+        # most max_chars characters, and one token rarely exceeds ~16 chars.
+        max_tail_tokens = max(8, self._max_chars // 2 + 8)
+        for row in range(input_ids.shape[0]):
+            generated = input_ids[row, self.prompt_len:]
+            tail = ""
+            if generated.numel():
+                tail = self.tokenizer.decode(
+                    generated[-max_tail_tokens:].tolist()).casefold()
+            for phrase in self.phrases:
+                # EVERY matched prefix bans its remainder — periodic prefixes
+                # ("aa" of "aab") can match at several lengths at once, and
+                # k=0 (empty prefix) always applies, catching whole-phrase
+                # single tokens like ' cardamom'.
+                start = min(len(phrase) - 1, len(tail))
+                for k in range(start, -1, -1):
+                    if k == 0 or tail.endswith(phrase[:k]):
+                        self._ban_range(scores, row, phrase[k:])
+        return scores
 
 _DTYPES = {
     "bfloat16": torch.bfloat16,
@@ -251,16 +334,16 @@ class TorchTwinBase:
         :meth:`generate` per prompt: ``completion_tokens`` are the exact sampled
         ids up to and including the first EOS; ``text`` excludes that EOS.
 
-        ``banned_strings`` masks the token sequences of each phrase (and its
-        :func:`banned_phrase_variants`) to -inf at the step that would complete
-        them, so the decoder takes the next-most-likely continuation instead —
-        sampling still draws from the renormalized masked distribution."""
+        ``banned_strings`` bans each phrase at the STRING level
+        (:class:`BannedStringsProcessor`): any token that would make the
+        decoded completion contain a banned phrase — under any BPE
+        segmentation — is masked to -inf, so the decoder takes the
+        next-most-likely non-banned continuation and sampling draws from the
+        renormalized masked distribution."""
         if seed is not None:
             torch.manual_seed(seed)
         do_sample = temp > 0
         eos = list(self._eos) or None
-        bad_words = (banned_token_sequences(self.tokenizer, banned_strings)
-                     if banned_strings else None)
         bs = max(1, completion_batch_size)
         out: list[GenResult] = []
         for i in range(0, len(prompts), bs):
@@ -270,13 +353,18 @@ class TorchTwinBase:
             )
             input_ids = enc["input_ids"].to(self.device)
             attn = enc["attention_mask"].to(self.device)
+            processors = None
+            if banned_strings:
+                processors = LogitsProcessorList([BannedStringsProcessor(
+                    self.tokenizer, banned_strings,
+                    prompt_len=input_ids.shape[1])])
             gen = self.model.generate(
                 input_ids=input_ids, attention_mask=attn,
                 max_new_tokens=max_tokens, do_sample=do_sample,
                 temperature=(temp if do_sample else None),
                 top_p=(top_p if do_sample else None),
                 pad_token_id=self._pad, eos_token_id=eos,
-                bad_words_ids=bad_words,
+                logits_processor=processors,
             )
             plen = input_ids.shape[1]
             for j, p in enumerate(chunk):

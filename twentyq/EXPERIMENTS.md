@@ -560,12 +560,26 @@ min at 96 (2.6x per-episode throughput), peak 46.7-50.0 GB, no OOM.
 collapse is baked into the step-10/18 checkpoints, and arms must share one
 reward definition) under run names `q-fullv45-{ctrl,rot}-{terminal,ensemble}`
 — same `configs/twentyq-full-v4.yaml`, now with `repeat_handling: retry`
-(DESIGN §6.5b): attempt-0 repeats against the
+(DESIGN §6.5b):
+
+**v4.5 OUTCOME (stopped 2026-07-16 at iterations 0-13, superseded by v5):**
+`q-fullv45-ctrl-terminal` validated the gate — attempt-0 repeat rate 0.1-0.3
+at the iterations where v4 hit 0.9, zero repeats played, coverage visibly
+broadened — and surfaced three live evasion channels (verbatim ban slips via
+BPE resegmentation, one-letter misspellings that PAID, Unicode decoration).
+Full shakeout record and fixes in DESIGN §6.7. The matrix reruns from scratch
+as `q-fullv5-{ctrl,rot}-{terminal,ensemble}` on `configs/twentyq-full-v5.yaml`
+(identical settings; the delta is the hardened code path: string-level
+`BannedStringsProcessor` + `repeat_matches` edit-distance/ASCII-fold gate).
+Success signatures unchanged from the v4.5 plan; additionally expect
+`repeat_retry_playable == repeat_retries` (no more leaky retries) and zero
+played secrets within edit-distance 1 of the exclusion list. attempt-0 repeats against the
 in-prompt exclusion list are voided at the repeat gate (no episodes, reward
 0.0 in the creator group) and re-sampled ONCE at creator_temp with the
-excluded secrets masked to -inf at the logits level (`bad_words_ids` +
-case/space/plural variants); a playable retry earns its real game reward, a
-still-matching retry voids the rank. Attempt-0 repeat-rate telemetry keeps v4
+excluded secrets masked to -inf at the logits level (string-level
+`BannedStringsProcessor`, segmentation-proof; the gate matcher additionally
+applies normalized edit-distance-1 for 5+ chars); a playable retry earns its
+real game reward, a still-matching retry voids the rank. Attempt-0 repeat-rate telemetry keeps v4
 semantics and stays directly comparable to the stopped run; new per-iteration
 read-outs are `playable_rate`, `repeat_voided`, `repeat_retries`,
 `repeat_retry_playable`, and `sampled_secrets` (which also makes resume

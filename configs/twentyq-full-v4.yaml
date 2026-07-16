@@ -29,6 +29,11 @@
 # terminal return with the same per-turn/index grouping used by credit=ensemble,
 # so the ensemble term is the only reward/credit difference in the 2x2 matrix.
 #
+# SUPERSEDED by configs/twentyq-full-v5.yaml (2026-07-16): the v4.5 shakeout
+# (q-fullv45-ctrl-terminal, iters 0-13) found the token-sequence retry ban
+# leaky; v5 reruns the identical settings under the hardened repeat gate
+# (DESIGN §6.7). This file is kept for the provenance of the two stopped runs.
+#
 # Run sequentially (start with A). The repeat-handling restart runs are labeled
 # v4.5 so the stopped q-fullv4-ctrl-terminal logs stay distinct for the
 # before/after repeat-rate comparison:

@@ -72,9 +72,9 @@ from twin.games.twentyq.rewards import (
 from twin.games.twentyq.schema import (
     Secret,
     SecretParseError,
-    guess_matches,
     normalize_guess,
     parse_secret,
+    repeat_matches,
 )
 from twin.problems.schema import ProblemSuite
 from twin.rl import Trajectory, group_advantages
@@ -670,7 +670,7 @@ class TwentyQTrainer(BaseTrainer):
                 normalized == normalize_guess(old) for old in exclusions
             ))
             is_repeat = repeat_mode != "off" and any(
-                guess_matches(secret.secret, old) for old in exclusions)
+                repeat_matches(secret.secret, old) for old in exclusions)
             if not is_repeat:
                 keep_playable(roll, secret)
                 continue
@@ -695,7 +695,7 @@ class TwentyQTrainer(BaseTrainer):
                 rollouts.append(retry_roll)
                 continue
             sampled_secrets.append(retry_secret.secret)
-            if any(guess_matches(retry_secret.secret, old) for old in exclusions):
+            if any(repeat_matches(retry_secret.secret, old) for old in exclusions):
                 # Tokenization-variant slip past the ban list: a repeat never
                 # plays episodes, so the rank is voided outright.
                 retry_roll["repeat"] = True

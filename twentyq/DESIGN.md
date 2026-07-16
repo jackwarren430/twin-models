@@ -692,8 +692,10 @@ constraint (`off` preserves the v4 arm-A prompt-and-measurement behaviour):
   propensity (the logged exact/normalized rates keep their v4 semantics) and
   gives the gate an on-policy trajectory to train against.
 - **`void`**: a parsed attempt-0 secret matching the exclusion list it was
-  shown (`guess_matches`: normalized + bare-plural tolerance — deliberately
-  broader than the exact/normalized telemetry) is voided. It plays NO
+  shown (`repeat_matches`: normalized + bare-plural tolerance + normalized
+  edit-distance-1 for strings of 5+ characters — deliberately broader than
+  both the exact/normalized telemetry and episode win judging, which keeps
+  `guess_matches` untouched) is voided. It plays NO
   episodes, enters the creator GRPO group at the fixed
   `twentyq.repeat_gate_reward` (default 0.0: well-formed but disallowed, so
   below every honest secret at ~1.3-1.5 while a parse failure stays strictly
@@ -701,11 +703,19 @@ constraint (`off` preserves the v4 arm-A prompt-and-measurement behaviour):
   exactly like a parse drop. Group-relative advantage then pushes probability
   mass off the attractor every time it fires.
 - **`retry`**: `void` plus ONE masked resample. The SAME prompt is re-decoded
-  at `creator_temp` with every excluded secret banned at the logits level
-  (`bad_words_ids`: the token sequences of each exclusion and its surface
-  variants — case, leading-space, bare plural — are masked to -inf at the
-  step that would complete them, so the decoder continues with the
-  next-most-likely non-excluded continuation). The sample is drawn from the
+  at `creator_temp` with every excluded secret banned at the logits level by
+  a STRING-level processor (`BannedStringsProcessor`): at each step the
+  generated text is decoded, and whenever it ends with any prefix of a banned
+  phrase (casefolded; plural variants included), every vocab token whose
+  surface would complete that phrase is masked to -inf — so the decoded
+  completion can never contain an excluded secret under ANY tokenization,
+  and the decoder continues with the next-most-likely non-excluded
+  continuation. A pure token-sequence ban (`bad_words_ids`) is NOT sufficient
+  here and was replaced after the first v4.5 attempt: masking the final token
+  of the banned sequence just reroutes the sampler onto an alternate BPE
+  segmentation of the same surface string ('Black'+' Card'+'am'+'om' after
+  'amom' was banned — 3 of the first 15 masked retries emitted their banned
+  secret verbatim this way). The sample is drawn from the
   renormalized masked distribution, NOT greedy: greedy would deterministically
   anoint the policy's #2 candidate as the next attractor, and once the
   dominant mode is masked the renormalized tail is where the usable entropy
@@ -809,3 +819,77 @@ The v4 matrix therefore uses `generation_batch_size: 16` and
 residency, not GRPO backward or a complete 160-episode iteration. Keep
 `grpo_microbatch: 1`, and treat the first terminal-control iteration's wall time
 and peak memory as the final launch check before increasing N or K further.
+
+### 6.7 v4.5 shakeout: the repeat gate under live fire, and its hardening (2026-07-16)
+
+The first repeat-handling run (`q-fullv45-ctrl-terminal`, arm A restarted with
+`repeat_handling: retry` per §6.5b) was deliberately stopped after iterations
+0-13 to fold in what fourteen iterations of live adversarial pressure taught.
+This section is the consolidated record of that shakeout: what worked, the
+three evasion channels the creator found, and the code that closes them. v5
+(`q-fullv5-*` run names, same `twentyq-full-v4.yaml` settings otherwise)
+restarts the matrix from scratch with the hardened stack.
+
+**The mechanism works.** At the two iterations where the original v4 arm A had
+collapsed to 8/10 "Okapi" (iterations 11 and 13, attempt-0 exact-repeat rate
+0.9), v4.5 measured 0.1 and 0.3, with visibly broadened coverage (Gerenuk,
+Tarsier, Kakapo, Toco Toucan, Mantis Shrimp — entities the collapsed run never
+sampled). Every attempt-0 repeat was voided; ZERO repeats played episodes; most
+voided ranks were recovered by the masked resample (playable_rate 1.0 in 10 of
+14 iterations). Step-0 validation reproduced the stopped run's baseline
+bit-for-bit, confirming the gate changes nothing upstream of enforcement.
+
+**Live finding 1 — a token-sequence ban defeats itself.** 3 of the first 15
+masked retries emitted their banned secret VERBATIM. Diagnosis from the stored
+raw completions plus the tokenizer: the ban list correctly contained the
+canonical path `['Black', ' Card', 'amom']`, so when the sampler reached
+`'Black', ' Card'` the processor masked `'amom'` — and the next-most-likely
+token was `'am'`, after which `'om'` completed the SAME surface string through
+a segmentation no banned sequence covers. `bad_words_ids` masking is
+per-token-path; masking one path reroutes a determined distribution onto
+another spelling of the same string. Fix: `BannedStringsProcessor`
+(torch_backend), a LogitsProcessor that decodes each row's generated tail and,
+whenever it ends with any prefix of a banned phrase (casefolded, plural
+variants included, EVERY matched prefix length — periodic prefixes can match
+at several lengths at once), masks every vocab token whose surface completes
+the phrase, via binary search over a sorted casefolded vocab-surface table.
+Invariant: the decoded completion can never contain a banned phrase under ANY
+tokenization. Verified against the live leak state on the real tokenizer;
+cost ≈1.9 s one-time table build + ~1 ms/step with 50 phrases (retry-only).
+
+**Live finding 2 — misspelling evasion, and it PAYS.** With clean completions
+blocked, mass squeezed into one-letter deletions: 'Okpi' (iteration 2, caught
+by the validity judge) and 'Wasbi' (iteration 6, PASSED the fail-open judge,
+played 16 episodes, and earned 1.47 against a 0.65 creator mean — a strongly
+positive advantage for evading the exclusion list, i.e. the exact incentive
+the gate exists to remove, re-created one edit away). Fix: the gate matcher
+`repeat_matches` (schema) extends `guess_matches` with normalized
+edit-distance-1 for strings of 5+ characters. Episode win judging keeps
+`guess_matches` untouched.
+
+**Live finding 3 — Unicode decoration.** Iteration 13's retry emitted
+'Axolotல்' ("Axolot" + a Tamil grapheme) for a banned 'Axolotl' — a genuinely
+different string, so the string-level ban cannot and should not block it, and
+the raw edit distance is 2 (the grapheme is two code points). Fix:
+`repeat_matches` also compares NFKD ASCII-folded normalized forms (fold both
+sides, drop combining marks and non-ASCII), so 'Axolotல்' -> 'axolot' lands at
+distance 1 from 'axolotl'. Accented but legitimately distinct secrets ('Açai
+berry', 'Jalapeño') are unaffected.
+
+The escalation ladder itself is the lesson: exact repeat -> resegmented exact
+string -> one-letter misspelling -> Unicode substitution, each rung appearing
+within iterations of the previous one closing. GRPO reliably finds any evasion
+channel that still pays; a repeat gate must therefore be layered — decode-time
+string ban (exact strings impossible), gate-time fuzzy match (near-misses
+voided before episodes), judge validity (semantic garbage) — with the
+telemetry (`repeat_voided`, `repeat_retries`, `repeat_retry_playable`,
+`sampled_secrets`) to notice the next rung.
+
+Known residual gaps, deliberately deferred: synonym evasion (iteration 13
+sampled 'Kombu' with 'Kelp' already in-round — string-distinct, semantically
+near-identical; would need embedding or judge-based novelty), validity-judge
+noise now more visible under diversity pressure ('Calamine', 'Sajou',
+'Ylang-Ylang' played as foods; 'Chervil' falsely voided), and serial next-best
+collapse (the policy re-collapsing onto each freed candidate in turn — the
+rolling window keeps forcing novelty mechanically; conditioning-side seeds and
+the unreachable 0.9 target band remain the next levers per §6.5b).

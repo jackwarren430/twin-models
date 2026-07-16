@@ -534,6 +534,25 @@ def test_repeat_gate_reward_is_configurable():
     assert repeat.reward == pytest.approx(-0.5)
 
 
+def test_repeat_gate_catches_misspelled_ban_evasion():
+    # Live v4.5 failure mode: the logits ban squeezes mass into one-letter
+    # misspellings ('Okpi' for banned 'Okapi'). The gate's repeat_matches
+    # (edit-distance-1, 5+ chars) voids them; the masked retry recovers.
+    creator = [_secret_json("Okpi", 0.0), _secret_json("Elephant", 0.0),
+               _secret_json("dog", 1.0)]
+    t = _make_trainer(_repeat_cfg("retry"), creator,
+                      ["GUESS: Elephant"] * 2 + ["GUESS: dog"] * 2)
+    t._recent_secrets = deque([("animal", "Okapi")], maxlen=128)
+
+    rec = t.run_iteration(0)
+
+    assert rec["repeat_voided"] == 1
+    assert rec["repeat_retries"] == 1 and rec["repeat_retry_playable"] == 1
+    assert [s["secret"] for s in rec["secrets"]] == ["Elephant", "dog"]
+    assert rec["episodes"]["total"] == 4
+    assert t.captured["creator_banned"][1] == ["Okapi"]
+
+
 def test_repeat_check_matches_cross_iteration_history():
     # "The Cat" in rolling history: guess_matches voids a same-normalized
     # attempt-0 pick even though it is not an exact string repeat.

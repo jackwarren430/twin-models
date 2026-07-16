@@ -1,0 +1,135 @@
+# 21-questions FULL v5: the v4 2x2 matrix (terminal-vs-ensemble x
+# control-vs-rotation) rerun under the HARDENED repeat gate.
+#
+# Settings are identical to configs/twentyq-full-v4.yaml (including
+# repeat_handling: retry). The v4->v5 delta is code-level (DESIGN §6.7),
+# adopted after the v4.5 shakeout run (q-fullv45-ctrl-terminal, iters 0-13)
+# caught three live evasion channels:
+#   - BannedStringsProcessor: masked retries now ban excluded secrets at the
+#     STRING level (any BPE segmentation), replacing bad_words_ids token
+#     sequences, which a determined policy resegmented around (3/15 retries
+#     emitted their banned secret verbatim).
+#   - repeat_matches gate: normalized + bare-plural + edit-distance-1 (5+
+#     chars) + NFKD ASCII fold, voiding misspelling ('Wasbi') and Unicode
+#     ('Axolotல்') evasions before any episode is played.
+#   - Episode win judging (guess_matches) is untouched.
+#
+# Prior attempts on this config lineage, kept for before/after comparison:
+#   q-fullv4-ctrl-terminal   iters 0-18, repeat_handling off — creator
+#                            collapse (Okapi 8/10, repeat rate 0.9).
+#   q-fullv45-ctrl-terminal  iters 0-13, leaky token-sequence ban — gate
+#                            validated (repeat 0.1-0.3 at collapse points),
+#                            evasion channels diagnosed.
+#
+# Run sequentially (start with A):
+#
+# A. no rotation, terminal only (first control)
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-full-v5.yaml --credit terminal --swap-interval 0 \
+#   --run-name q-fullv5-ctrl-terminal \
+#   --checkpoints-dir checkpoints/twentyq-fullv5-ctrl-terminal
+#
+# B. no rotation, terminal + ensemble
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-full-v5.yaml --credit ensemble --swap-interval 0 \
+#   --run-name q-fullv5-ctrl-ensemble \
+#   --checkpoints-dir checkpoints/twentyq-fullv5-ctrl-ensemble
+#
+# C. rotation, terminal only
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-full-v5.yaml --credit terminal --swap-interval 5 \
+#   --run-name q-fullv5-rot-terminal \
+#   --checkpoints-dir checkpoints/twentyq-fullv5-rot-terminal
+#
+# D. rotation, terminal + ensemble
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-full-v5.yaml --credit ensemble --swap-interval 5 \
+#   --run-name q-fullv5-rot-ensemble \
+#   --checkpoints-dir checkpoints/twentyq-fullv5-rot-ensemble
+
+compute:
+  backend: torch
+  device: cuda
+  dtype: bfloat16
+  attn_impl: sdpa
+  tf32: true
+  matmul_precision: high
+  compile: false
+  grad_checkpointing: false
+
+model:
+  path: ~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/snapshots/9dbdf8a839e4e9e0eb56ed80cc8886661d3817cf
+  enable_thinking: false
+
+lora:
+  num_layers: 16
+  rank: 64
+  alpha: 128.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+
+twentyq:
+  n_secrets: 10
+  episodes_per_secret: 16
+  max_turns: 21
+  categories: ["animal", "food", "household object"]
+  recent_secret_window: 128
+  repeat_handling: retry
+  repeat_gate_reward: 0.0
+
+  # Default arm is the no-rotation/no-ensemble control. CLI overrides select
+  # the other three cells while all remaining settings stay identical.
+  credit: terminal
+  gamma: 1.0
+  w_ensemble: 0.1
+  ensemble_models: []
+  ensemble_device: cuda
+  ensemble_dtype: bfloat16
+
+  w_guess: 1.0
+  w_efficiency: 0.5
+  w_close: 0
+  w_format: 0.5
+  secret_validity: fail_open
+
+  creator_thinking: false
+  guesser_thinking: false
+  answerer_thinking: false
+  judge_thinking: false
+  secret_max_tokens: 512
+  question_max_tokens: 512
+  answer_max_tokens: 512
+  generation_batch_size: 16
+  ensemble_batch_size: 4
+
+  validation_every: 10
+  validation_secret_set: data/twentyq-validation-v1.json
+  validation_max_turns: 21
+  reward_log: true
+
+rewards:
+  target_hi: 0.9
+  target_lo: 0.1
+
+roles:
+  swap_interval: 0
+  warmup_iterations: 0
+  injection_rate: 0.0
+
+train:
+  iters: 60
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  adv_mode: mean
+  grpo_microbatch: 1
+  logit_chunk: 0
+  checkpoint_every: 10
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints/twentyq
+  runs: tq-runs
