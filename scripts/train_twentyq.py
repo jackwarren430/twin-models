@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from twin.backends import get_backend              # noqa: E402
 from twin.config import Config                      # noqa: E402
+from twin.games.twentyq.schedule import validation_steps  # noqa: E402
 from twin.games.twentyq.trainer import TwentyQTrainer  # noqa: E402
 from twin.log import JsonlLogger, TranscriptLogger  # noqa: E402
 from twin.log import TwentyQTranscriptTree  # noqa: E402
@@ -34,19 +35,32 @@ def main() -> None:
                     help="resume from checkpoints/adapter_{A,B}_step<N>.safetensors "
                          "and continue at iteration N (optimizer moments and the "
                          "drift baseline reset at the resume point)")
+    ap.add_argument("--resume-log", default=None,
+                    help="JSONL used to restore recent-secret history (defaults "
+                         "to runs/<run-name>.jsonl; useful when resuming under a "
+                         "new run name)")
     ap.add_argument("--no-transcript", action="store_true")
     ap.add_argument("--log-prompts", action="store_true",
                     help="also write input prompts to the transcript")
     # Q8 matrix knobs: drive all arms from ONE base config so they differ only in
     # the varied factors (no config drift), with per-arm checkpoint dirs.
-    ap.add_argument("--credit", choices=["broadcast", "per_turn"], default=None,
-                    help="override twentyq.credit (Q8 credit-granularity arm)")
+    ap.add_argument("--credit",
+                    choices=["broadcast", "per_turn", "terminal", "ensemble"],
+                    default=None,
+                    help="override twentyq.credit (terminal is the clean "
+                         "no-ensemble control for ensemble)")
     ap.add_argument("--swap-interval", type=int, default=None,
                     help="override roles.swap_interval (0 = no-rotation control)")
     ap.add_argument("--secret-validity", choices=["fail_open", "fail_closed", "off"],
                     default=None,
                     help="override twentyq.secret_validity (fail_open = new default; "
                          "fail_closed = pre-fix posture for the v2 control arm)")
+    ap.add_argument("--repeat-handling", choices=["off", "void", "retry"],
+                    default=None,
+                    help="override twentyq.repeat_handling (off = prompt-and-"
+                         "measurement only; void = repeat rollouts get no episodes "
+                         "and the repeat-gate reward; retry = void + one masked "
+                         "resample with excluded secrets banned at the logits level)")
     ap.add_argument("--checkpoints-dir", default=None,
                     help="override paths.checkpoints (keep arms from clobbering)")
     args = ap.parse_args()
@@ -60,8 +74,19 @@ def main() -> None:
         cfg.roles.swap_interval = args.swap_interval
     if args.secret_validity is not None:
         cfg.twentyq.secret_validity = args.secret_validity
+    if args.repeat_handling is not None:
+        cfg.twentyq.repeat_handling = args.repeat_handling
     if args.checkpoints_dir is not None:
         cfg.paths.checkpoints = args.checkpoints_dir
+    run_name = args.run_name or ("q-" + time.strftime("%Y%m%d-%H%M%S"))
+    log_path = Path(cfg.paths.runs) / f"{run_name}.jsonl"
+    resume_log = Path(args.resume_log) if args.resume_log else log_path
+    if (args.resume_step is not None and cfg.twentyq.recent_secret_window > 0
+            and not resume_log.exists()):
+        ap.error(
+            f"recent-secret resume log not found: {resume_log} "
+            "(reuse --run-name or pass --resume-log)"
+        )
     Path(cfg.paths.checkpoints).mkdir(parents=True, exist_ok=True)
     backend = get_backend(cfg.compute.backend)
     print(f"Backend: {backend.name} | loading base: {cfg.model.path}")
@@ -81,22 +106,41 @@ def main() -> None:
             adapters.load(name, str(p))
         print(f"  resumed adapters from step {start_iter}")
 
-    run_name = args.run_name or ("q-" + time.strftime("%Y%m%d-%H%M%S"))
-    log_path = Path(cfg.paths.runs) / f"{run_name}.jsonl"
     logger = JsonlLogger(log_path, meta={"config": args.config, "run": run_name,
                                          "mode": "twentyq",
                                          "credit": cfg.twentyq.credit,
                                          "validation_every": cfg.twentyq.validation_every,
                                          "validation_secret_set": cfg.twentyq.validation_secret_set,
+                                         "recent_secret_window": cfg.twentyq.recent_secret_window,
+                                         "repeat_handling": cfg.twentyq.repeat_handling,
+                                         "generation_batch_size": cfg.twentyq.generation_batch_size,
+                                         "ensemble_batch_size": cfg.twentyq.ensemble_batch_size,
                                          "swap_interval": cfg.roles.swap_interval,
                                          "resume_step": start_iter})
+    reward_logger = None
+    reward_log_path = None
+    if cfg.twentyq.reward_log:
+        reward_log_path = Path(cfg.paths.runs) / f"{run_name}.rewards.jsonl"
+        reward_logger = JsonlLogger(reward_log_path, meta={
+            "config": args.config, "run": run_name, "mode": "twentyq_rewards",
+            "credit": cfg.twentyq.credit,
+            "w_ensemble": cfg.twentyq.w_ensemble,
+            "generation_batch_size": cfg.twentyq.generation_batch_size,
+            "ensemble_batch_size": cfg.twentyq.ensemble_batch_size,
+            "swap_interval": cfg.roles.swap_interval,
+            "resume_step": start_iter,
+        })
+        print(f"Reward log: {reward_log_path}")
     transcript = None
     tree = None
     if not args.no_transcript:
         transcript_path = Path(cfg.paths.runs) / f"{run_name}.transcript.txt"
         transcript = TranscriptLogger(
             transcript_path,
-            meta={"config": args.config, "run": run_name, "resume_step": start_iter})
+            meta={"config": args.config, "run": run_name,
+                  "generation_batch_size": cfg.twentyq.generation_batch_size,
+                  "ensemble_batch_size": cfg.twentyq.ensemble_batch_size,
+                  "resume_step": start_iter})
         print(f"Transcript: {transcript_path}")
         # Kept alongside the flat file (per user): a GRPO-structured folder tree.
         tree_root = Path(cfg.paths.runs) / f"{run_name}.transcript"
@@ -106,6 +150,10 @@ def main() -> None:
             "model": cfg.model.path, "N_secrets": cfg.twentyq.n_secrets,
             "K_episodes": cfg.twentyq.episodes_per_secret,
             "T_max_turns": cfg.twentyq.max_turns,
+            "recent_secret_window": cfg.twentyq.recent_secret_window,
+            "repeat_handling": cfg.twentyq.repeat_handling,
+            "generation_batch_size": cfg.twentyq.generation_batch_size,
+            "ensemble_batch_size": cfg.twentyq.ensemble_batch_size,
             "validation_every": cfg.twentyq.validation_every,
             "validation_secret_set": cfg.twentyq.validation_secret_set,
             "resume_step": start_iter})
@@ -113,14 +161,77 @@ def main() -> None:
     trainer = TwentyQTrainer(base, adapters, cfg, logger=logger,
                              transcript=transcript, backend=backend)
     trainer.transcript_tree = tree
+    if args.resume_step is not None:
+        restored = trainer.restore_recent_secrets(
+            resume_log, before_iteration=start_iter)
+        print(f"  restored {restored} recent secrets from {resume_log}")
 
     iters = args.iters if args.iters is not None else cfg.train.iters
     if start_iter >= iters:
         ap.error(f"--resume-step {start_iter} >= target iters {iters}: nothing to do")
+    scheduled_validation = set(validation_steps(
+        start_iter, iters, cfg.twentyq.validation_every))
     print(f"Running iterations {start_iter}..{iters - 1}; logging to {log_path}\n")
+    print(
+        "TwentyQ batching: "
+        f"generation={cfg.twentyq.generation_batch_size}, "
+        f"ensemble={cfg.twentyq.ensemble_batch_size}\n"
+    )
+
+    def log_reward_signals(record, *, validation: bool = False):
+        if reward_logger is None:
+            return
+        signals = record["reward_signals"]
+        compact = {
+            "mode": record["mode"],
+            "credit": record.get("credit", cfg.twentyq.credit),
+            "ensemble_applied_to_training": (
+                not validation and cfg.twentyq.credit == "ensemble"),
+            "diagnostic_ensemble": validation,
+            "terminal_reward_mean": signals["terminal_mean"],
+            "terminal_reward_total": signals["terminal_total"],
+            "ensemble_reward_mean": signals["dense_immediate_mean"],
+            "ensemble_reward_total": signals["dense_immediate_total"],
+            "dense_reward_mean": signals["dense_immediate_mean"],
+            "dense_reward_total": signals["dense_immediate_total"],
+            "combined_reward_mean": signals["combined_immediate_mean"],
+            "combined_return_start_mean": signals["combined_return_start_mean"],
+            "n_episodes": signals["n_episodes"],
+            "n_steps": signals["n_steps"],
+        }
+        if validation:
+            compact["step"] = record["step"]
+            reward_logger.log_validation(compact)
+        else:
+            compact.update({
+                "iter": record["iter"], "category": record["category"],
+                "creator": record["creator"], "solver": record["solver"],
+            })
+            reward_logger.log(compact)
+
+    def run_and_report_validation(step: int):
+        val = trainer.run_validation(step)
+        log_reward_signals(val, validation=True)
+        parts = [
+            f"{name}={metrics['guess_rate']:.3f}"
+            for name, metrics in val["adapters"].items()
+        ]
+        sig = val["reward_signals"]
+        print(
+            f"       validation step {step}: guess_rate "
+            f"{' '.join(parts)} | terminal={sig['terminal_mean']:+.3f} "
+            f"dense={sig['dense_immediate_mean']:+.3f} "
+            f"combined_R0={sig['combined_return_start_mean']:+.3f}"
+        )
+        return val
+
     try:
+        # True pre-training baseline, followed by completed steps X, 2X, ...
+        if 0 in scheduled_validation:
+            run_and_report_validation(0)
         for it in range(start_iter, iters):
             rec = trainer.run_iteration(it)
+            log_reward_signals(rec)
             ep = rec["episodes"]
             print(
                 f"[{it:>4}] {rec['creator']}->create {rec['solver']}->guess "
@@ -143,25 +254,17 @@ def main() -> None:
             if ce and (it + 1) % ce == 0:
                 trainer.save_checkpoints(it + 1)
                 print(f"       checkpointed at step {it + 1}")
-            ve = cfg.twentyq.validation_every
-            if ve and (it + 1) % ve == 0:
-                val = trainer.run_validation(it + 1)
-                parts = [
-                    f"{name}={metrics['guess_rate']:.3f}"
-                    for name, metrics in val["adapters"].items()
-                ]
-                sig = val["reward_signals"]
-                print(
-                    f"       validation step {it + 1}: guess_rate "
-                    f"{' '.join(parts)} | terminal={sig['terminal_mean']:+.3f} "
-                    f"dense={sig['dense_immediate_mean']:+.3f} "
-                    f"combined_R0={sig['combined_return_start_mean']:+.3f}"
-                )
+            if it + 1 in scheduled_validation:
+                run_and_report_validation(it + 1)
     finally:
         logger.close()
+        if reward_logger is not None:
+            reward_logger.close()
         if transcript is not None:
             transcript.close()
     print(f"\nDone. Log: {log_path}")
+    if reward_log_path is not None:
+        print(f"Reward log: {reward_log_path}")
 
 
 if __name__ == "__main__":

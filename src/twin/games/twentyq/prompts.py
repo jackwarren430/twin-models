@@ -47,13 +47,21 @@ def creator_secret_user(
     difficulty: float,
     target_rate: float,
     previous: list[str] | None = None,
+    recent: list[str] | None = None,
 ) -> str:
-    prev_block = ""
-    if previous:
-        prev_block = (
-            "\nSecrets you already picked this round (yours must be clearly "
-            "different from all of them):\n"
-            + "\n".join(f"- {p}" for p in previous) + "\n"
+    exclusions = list(recent or []) + list(previous or [])
+    exclusion_block = ""
+    if exclusions:
+        # Names only (not prior JSON objects) keep this bounded block compact.
+        # The caller has already category-filtered the rolling-history entries.
+        exclusions = list(dict.fromkeys(exclusions))
+        exclusion_block = (
+            "\nExcluded secrets (recently used in this category or already "
+            "picked this round):\n"
+            + "\n".join(f"- {p}" for p in exclusions)
+            + "\nChoose neither an exact repeat nor an obvious variant of any "
+            "item above (such as a plural, alternate spelling, or qualified "
+            "version).\n"
         )
     return f"""Pick secret {rank + 1} of {n_secrets} for this round. Category: {category}.
 
@@ -61,7 +69,7 @@ Difficulty for this secret: {difficulty:.2f} on a 0-1 scale (0 = something anyon
 names in a few questions; 1 = something rarely identified within 20). Target: the \
 guesser should succeed on about {int(round(target_rate * 100))}% of games at this \
 secret.
-{prev_block}
+{exclusion_block}
 Reply with exactly one JSON object:
 {{"secret": "<the entity>", "category": "{category}", "difficulty": {difficulty:.2f}, "notes": "<one line: why this fits the target>"}}"""
 

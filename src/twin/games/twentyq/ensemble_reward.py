@@ -1,5 +1,4 @@
-"""Ensemble log-probability reward for 21-questions (ISOLATED — not wired into
-the training pipeline yet).
+"""Ensemble log-probability reward for 21-questions.
 
 Idea
 ----
@@ -237,6 +236,51 @@ class EnsembleMember:
         tok_logp = sel.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
         return [float(x) for x in tok_logp]
 
+    @torch.no_grad()
+    def _span_logprobs_batch(
+        self,
+        rows: list[tuple[list[int], int, int]],
+    ) -> list[list[float]]:
+        """Score answer spans for right-padded sequences in one forward pass.
+
+        Only answer-position logits are promoted to fp32/log-softmax, avoiding
+        a full fp32 ``[batch, sequence, vocabulary]`` allocation.
+        """
+        if not rows:
+            return []
+        max_len = max(len(ids) for ids, _, _ in rows)
+        pad = self.tokenizer.pad_token_id
+        if pad is None:
+            pad = self.tokenizer.eos_token_id
+        if pad is None:
+            pad = 0
+        input_ids = torch.full(
+            (len(rows), max_len), int(pad),
+            device=self.device, dtype=torch.long,
+        )
+        attention_mask = torch.zeros(
+            (len(rows), max_len), device=self.device, dtype=torch.long,
+        )
+        for i, (ids, _, _) in enumerate(rows):
+            n = len(ids)
+            input_ids[i, :n] = torch.as_tensor(
+                ids, device=self.device, dtype=torch.long)
+            attention_mask[i, :n] = 1
+        logits = self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            use_cache=False,
+        ).logits
+        results: list[list[float]] = []
+        for i, (ids, start, end) in enumerate(rows):
+            selected = logits[i, start - 1:end - 1].float()
+            targets = torch.as_tensor(
+                ids[start:end], device=self.device, dtype=torch.long)
+            token_logprobs = torch.log_softmax(selected, dim=-1).gather(
+                -1, targets.unsqueeze(-1)).squeeze(-1)
+            results.append([float(x) for x in token_logprobs])
+        return results
+
     def score(self, user: str, answer: str, *, system: str | None = None,
               scaffold: str = DEFAULT_SCAFFOLD) -> MemberScore:
         assistant = f"{scaffold} {answer}".strip() if scaffold else answer
@@ -248,6 +292,37 @@ class EnsembleMember:
         span_toks = [self.tokenizer.decode([t]) for t in ids[start:end]]
         return MemberScore(self.name, mean_lp, end - start, span_toks,
                            token_logprobs=tok_logp, full_text=full_text)
+
+    def score_batch(
+        self,
+        users: list[str],
+        answers: list[str],
+        *,
+        system: str | None = None,
+        scaffold: str = DEFAULT_SCAFFOLD,
+    ) -> list[MemberScore]:
+        """Batch counterpart of :meth:`score`, preserving input order."""
+        if len(users) != len(answers):
+            raise ValueError(f"{len(users)} users vs {len(answers)} answers")
+        prepared = []
+        for user, answer in zip(users, answers):
+            assistant = f"{scaffold} {answer}".strip() if scaffold else answer
+            full_text = self._render_full(system, user, assistant)
+            cs, ce = self._answer_char_span(
+                full_text, scaffold, answer, assistant)
+            ids, start, end = self._span_token_indices(full_text, cs, ce)
+            prepared.append((ids, start, end, full_text))
+        token_logprobs = self._span_logprobs_batch(
+            [(ids, start, end) for ids, start, end, _ in prepared])
+        out = []
+        for (ids, start, end, full_text), tok_logp in zip(
+                prepared, token_logprobs):
+            mean_lp = sum(tok_logp) / len(tok_logp) if tok_logp else 0.0
+            span_toks = [self.tokenizer.decode([t]) for t in ids[start:end]]
+            out.append(MemberScore(
+                self.name, mean_lp, end - start, span_toks,
+                token_logprobs=tok_logp, full_text=full_text))
+        return out
 
 
 class EnsembleReward:
@@ -284,6 +359,43 @@ class EnsembleReward:
         agg = sum(m.logprob for m in member_scores) / len(member_scores)
         return EnsembleScore(agg, member_scores)
 
+    def score_batch(
+        self,
+        users: list[str],
+        answers: list[str],
+        *,
+        system: str | None = None,
+        scaffold: str = DEFAULT_SCAFFOLD,
+        batch_size: int = 1,
+    ) -> list[EnsembleScore]:
+        """Score independent examples in chunks, once per ensemble member."""
+        if len(users) != len(answers):
+            raise ValueError(f"{len(users)} users vs {len(answers)} answers")
+        if not users:
+            return []
+        size = max(1, int(batch_size))
+        if size == 1:
+            return [self.score(
+                user, answer, system=system, scaffold=scaffold)
+                for user, answer in zip(users, answers)]
+
+        by_member: list[list[MemberScore]] = []
+        for member in self.members:
+            scores: list[MemberScore] = []
+            for start in range(0, len(users), size):
+                stop = start + size
+                scores.extend(member.score_batch(
+                    users[start:stop], answers[start:stop],
+                    system=system, scaffold=scaffold))
+            by_member.append(scores)
+
+        out = []
+        for i in range(len(users)):
+            member_scores = [scores[i] for scores in by_member]
+            agg = sum(m.logprob for m in member_scores) / len(member_scores)
+            out.append(EnsembleScore(agg, member_scores))
+        return out
+
     def score_history(self, qa_pairs: list[tuple[str, str]], answer: str, *,
                       system: str | None = DEFAULT_SYSTEM,
                       scaffold: str = DEFAULT_SCAFFOLD,
@@ -294,3 +406,19 @@ class EnsembleReward:
         :meth:`score` that builds the ``user`` string via :func:`history_user`."""
         return self.score(history_user(qa_pairs, instruction=instruction),
                           answer, system=system, scaffold=scaffold)
+
+    def score_histories(
+        self,
+        histories: list[list[tuple[str, str]]],
+        answers: list[str],
+        *,
+        system: str | None = DEFAULT_SYSTEM,
+        scaffold: str = DEFAULT_SCAFFOLD,
+        instruction: str = DEFAULT_INSTRUCTION,
+        batch_size: int = 1,
+    ) -> list[EnsembleScore]:
+        """Batch game-facing entry point for multiple history/secret pairs."""
+        users = [history_user(h, instruction=instruction) for h in histories]
+        return self.score_batch(
+            users, answers, system=system, scaffold=scaffold,
+            batch_size=batch_size)

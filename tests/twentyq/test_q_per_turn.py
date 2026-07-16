@@ -149,3 +149,58 @@ def test_trainer_broadcast_path_untouched_by_default():
     # v1 budget: closeness only for the two failed episodes.
     assert sum(1 for q in t.captured["judge"] if "scoring how close" in q) == 2
     assert all("credit" not in tr.meta for tr in t.captured["grpo"]["B"])
+
+
+def test_terminal_credit_is_no_dense_no_judge_per_turn_control():
+    cfg = _config(twentyq={
+        "n_secrets": 2, "episodes_per_secret": 2, "max_turns": 2,
+        "categories": ["animal"], "credit": "terminal", "gamma": 1.0,
+    })
+    t = _make_trainer(cfg, list(CREATOR_OK), list(GUESSER_OK))
+
+    rec = t.run_iteration(0)
+
+    assert rec["credit"] == "terminal"
+    assert sum(1 for q in t.captured["judge"] if "scoring how close" in q) == 0
+    trajs = t.captured["grpo"]["B"]
+    assert trajs and all(tr.meta["credit"] == "terminal" for tr in trajs)
+    assert rec["reward_signals"]["dense_immediate_total"] == 0.0
+    assert rec["reward_signals"]["terminal_total"] != 0.0
+
+
+def test_terminal_matches_zero_weight_ensemble_credit_exactly():
+    shared = {
+        "n_secrets": 2, "episodes_per_secret": 2, "max_turns": 2,
+        "categories": ["animal"], "gamma": 1.0, "w_ensemble": 0.0,
+    }
+    terminal = _make_trainer(
+        _config(twentyq={**shared, "credit": "terminal"}),
+        list(CREATOR_OK), list(GUESSER_OK))
+    ensemble = _make_trainer(
+        _config(twentyq={**shared, "credit": "ensemble"}),
+        list(CREATOR_OK), list(GUESSER_OK))
+    ensemble._ensemble_potentials = lambda ep, secret: [0.0] * (ep.turns_used + 1)
+
+    terminal.run_iteration(0)
+    ensemble.run_iteration(0)
+
+    t_trajs = terminal.captured["grpo"]["B"]
+    e_trajs = ensemble.captured["grpo"]["B"]
+    assert len(t_trajs) == len(e_trajs)
+    for t_traj, e_traj in zip(t_trajs, e_trajs):
+        assert t_traj.reward == pytest.approx(e_traj.reward)
+        assert t_traj.advantage == pytest.approx(e_traj.advantage)
+        assert t_traj.meta["turn"] == e_traj.meta["turn"]
+
+
+def test_v4_config_queues_clean_four_arm_defaults():
+    cfg = Config.from_yaml("configs/twentyq-full-v4.yaml")
+    assert (cfg.twentyq.n_secrets, cfg.twentyq.episodes_per_secret) == (10, 16)
+    assert cfg.twentyq.credit == "terminal"
+    assert cfg.twentyq.recent_secret_window == 128
+    assert cfg.twentyq.validation_every == 10
+    assert cfg.twentyq.reward_log is True
+    assert cfg.twentyq.generation_batch_size == 16
+    assert cfg.twentyq.ensemble_batch_size == 4
+    assert cfg.roles.swap_interval == 0
+    assert cfg.train.iters == 60

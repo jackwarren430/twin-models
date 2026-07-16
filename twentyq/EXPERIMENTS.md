@@ -507,3 +507,68 @@ further reweighting. Candidate exp-fullv4.
 `validation_every` stationary eval (greedy, frozen-base answerer, sparse/dense/
 combined split) added after v3 launched is the intended clean metric going forward;
 neither v3 arm has validation rows (both predate that code).
+
+## exp-fullv4 — rolling diversity + clean reward/rotation matrix (QUEUED 2026-07-15)
+
+Config: `configs/twentyq-full-v4.yaml`. Four 60-iteration arms form a clean 2x2
+matrix over role rotation and ensemble reward:
+
+    arm                       credit      swap_interval
+    q-fullv4-ctrl-terminal    terminal    0
+    q-fullv4-ctrl-ensemble    ensemble    0
+    q-fullv4-rot-terminal     terminal    5
+    q-fullv4-rot-ensemble     ensemble    5
+
+Run the no-rotation terminal arm first. `credit: terminal` is deliberately not
+legacy broadcast: it uses the same terminal reward-to-go and same-turn-index
+GRPO baselines as `credit: ensemble`, but adds no dense reward. Thus the reward
+factor changes only the ensemble potential term; the rotation factor changes
+only role assignment. The ensemble arms retain v3's `w_ensemble: 0.1`.
+
+All arms use the new shared `recent_secret_window: 128`, N10 creator groups and
+K16 solver groups (160 episodes/iteration, +67% from v3's N8/K12), fail-open
+validity, and `grpo_microbatch: 1`. Rollouts advance the K sibling episodes in
+lockstep with `generation_batch_size: 16`; frozen history scoring uses
+`ensemble_batch_size: 4`. A 2026-07-15 Spark smoke benchmark selected these
+settings (details in `DESIGN.md` §6.6) and completed with all models resident.
+V3 measured 47.3 GB mean / 49.77 GB max. Peak backward memory remains bounded by
+one trajectory, but a full v4 iteration has not yet been timed; verify the first
+control before any further N/K increase.
+
+Stationary validation runs before training at step 0 and after completed steps
+10, 20, 30, 40, 50, and 60. `reward_log: true` writes a compact sidecar for every
+training iteration and validation pass with terminal, ensemble/dense, combined,
+and turn-zero-return aggregates. Validation computes the ensemble signal as a
+diagnostic in all four arms; it is not retroactively applied to terminal-arm
+training. Primary comparisons are fixed-validation guess rate and terminal
+outcome; secondary read-outs are training guess rate, ensemble gain, repeat
+rates, creator calibration, format failures, and peak memory.
+
+**STOPPED (2026-07-16): arm A (`q-fullv4-ctrl-terminal`) halted at iteration 18
+on creator secret collapse.** The rolling exclusion list was working as coded
+but the creator ignored it, increasingly so with training: attempt-0
+exact-repeat rate 0.0 -> 0.9, Okapi at 8/10 animal ranks by iteration 11 with
+Okapi listed in the prompt's exclusion block, cumulative creator advantage
++3.51 on Okapi (+1.19 Extension cord, +1.30 Black Garlic). Root causes and the
+full advantage accounting are in DESIGN.md §6.5; the prompt-only intervention
+loses to the reward gradient it is embedded in, and with solver guess rate ~0
+repetition of any obscure entity is reward-optimal. The 18 iterations DID
+verify the batching pipeline: 23.4 min/iteration at 160 episodes vs v3's 36.2
+min at 96 (2.6x per-episode throughput), peak 46.7-50.0 GB, no OOM.
+
+**RESTART plan (labeled v4.5):** all four arms restart FROM SCRATCH (the
+collapse is baked into the step-10/18 checkpoints, and arms must share one
+reward definition) under run names `q-fullv45-{ctrl,rot}-{terminal,ensemble}`
+— same `configs/twentyq-full-v4.yaml`, now with `repeat_handling: retry`
+(DESIGN §6.5b): attempt-0 repeats against the
+in-prompt exclusion list are voided at the repeat gate (no episodes, reward
+0.0 in the creator group) and re-sampled ONCE at creator_temp with the
+excluded secrets masked to -inf at the logits level (`bad_words_ids` +
+case/space/plural variants); a playable retry earns its real game reward, a
+still-matching retry voids the rank. Attempt-0 repeat-rate telemetry keeps v4
+semantics and stays directly comparable to the stopped run; new per-iteration
+read-outs are `playable_rate`, `repeat_voided`, `repeat_retries`,
+`repeat_retry_playable`, and `sampled_secrets` (which also makes resume
+restoration exact). Expected signatures if the gate works: attempt-0 repeat
+rate DECLINES over iterations instead of climbing, playable_rate recovers
+toward 1.0, and no secret accumulates a large positive cumulative advantage.

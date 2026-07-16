@@ -1,0 +1,145 @@
+# 21-questions FULL v4: clean 2x2 terminal-vs-ensemble x control-vs-rotation.
+#
+# Changes from v3:
+#   - 60 iterations per arm.
+#   - Shared recent-secret window (128 parsed secrets) to reduce creator reuse.
+#   - True pre-training validation at step 0, then steps 10..60.
+#   - Compact <run>.rewards.jsonl sidecar with terminal/ensemble decomposition.
+#   - N 8 -> 10 and K 12 -> 16: 160 episodes/iteration, +67% over v3's 96.
+#   - Lockstep guesser/answerer generation at batch 16 and ensemble history
+#     scoring at batch 4. Spark smoke tests found these throughput optima and
+#     verified batch-16 generation with the policy plus all four frozen scorers
+#     resident at once (42.75 GB peak CUDA allocation; no OOM).
+#   - repeat_handling: retry (added 2026-07-16 after the first arm-A attempt
+#     collapsed onto per-category attractor secrets by iteration 18 — Okapi at
+#     8/10 ranks with the exclusion list in-prompt; DESIGN §6.5/§6.5b,
+#     EXPERIMENTS exp-fullv4 STOPPED note). Repeats against the in-prompt
+#     exclusion list are voided (no episodes, repeat-gate reward 0.0) and
+#     re-sampled once at creator_temp with the excluded secrets masked to
+#     -inf at the logits level. ALL ARMS RESTART FROM SCRATCH under this
+#     setting; the stopped run's logs remain for the before/after comparison.
+#
+# v3 peaked at 49.77 GB on the 128 GB Spark. grpo_microbatch=1 still scores one
+# trajectory at a time, so N*K primarily increases signal and backward wall time,
+# not peak backward memory. Batching materially reduces rollout/scoring time, but
+# no full iteration has been timed yet; use the first control as the authoritative
+# iteration-time and peak-memory check before increasing N or K again.
+#
+# The terminal arms use credit=terminal, not legacy broadcast. It assigns the
+# terminal return with the same per-turn/index grouping used by credit=ensemble,
+# so the ensemble term is the only reward/credit difference in the 2x2 matrix.
+#
+# Run sequentially (start with A). The repeat-handling restart runs are labeled
+# v4.5 so the stopped q-fullv4-ctrl-terminal logs stay distinct for the
+# before/after repeat-rate comparison:
+#
+# A. no rotation, terminal only (first control)
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-full-v4.yaml --credit terminal --swap-interval 0 \
+#   --run-name q-fullv45-ctrl-terminal \
+#   --checkpoints-dir checkpoints/twentyq-fullv45-ctrl-terminal
+#
+# B. no rotation, terminal + ensemble
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-full-v4.yaml --credit ensemble --swap-interval 0 \
+#   --run-name q-fullv45-ctrl-ensemble \
+#   --checkpoints-dir checkpoints/twentyq-fullv45-ctrl-ensemble
+#
+# C. rotation, terminal only
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-full-v4.yaml --credit terminal --swap-interval 5 \
+#   --run-name q-fullv45-rot-terminal \
+#   --checkpoints-dir checkpoints/twentyq-fullv45-rot-terminal
+#
+# D. rotation, terminal + ensemble
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-full-v4.yaml --credit ensemble --swap-interval 5 \
+#   --run-name q-fullv45-rot-ensemble \
+#   --checkpoints-dir checkpoints/twentyq-fullv45-rot-ensemble
+
+compute:
+  backend: torch
+  device: cuda
+  dtype: bfloat16
+  attn_impl: sdpa
+  tf32: true
+  matmul_precision: high
+  compile: false
+  grad_checkpointing: false
+
+model:
+  path: ~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/snapshots/9dbdf8a839e4e9e0eb56ed80cc8886661d3817cf
+  enable_thinking: false
+
+lora:
+  num_layers: 16
+  rank: 64
+  alpha: 128.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+
+twentyq:
+  n_secrets: 10
+  episodes_per_secret: 16
+  max_turns: 21
+  categories: ["animal", "food", "household object"]
+  recent_secret_window: 128
+  repeat_handling: retry
+  repeat_gate_reward: 0.0
+
+  # Default arm is the no-rotation/no-ensemble control. CLI overrides select
+  # the other three cells while all remaining settings stay identical.
+  credit: terminal
+  gamma: 1.0
+  w_ensemble: 0.1
+  ensemble_models: []
+  ensemble_device: cuda
+  ensemble_dtype: bfloat16
+
+  w_guess: 1.0
+  w_efficiency: 0.5
+  w_close: 0
+  w_format: 0.5
+  secret_validity: fail_open
+
+  creator_thinking: false
+  guesser_thinking: false
+  answerer_thinking: false
+  judge_thinking: false
+  secret_max_tokens: 512
+  question_max_tokens: 512
+  answer_max_tokens: 512
+  generation_batch_size: 16
+  ensemble_batch_size: 4
+
+  validation_every: 10
+  validation_secret_set: data/twentyq-validation-v1.json
+  validation_max_turns: 21
+  reward_log: true
+
+rewards:
+  target_hi: 0.9
+  target_lo: 0.1
+
+roles:
+  swap_interval: 0
+  warmup_iterations: 0
+  injection_rate: 0.0
+
+train:
+  iters: 60
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  adv_mode: mean
+  grpo_microbatch: 1
+  logit_chunk: 0
+  checkpoint_every: 10
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints/twentyq
+  runs: tq-runs

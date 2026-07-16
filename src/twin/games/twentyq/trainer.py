@@ -4,8 +4,13 @@
 Per iteration (creator/guesser assignment from the shared RoleManager):
 
     creator: N secret rollouts (dictated difficulty rank + target guess rate,
-             conditioned on previous secrets' JSONs)
+             excluding recent same-category and current-round secrets)
       -> parse gate (unparseable rank -> fixed low reward, no episodes)
+      -> repeat gate (twentyq.repeat_handling: a parsed secret matching the
+         in-prompt exclusion list -> voided at repeat_gate_reward, no
+         episodes; "retry" then re-decodes the same prompt ONCE with the
+         excluded secrets masked to -inf, and a non-repeat retry plays the
+         rank's episodes and trains the creator with its real game reward)
       -> judge validity gate (invalid secret -> voided: no episodes,
          unscored, drags consistency)
       -> K episodes per playable secret (guesser = solver adapter asks,
@@ -34,10 +39,11 @@ grpo.py rests on (DESIGN §2.1).
 """
 
 import json
+from collections import deque
 from dataclasses import asdict
 from pathlib import Path
 
-from twin.games.twentyq.episode import run_episode
+from twin.games.twentyq.episode import run_episode, run_episodes_batched
 from twin.games.twentyq.judge import (
     judge_closeness,
     judge_secret_validity,
@@ -50,7 +56,6 @@ from twin.games.twentyq.prompts import (
     answerer_user,
     creator_secret_user,
     guesser_user,
-    secret_json_for_conditioning,
 )
 from twin.games.twentyq.rewards import (
     StepReward,
@@ -64,7 +69,13 @@ from twin.games.twentyq.rewards import (
     secrets_as_suite,
     shaped_reward_trace,
 )
-from twin.games.twentyq.schema import Secret, SecretParseError, parse_secret
+from twin.games.twentyq.schema import (
+    Secret,
+    SecretParseError,
+    guess_matches,
+    normalize_guess,
+    parse_secret,
+)
 from twin.problems.schema import ProblemSuite
 from twin.rl import Trajectory, group_advantages
 from twin.think import think_share
@@ -164,6 +175,84 @@ def _validation_metrics(rows: list[dict]) -> dict:
 
 class TwentyQTrainer(BaseTrainer):
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._reset_recent_secrets()
+
+    def _recent_window_size(self) -> int:
+        return max(0, int(self.cfg.twentyq.recent_secret_window))
+
+    def _reset_recent_secrets(self) -> None:
+        """Create the one global history shared by both creator adapters."""
+        self._recent_secrets = deque(maxlen=self._recent_window_size())
+
+    def _ensure_recent_secrets(self) -> None:
+        # Scripted unit-test trainers are intentionally built via __new__.
+        if not hasattr(self, "_recent_secrets"):
+            self._reset_recent_secrets()
+
+    def _recent_for_category(self, category: str) -> list[str]:
+        self._ensure_recent_secrets()
+        category_key = category.strip().casefold()
+        return [secret for saved_category, secret in self._recent_secrets
+                if saved_category.strip().casefold() == category_key]
+
+    def restore_recent_secrets(
+        self,
+        path: str | Path,
+        *,
+        before_iteration: int | None = None,
+    ) -> int:
+        """Rebuild rolling history from iteration rows in a run JSONL.
+
+        When a log contains retries of the same iteration, the last row wins,
+        matching the checkpoint reached by the most recent attempt.  Returning
+        the retained count makes resume behavior visible to the launcher.
+        """
+        self._reset_recent_secrets()
+        if not self._recent_window_size():
+            return 0
+
+        iterations: dict[int, dict] = {}
+        # Read defensively so a crash-truncated final JSONL line cannot prevent
+        # restoration of all earlier completed iterations.
+        with open(Path(path).expanduser()) as f:
+            for line in f:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (record.get("type") != "iteration"
+                        or record.get("mode") != "twentyq"):
+                    continue
+                iteration = record.get("iter")
+                if not isinstance(iteration, int):
+                    continue
+                if (before_iteration is not None
+                        and iteration >= before_iteration):
+                    continue
+                iterations[iteration] = record
+
+        for iteration in sorted(iterations):
+            record = iterations[iteration]
+            category = str(record.get("category", "")).strip()
+            if not category:
+                continue
+            # ``sampled_secrets`` (every parsed output in sample order, voided
+            # repeats and masked retries included) is authoritative — it is
+            # exactly what entered the live deque. Older logs predate the
+            # field; their summaries ARE their full sample stream.
+            sampled = record.get("sampled_secrets")
+            if isinstance(sampled, list):
+                names = sampled
+            else:
+                names = [s.get("secret") for s in record.get("secrets", [])]
+            for name in names:
+                name = str(name or "").strip()
+                if name:
+                    self._recent_secrets.append((category, name))
+        return len(self._recent_secrets)
+
     # Frozen-base grader for the NL judge contracts (validity and, for
     # non-ensemble credit, closeness Φ; the truthfulness audit was removed
     # 2026-07-13). Uses the neutral twentyq JUDGE_SYSTEM (not the CAS math
@@ -194,8 +283,33 @@ class TwentyQTrainer(BaseTrainer):
         """Per-turn ensemble potentials Φ_0..Φ_T for one episode: the frozen
         ensemble's mean log-prob of ``secret`` given each Q/A history prefix."""
         ens = self._get_ensemble()
-        return [ens.score_history(state, secret.secret).score
-                for state in history_states(ep)]
+        states = history_states(ep)
+        size = max(1, int(self.cfg.twentyq.ensemble_batch_size))
+        if size == 1:
+            return [ens.score_history(state, secret.secret).score
+                    for state in states]
+        return [score.score for score in ens.score_histories(
+            states, [secret.secret] * len(states), batch_size=size)]
+
+    def _ensemble_potentials_many(self, episodes, secret) -> list[list[float]]:
+        """Score all history prefixes across sibling episodes in shared chunks."""
+        size = max(1, int(self.cfg.twentyq.ensemble_batch_size))
+        if size == 1:
+            return [self._ensemble_potentials(ep, secret) for ep in episodes]
+        states_by_episode = [history_states(ep) for ep in episodes]
+        flat_states = [state for states in states_by_episode for state in states]
+        scores = self._get_ensemble().score_histories(
+            flat_states,
+            [secret.secret] * len(flat_states),
+            batch_size=size,
+        )
+        out = []
+        cursor = 0
+        for states in states_by_episode:
+            stop = cursor + len(states)
+            out.append([score.score for score in scores[cursor:stop]])
+            cursor = stop
+        return out
 
     # ----- player closures --------------------------------------------------
     def _make_guesser(self, adapter: str, category: str, *,
@@ -214,6 +328,25 @@ class TwentyQTrainer(BaseTrainer):
             )
         return guesser_fn
 
+    def _make_guesser_batch(self, adapter: str, category: str, *,
+                            max_turns: int | None = None,
+                            temp: float | None = None):
+        qcfg = self.cfg.twentyq
+        turn_budget = qcfg.max_turns if max_turns is None else max_turns
+        sampling_temp = self.cfg.gen.solver_temp if temp is None else temp
+
+        def guesser_batch_fn(requests):
+            users = [guesser_user(category, qa_pairs, turn_index, turn_budget)
+                     for qa_pairs, turn_index in requests]
+            return self._generate_batch(
+                adapter, GUESSER_SYSTEM, users,
+                max_tokens=qcfg.question_max_tokens,
+                temp=sampling_temp,
+                completion_batch_size=qcfg.generation_batch_size,
+                enable_thinking=qcfg.guesser_thinking,
+            )
+        return guesser_batch_fn
+
     def _make_answerer(self, adapter: str, secret, *, temp: float | None = None):
         # Low temperature: answering is a truthfulness task, not exploration.
         sampling_temp = self.cfg.gen.oracle_temp if temp is None else temp
@@ -228,6 +361,24 @@ class TwentyQTrainer(BaseTrainer):
             )
             return gen.text
         return answerer_fn
+
+    def _make_answerer_batch(self, adapter: str, secret, *,
+                             temp: float | None = None):
+        qcfg = self.cfg.twentyq
+        sampling_temp = self.cfg.gen.oracle_temp if temp is None else temp
+
+        def answerer_batch_fn(requests):
+            users = [answerer_user(secret.secret, secret.category, question)
+                     for question, _qa_pairs in requests]
+            generations = self._generate_batch(
+                adapter, ANSWERER_SYSTEM, users,
+                max_tokens=qcfg.answer_max_tokens,
+                temp=sampling_temp,
+                completion_batch_size=qcfg.generation_batch_size,
+                enable_thinking=qcfg.answerer_thinking,
+            )
+            return [gen.text for gen in generations]
+        return answerer_batch_fn
 
     def _episode_prompts(self, ep, secret, category: str, max_turns: int) -> dict:
         """Reconstruct the exact per-turn INPUT prompts the players saw, for the
@@ -366,6 +517,9 @@ class TwentyQTrainer(BaseTrainer):
         record = {
             "step": step,
             "mode": "twentyq_validation",
+            "credit": qcfg.credit,
+            "diagnostic_ensemble": True,
+            "w_ensemble": qcfg.w_ensemble,
             "secret_set": meta,
             "max_turns": max_turns,
             "decoding": "greedy",
@@ -402,6 +556,7 @@ class TwentyQTrainer(BaseTrainer):
     def run_iteration(self, iteration: int) -> dict:
         cfg = self.cfg
         qcfg = cfg.twentyq
+        self._ensure_recent_secrets()
         # Optional GRPO-structured transcript tree (injected by the launch
         # script; absent for scripted __new__ test trainers). When present we
         # accumulate per-member / per-episode structured data and write the
@@ -424,49 +579,133 @@ class TwentyQTrainer(BaseTrainer):
         )
 
         # --- creator: N secret rollouts, dictated difficulty ----------------
-        rollouts: list[dict] = []      # bookkeeping per rank, parsed or not
-        secrets = []                   # parsed secrets, in rank order
-        prev_jsons: list[str] = []
+        # Repeat handling (DESIGN §6.5): attempt 0 is always unconstrained (it
+        # measures the policy's repeat propensity and gives the repeat gate an
+        # on-policy trajectory to train against). Under "void"/"retry" a parsed
+        # secret matching the exclusion list it was shown is voided — no
+        # episodes, fixed repeat_gate_reward in the creator GRPO group — and
+        # "retry" then re-decodes the SAME prompt once at creator_temp with
+        # every excluded secret banned at the logits level, so the sample comes
+        # from the renormalized non-excluded distribution instead of praying.
+        repeat_mode = qcfg.repeat_handling
+        if repeat_mode not in ("off", "void", "retry"):
+            raise ValueError(
+                f"unknown twentyq.repeat_handling: {repeat_mode!r} "
+                "(expected off | void | retry)")
+        rollouts: list[dict] = []      # bookkeeping per attempt, parsed or not
+        secrets = []                   # playable secrets, in sample order
+        current_secrets: list[str] = []
+        sampled_secrets: list[str] = []   # every parsed output, in sample order
+        recent_category_secrets = self._recent_for_category(category)
+        exact_repeats: list[bool] = []
+        normalized_repeats: list[bool] = []
+        n_repeat_voided = n_repeat_retries = n_retry_playable = 0
         creator_think: list[float] = []
-        for i in range(n):
-            difficulty = round(i / (n - 1), 2) if n > 1 else 0.5
-            user = creator_secret_user(
-                category, i, n, difficulty, targets[i],
-                previous=prev_jsons or None,
-            )
-            if cfg.train.log_prompts:
-                self._tr(f"prompt creator[{i}]", user)
+
+        def sample_secret(i, difficulty, user, *, banned=None):
+            """One creator rollout -> (roll, parsed Secret | None)."""
+            # banned_strings is only passed on masked retries, so scripted
+            # test fakes of _generate never need the kwarg on the plain path.
+            extra = {"banned_strings": banned} if banned is not None else {}
             gen = self._generate(
                 assign.creator, CREATOR_SYSTEM, user,
                 max_tokens=qcfg.secret_max_tokens, temp=cfg.gen.creator_temp,
                 enable_thinking=qcfg.creator_thinking,
+                **extra,
             )
             roll = {
                 "rank": i,
+                "difficulty": float(difficulty),
                 "prompt_tokens": gen.prompt_tokens,
                 "completion_tokens": gen.completion_tokens,
                 "parsed": False,
+                "playable": False,
+                "repeat": False,
+                "retry": banned is not None,
                 "_user": user,            # for the transcript tree (cheap str refs)
                 "_completion": gen.text,
             }
             creator_think.append(think_share(gen.text))
-            self._tr(f"creator[{i}] adapter={assign.creator} "
-                     f"difficulty={difficulty:.2f} target={targets[i]:.2f}",
-                     gen.text)
             try:
                 secret = parse_secret(gen.text, default_category=category)
             except SecretParseError as e:
                 roll["error"] = str(e)[:120]
-                self._tr(f"creator[{i}] PARSE-FAIL", str(e)[:200])
-                rollouts.append(roll)
-                continue
+                return roll, None
             secret.difficulty = float(difficulty)   # dictated, not claimed
             roll["parsed"] = True
             roll["secret"] = secret.secret
+            return roll, secret
+
+        def keep_playable(roll, secret):
+            roll["playable"] = True
+            roll["secret_index"] = len(secrets)
             rollouts.append(roll)
             secrets.append(secret)
-            prev_jsons.append(secret_json_for_conditioning(
-                secret.secret, secret.category, difficulty))
+            current_secrets.append(secret.secret)
+
+        for i in range(n):
+            difficulty = round(i / (n - 1), 2) if n > 1 else 0.5
+            user = creator_secret_user(
+                category, i, n, difficulty, targets[i],
+                previous=current_secrets or None,
+                recent=recent_category_secrets or None,
+            )
+            if cfg.train.log_prompts:
+                self._tr(f"prompt creator[{i}]", user)
+            exclusions = recent_category_secrets + current_secrets
+            roll, secret = sample_secret(i, difficulty, user)
+            self._tr(f"creator[{i}] adapter={assign.creator} "
+                     f"difficulty={difficulty:.2f} target={targets[i]:.2f}",
+                     roll["_completion"])
+            if secret is None:
+                self._tr(f"creator[{i}] PARSE-FAIL", roll["error"])
+                rollouts.append(roll)
+                continue
+            sampled_secrets.append(secret.secret)
+            # Attempt-0 repeat propensity telemetry — unchanged from v4 so the
+            # rates stay comparable across repeat_handling modes.
+            exact_repeats.append(any(secret.secret == old for old in exclusions))
+            normalized = normalize_guess(secret.secret)
+            normalized_repeats.append(bool(normalized) and any(
+                normalized == normalize_guess(old) for old in exclusions
+            ))
+            is_repeat = repeat_mode != "off" and any(
+                guess_matches(secret.secret, old) for old in exclusions)
+            if not is_repeat:
+                keep_playable(roll, secret)
+                continue
+
+            roll["repeat"] = True
+            n_repeat_voided += 1
+            self._tr(f"creator[{i}] REPEAT-VOID '{secret.secret}'",
+                     f"matched the exclusion list shown in-prompt "
+                     f"(repeat_handling={repeat_mode})")
+            rollouts.append(roll)
+            if repeat_mode != "retry":
+                continue
+
+            n_repeat_retries += 1
+            retry_roll, retry_secret = sample_secret(
+                i, difficulty, user, banned=exclusions)
+            self._tr(f"creator[{i}] MASKED-RETRY adapter={assign.creator} "
+                     f"banned={len(exclusions)} secrets",
+                     retry_roll["_completion"])
+            if retry_secret is None:
+                self._tr(f"creator[{i}] RETRY PARSE-FAIL", retry_roll["error"])
+                rollouts.append(retry_roll)
+                continue
+            sampled_secrets.append(retry_secret.secret)
+            if any(guess_matches(retry_secret.secret, old) for old in exclusions):
+                # Tokenization-variant slip past the ban list: a repeat never
+                # plays episodes, so the rank is voided outright.
+                retry_roll["repeat"] = True
+                n_repeat_voided += 1
+                self._tr(f"creator[{i}] RETRY REPEAT-VOID "
+                         f"'{retry_secret.secret}'")
+                rollouts.append(retry_roll)
+                continue
+            n_retry_playable += 1
+            keep_playable(retry_roll, retry_secret)
 
         # --- judge validity gate + episodes per playable secret -------------
         solver_trajs: list[Trajectory] = []
@@ -484,14 +723,14 @@ class TwentyQTrainer(BaseTrainer):
         # is attached; each dict gathers the Episode plus its per-turn credit.
         ep_entries_by_secret: dict[int, list] = {}
 
-        parsed_ranks = [r["rank"] for r in rollouts if r["parsed"]]
+        playable_ranks = [r["rank"] for r in rollouts if r["playable"]]
         for si, secret in enumerate(secrets):
             valid = judge_secret_validity(
                 secret, self._grade, mode=qcfg.secret_validity).correct
             self._tr(f"secret[{si}] '{secret.secret}' valid={valid}")
             summary = {
                 "secret": secret.secret, "difficulty": secret.difficulty,
-                "target": round(float(targets[parsed_ranks[si]]), 3),
+                "target": round(float(targets[playable_ranks[si]]), 3),
                 "valid": bool(valid), "episodes": [],
             }
             if not valid:
@@ -507,9 +746,19 @@ class TwentyQTrainer(BaseTrainer):
             guesser_fn = self._make_guesser(assign.solver, category)
             kept_eps, kept_rewards = [], []
             sec_entries: list[dict] = []   # transcript-tree episode entries
-            for ki in range(k):
-                ep = run_episode(guesser_fn, answerer_fn, secret,
-                                 max_turns=qcfg.max_turns)
+            if qcfg.generation_batch_size > 1:
+                episodes = run_episodes_batched(
+                    self._make_guesser_batch(assign.solver, category),
+                    self._make_answerer_batch(assign.creator, secret),
+                    secret,
+                    n_episodes=k,
+                    max_turns=qcfg.max_turns,
+                )
+            else:
+                episodes = [run_episode(
+                    guesser_fn, answerer_fn, secret, max_turns=qcfg.max_turns)
+                    for _ in range(k)]
+            for ki, ep in enumerate(episodes):
                 n_episodes += 1
                 n_answer_ffails += ep.n_answer_format_fails
                 if ep.ended == "format":
@@ -535,10 +784,9 @@ class TwentyQTrainer(BaseTrainer):
                 # data (q-full-rot: ~6 void + up to 13/40 unauditable per iter).
                 # Every episode now trains; consistency = validity alone.
                 phi = None
-                # credit="ensemble" supplies its own dense per-turn signal from
-                # the frozen ensemble (below); skip the judge closeness call so
-                # the two shaping sources never double-count on a failed episode.
-                if not ep.guessed and qcfg.credit != "ensemble":
+                # Ensemble supplies its own dense signal; terminal is the clean
+                # no-dense control. Neither needs the judge-closeness scorer.
+                if not ep.guessed and qcfg.credit not in ("ensemble", "terminal"):
                     final_guess = (ep.turns[-1].content
                                    if ep.turns and ep.turns[-1].kind == "guess"
                                    else None)
@@ -579,14 +827,28 @@ class TwentyQTrainer(BaseTrainer):
                     # r_t = w_ensemble·(γ·Φ_{t+1} − Φ_t) reward-to-go, and add the
                     # sparse terminal reward on the last turn (rewards.py). One
                     # ensemble pass per history state; no per-turn judge call.
-                    potentials = [self._ensemble_potentials(ep, secret)
-                                  for ep in kept_eps]
+                    potentials = self._ensemble_potentials_many(kept_eps, secret)
                     traces = [ensemble_reward_trace(
                         pots, rew.total, gamma=qcfg.gamma, scale=qcfg.w_ensemble)
                         for pots, rew in zip(potentials, kept_rewards)]
                     returns = [[s.return_ for s in trace] for trace in traces]
                     new_trajs = per_turn_secret_trajectories(
                         kept_eps, returns, adv_mode=cfg.train.adv_mode)
+                    solver_trajs.extend(new_trajs)
+                    adv_map = _solver_adv_map(new_trajs)
+                elif qcfg.credit == "terminal":
+                    # Same reward-to-go and turn-index comparison groups as the
+                    # ensemble arm, with identically-zero potentials. This
+                    # isolates the ensemble term without loading/scoring it.
+                    traces = [ensemble_reward_trace(
+                        [0.0] * (ep.turns_used + 1), rew.total,
+                        gamma=qcfg.gamma, scale=0.0)
+                        for ep, rew in zip(kept_eps, kept_rewards)]
+                    returns = [[s.return_ for s in trace] for trace in traces]
+                    new_trajs = per_turn_secret_trajectories(
+                        kept_eps, returns, adv_mode=cfg.train.adv_mode)
+                    for traj in new_trajs:
+                        traj.meta["credit"] = "terminal"
                     solver_trajs.extend(new_trajs)
                     adv_map = _solver_adv_map(new_trajs)
                 elif qcfg.credit == "per_turn":
@@ -660,17 +922,21 @@ class TwentyQTrainer(BaseTrainer):
         # --- creator rewards: per-secret credit (see module docstring) ------
         creator_trajs: list[Trajectory] = []
         gate_total = self.engine.creator_parse_gate().total
+        repeat_gate = float(qcfg.repeat_gate_reward)
         r_gradient = 0.0
         creator_total = None
+        secret_rewards: list[float] = []
         if secrets:
             suite = secrets_as_suite(secrets, category=category)
-            target_by_secret = [targets[rank] for rank in parsed_ranks]
+            target_by_secret = [targets[rank] for rank in playable_ranks]
             secret_rewards = self.engine.creator_problem_rewards(
                 suite, rates, consistent,
                 scored_mask=scored, target_by_problem=target_by_secret,
             )
             # Suite-level view for the log (same quantities the self-play
             # r_gradient curve tracks), incl. expected_n parse-drop scaling.
+            # Repeat-voided ranks are absent from the suite, so they scale
+            # r_gradient down exactly like parse drops.
             creward = self.engine.creator_reward(
                 suite, rates, consistent,
                 scored_mask=scored, expected_n=n,
@@ -678,17 +944,23 @@ class TwentyQTrainer(BaseTrainer):
             )
             r_gradient = creward.r_gradient
             creator_total = creward.total
-            rw = iter(secret_rewards)
-            roll_rewards = [next(rw) if r["parsed"] else gate_total
-                            for r in rollouts]
-        else:
-            roll_rewards = [gate_total for _ in rollouts]
+        # Voided repeats earn the fixed repeat gate: well-formed but disallowed
+        # by the exclusion list they were shown, so below every honest secret
+        # while a parse failure stays strictly worse.
+        roll_rewards = [
+            secret_rewards[r["secret_index"]] if r["playable"]
+            else repeat_gate if r["repeat"]
+            else gate_total
+            for r in rollouts
+        ]
         for roll, reward in zip(rollouts, roll_rewards):
             creator_trajs.append(Trajectory(
                 roll["prompt_tokens"], roll["completion_tokens"], reward=reward,
-                meta={"parsed": roll["parsed"], "rank": roll["rank"]},
+                meta={"parsed": roll["parsed"], "rank": roll["rank"],
+                      "repeat": roll["repeat"], "retry": roll["retry"]},
             ))
-        # Creator GRPO group = the N secret rollouts this iteration.
+        # Creator GRPO group = this iteration's secret rollouts (the N ranks
+        # plus any masked retries — a retry is one more same-policy rollout).
         for t, a in zip(creator_trajs, group_advantages(
                 [t.reward for t in creator_trajs], mode=cfg.train.adv_mode)):
             t.advantage = a
@@ -702,6 +974,14 @@ class TwentyQTrainer(BaseTrainer):
             f"creator loss={creator_metrics['loss']:.4f} kl={creator_metrics['kl']:.4f}"
         )
 
+        # Parsed outputs enter history regardless of validity or repeat status
+        # (the deque tracks creator sampling, not playable episodes) — masked
+        # retries included. Delaying this until the iteration successfully
+        # finishes keeps in-memory state aligned with what can be restored
+        # from the completed run-log row's ``sampled_secrets`` field.
+        for name in sampled_secrets:
+            self._recent_secrets.append((category, name))
+
         adapter_norm = {nm: round(self.adapters.global_norm(nm), 6)
                         for nm in self.adapters.NAMES}
         adapter_drift = {nm: round(self.adapters.drift_from(nm, self._init_trees[nm]), 6)
@@ -714,9 +994,24 @@ class TwentyQTrainer(BaseTrainer):
             "creator": assign.creator,
             "solver": assign.solver,
             "n_swaps": assign.n_swaps,
+            "generation_batch_size": qcfg.generation_batch_size,
+            "ensemble_batch_size": qcfg.ensemble_batch_size,
             "creator_reward_mean": round(_mean([t.reward for t in creator_trajs]), 4),
             "solver_reward_mean": round(_mean([t.reward for t in solver_trajs]), 4),
-            "parse_ok_rate": round(len(secrets) / max(1, n), 3),
+            "parse_ok_rate": round(
+                sum(1 for r in rollouts if not r["retry"] and r["parsed"])
+                / max(1, n), 3),
+            "playable_rate": round(len(secrets) / max(1, n), 3),
+            "repeat_handling": repeat_mode,
+            "repeat_voided": n_repeat_voided,
+            "repeat_retries": n_repeat_retries,
+            "repeat_retry_playable": n_retry_playable,
+            "sampled_secrets": list(sampled_secrets),
+            "recent_secret_exact_repeat_rate": round(
+                sum(exact_repeats) / max(1, len(exact_repeats)), 4),
+            "recent_secret_normalized_repeat_rate": round(
+                sum(normalized_repeats) / max(1, len(normalized_repeats)), 4),
+            "recent_secret_history_size": len(self._recent_secrets),
             "validity_rate": round(
                 sum(1 for s in secret_summaries if s["valid"]) / max(1, len(secret_summaries)), 3),
             "guess_rate_mean": round(_mean([r for r, s in zip(rates, scored) if s]), 4),
@@ -764,18 +1059,23 @@ class TwentyQTrainer(BaseTrainer):
         # same rollouts / secret_summaries / creator_trajs the record uses, so it
         # never re-runs a model. See twin.log.transcript_tree.
         if tree is not None:
-            si_by_rank = {parsed_ranks[si]: si for si in range(len(secrets))}
             members = []
             for idx, roll in enumerate(rollouts):
                 rank = roll["rank"]
-                si = si_by_rank.get(rank)
                 ctraj = creator_trajs[idx]
                 if not roll["parsed"]:
                     member = {"rank": rank, "status": "parse_fail", "secret": None,
                               "difficulty": None, "valid": None,
                               "guess_rate": None, "consistent": None,
                               "episodes": []}
+                elif roll["repeat"]:
+                    member = {"rank": rank, "status": "repeat_void",
+                              "secret": roll["secret"],
+                              "difficulty": roll["difficulty"], "valid": None,
+                              "guess_rate": None, "consistent": None,
+                              "episodes": []}
                 else:
+                    si = roll["secret_index"]
                     summ = secret_summaries[si]
                     member = {
                         "rank": rank,
@@ -789,6 +1089,7 @@ class TwentyQTrainer(BaseTrainer):
                     }
                 member.update({
                     "target": float(targets[rank]),
+                    "retry": roll["retry"],
                     "system": CREATOR_SYSTEM, "user": roll.get("_user"),
                     "completion": roll.get("_completion"),
                     "parse_error": roll.get("error"),

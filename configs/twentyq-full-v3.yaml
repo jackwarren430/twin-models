@@ -76,6 +76,7 @@ twentyq:
   episodes_per_secret: 12    # K (solver GRPO group size; v2 was 8)
   max_turns: 21               # T
   categories: ["animal", "food", "household object"]
+  recent_secret_window: 128  # shared across creators/rotations; 0 disables
 
   # ----- ENSEMBLE dense reward (this pipeline's point) -----
   # Per turn: r_t = w_ensemble * (gamma * score(history_t) - score(history_{t-1})),

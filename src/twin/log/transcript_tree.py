@@ -198,11 +198,16 @@ class TwentyQTranscriptTree:
 
     # ----- one creator GRPO member (folder) ---------------------------------
     def _write_member(self, idir: Path, m: dict[str, Any], *, category, credit) -> None:
+        # A masked repeat-resample shares its rank with the voided attempt (and,
+        # on a variant slip, possibly its slug) — the __RETRY marker keeps the
+        # two folders distinct.
+        retry = "__RETRY" if m.get("retry") else ""
         if m["status"] == "parse_fail":
-            name = f"creator_{m['rank']}__PARSE-FAIL"
+            name = f"creator_{m['rank']}__PARSE-FAIL{retry}"
         else:
-            suffix = "__INVALID" if m["status"] == "invalid" else ""
-            name = f"creator_{m['rank']}__{_slug(m['secret'])}{suffix}"
+            suffix = {"invalid": "__INVALID",
+                      "repeat_void": "__REPEAT-VOID"}.get(m["status"], "")
+            name = f"creator_{m['rank']}__{_slug(m['secret'])}{suffix}{retry}"
         mdir = idir / name
         mdir.mkdir(parents=True, exist_ok=True)
         self._write(mdir / "_creator.md", self._render_creator(m, category=category))
@@ -228,7 +233,7 @@ class TwentyQTranscriptTree:
             "|---|---|",
             f"| rank (dictated difficulty) | {m['rank']} ({_fnum(m.get('difficulty'), 2)}) |",
             f"| target guess rate | {_fnum(m.get('target'), 2)} |",
-            f"| status | {m['status']} |",
+            f"| status | {m['status']}{' (masked retry)' if m.get('retry') else ''} |",
             f"| validity | {m.get('valid')} |",
             f"| realized guess_rate | {_fnum(m.get('guess_rate'))} |",
             f"| consistent | {m.get('consistent')} |",

@@ -163,3 +163,85 @@ def run_episode(
 
     ep.ended = "budget"
     return ep
+
+
+def run_episodes_batched(
+    guesser_batch_fn: Callable[[list[tuple[list[tuple[str, str]], int]]], list[Any]],
+    answerer_batch_fn: Callable[[list[tuple[str, list[tuple[str, str]]]]], list[str]],
+    secret: Secret,
+    *,
+    n_episodes: int,
+    max_turns: int,
+) -> list[Episode]:
+    """Play sibling episodes in lockstep while preserving :func:`run_episode`.
+
+    At turn ``t`` every still-active episode contributes one guesser prompt to
+    a batch. Questions from that batch then form a separate answerer batch;
+    correct guesses, wrong engine-answered guesses, format failures, and ragged
+    termination retain the scalar engine's exact semantics.
+    """
+    episodes = [Episode(secret=secret) for _ in range(n_episodes)]
+    active = list(range(n_episodes))
+    for turn_index in range(max_turns):
+        if not active:
+            break
+        requests = [(list(episodes[i].qa_pairs), turn_index) for i in active]
+        generations = list(guesser_batch_fn(requests))
+        if len(generations) != len(active):
+            raise ValueError(
+                f"guesser batch returned {len(generations)} results "
+                f"for {len(active)} active episodes")
+
+        question_indices: list[int] = []
+        answer_requests: list[tuple[str, list[tuple[str, str]]]] = []
+        next_active: list[int] = []
+        for episode_index, gen in zip(active, generations):
+            ep = episodes[episode_index]
+            kind, content = parse_guesser_turn(gen.text)
+            turn = Turn(
+                index=turn_index,
+                kind=kind or "format_fail",
+                content=content,
+                answer=None,
+                raw_text=gen.text,
+                prompt_tokens=getattr(gen, "prompt_tokens", None),
+                completion_tokens=getattr(gen, "completion_tokens", None),
+            )
+            ep.turns.append(turn)
+
+            if kind is None:
+                ep.ended = "format"
+                continue
+            if kind == "guess":
+                if guess_matches(content, secret.secret):
+                    ep.guessed = True
+                    ep.ended = "guessed"
+                    continue
+                turn.answer = "NO"
+                next_active.append(episode_index)
+                continue
+
+            question_indices.append(episode_index)
+            answer_requests.append((content, list(ep.qa_pairs)))
+            next_active.append(episode_index)
+
+        if answer_requests:
+            raw_answers = list(answerer_batch_fn(answer_requests))
+            if len(raw_answers) != len(answer_requests):
+                raise ValueError(
+                    f"answerer batch returned {len(raw_answers)} results "
+                    f"for {len(answer_requests)} questions")
+            for episode_index, raw_answer in zip(question_indices, raw_answers):
+                ep = episodes[episode_index]
+                turn = ep.turns[-1]
+                answer = parse_answer(raw_answer)
+                if answer is None:
+                    ep.n_answer_format_fails += 1
+                    answer = "UNKNOWN"
+                turn.answer = answer
+                turn.answer_raw = raw_answer
+                turn.creator_answered = True
+
+        active = next_active
+
+    return episodes

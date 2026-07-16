@@ -150,18 +150,43 @@ class BaseTrainer:
         return result.text
 
     def _generate(self, adapter, system, user, *, max_tokens, temp,
-                  enable_thinking=None):
+                  enable_thinking=None, banned_strings=None):
         """Plain single-turn generation on ``adapter``. ``enable_thinking``
         defaults to the global ``model.enable_thinking`` (so SelfPlayTrainer is
         unchanged); the twentyq loop passes a per-role override, because a
         tight thinking budget truncates mid-trace into a zero-output turn
-        (q-shakeout-01: guesser think-share 1.0, every turn a format fail)."""
+        (q-shakeout-01: guesser think-share 1.0, every turn a format fail).
+        ``banned_strings`` masks those phrases (and surface variants) to -inf
+        at decode time — the twentyq masked repeat-resample."""
         self.adapters.activate(adapter)
         think = (self.cfg.model.enable_thinking if enable_thinking is None
                  else enable_thinking)
         prompt = self.base.render(user, system=system, enable_thinking=think)
         return self.base.generate(
-            prompt, max_tokens=max_tokens, temp=temp, top_p=self.cfg.gen.top_p
+            prompt, max_tokens=max_tokens, temp=temp, top_p=self.cfg.gen.top_p,
+            banned_strings=banned_strings,
+        )
+
+    def _generate_batch(self, adapter, system, users, *, max_tokens, temp,
+                        completion_batch_size, enable_thinking=None):
+        """Render and decode independent prompts under one active adapter.
+
+        ``completion_batch_size`` bounds concurrent KV caches. Batched sampling
+        changes the RNG stream but not any prompt's sampling distribution.
+        """
+        if not users:
+            return []
+        self.adapters.activate(adapter)
+        think = (self.cfg.model.enable_thinking if enable_thinking is None
+                 else enable_thinking)
+        prompts = [self.base.render(
+            user, system=system, enable_thinking=think) for user in users]
+        return self.base.generate_batch(
+            prompts,
+            max_tokens=max_tokens,
+            temp=temp,
+            top_p=self.cfg.gen.top_p,
+            completion_batch_size=max(1, int(completion_batch_size)),
         )
 
     # ----- inline-tool generation (legacy ReAct or Qwen3 native) ----------

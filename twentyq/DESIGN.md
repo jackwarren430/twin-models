@@ -62,7 +62,7 @@ thinking + question/guess. Every completion token is policy-sampled; no
 `loss_mask` needed. `rl/core.py`, both backends' `grpo_update`, and
 microbatching consume this unchanged.
 
-### 2.3 Credit granularity: episode-level broadcast (v1), per-turn reward-to-go (v2)
+### 2.3 Credit granularity: broadcast, per-turn, terminal, and ensemble
 
 - **v1 (broadcast):** episode k earns one scalar R_k; advantage
   A_k = R_k − mean(R over the K sibling episodes on that secret); every turn
@@ -84,6 +84,14 @@ microbatching consume this unchanged.
   reward-to-go against full-episode returns — wrong scale — so it was
   dropped at implementation). Judge cost: one closeness call per intermediate
   state (≈K·N·T per iteration) — this is why it is not v1.
+- **terminal-only (`twentyq.credit: terminal`):** sparse terminal reward-to-go
+  with the same turn-index sibling baselines as ensemble credit, but no dense
+  scorer. At `gamma: 1`, every turn in an episode receives the terminal scalar.
+  This is the matched no-ensemble control: it changes only the dense reward term,
+  unlike legacy broadcast credit, which would also change baseline grouping.
+- **ensemble (`twentyq.credit: ensemble`):** terminal reward-to-go plus frozen-
+  ensemble potential differences, baselined across sibling episodes at the same
+  turn index. This is the dense-reward treatment paired with terminal-only.
 
 Because shaping telescopes, v1's episode scalar still inherits Φ(final) as
 **partial credit on failed episodes** — direct mitigation of the mini-02
@@ -318,7 +326,8 @@ becomes the standing default for all runs *after* exp-fullv2.
 Shared plumbing is extracted to `BaseTrainer`; both trainers extend it.
 
 Config: new `twentyq:` section (dataclass `TwentyQConfig`) — n_secrets,
-episodes_per_secret, max_turns, categories, credit (`broadcast|per_turn`),
+episodes_per_secret, max_turns, categories, credit
+(`broadcast|per_turn|terminal|ensemble`),
 gamma, w_guess/w_efficiency/w_close, closeness_scale, answer budgets. Existing
 sections (model/lora/gen/roles/train/compute/paths/rewards) reused as-is.
 
@@ -590,8 +599,9 @@ weakens terminal credit for chunks that end before the outcome.
 
 ### 6.3 Stationary validation and reward observability (implemented 2026-07-14)
 
-`twentyq.validation_every` now schedules a post-update evaluation every X
-completed iterations (`0` disables it). Both adapters are evaluated as guessers
+`twentyq.validation_every` now schedules a pre-training baseline at step 0 and
+then a post-update evaluation every X completed iterations (`0` disables it).
+Both adapters are evaluated as guessers
 on the versioned `data/twentyq-validation-v1.json` set; the answerer is always the
 frozen base adapter. Both sides decode greedily, so validation neither updates
 weights nor advances the stochastic sampling stream used by training. Validation
@@ -608,3 +618,194 @@ legacy broadcast credit, the table explicitly distinguishes the terminal event
 on the last turn from the episode scalar assigned to every turn trajectory.
 Periodic evaluations also get a hierarchical
 `validation_step_N/adapter_{a,b}/secret_*.md` tree with the same per-turn fields.
+
+### 6.4 Deferred ticket: optional open-category play
+
+Keep category-constrained secret generation as the current default, but add an
+open-category mode in a future change. In that mode the creator may choose any
+real, commonly known, concrete entity and must still declare a broad category
+as metadata. Whether that declared category is revealed to the solver should be
+a separate option: creator-domain restriction and solver category hint are two
+different experimental variables.
+
+Evaluate open-category play independently from creator-diversity work. Removing
+the category constraint may broaden the output distribution, but it does not
+provide cross-iteration novelty pressure and therefore is not expected to solve
+secret repetition by itself. The near-term diversity direction is a bounded
+recent-secret exclusion list shared across iterations; open-category behavior
+remains a separate future ticket.
+
+### 6.5 Rolling recent-secret exclusions (implemented 2026-07-15)
+
+`twentyq.recent_secret_window` controls a single bounded deque of parsed creator
+secrets shared across adapters, iterations, and role rotations (`128` for the v4
+matrix; `0` disables cross-iteration history). Each entry retains the scheduled
+category. A creator prompt receives only deque entries from its current category,
+plus secrets already parsed earlier in the current iteration, and shows compact
+secret names rather than prior JSON objects. The prompt asks for neither exact
+repeats nor obvious variants.
+
+This is initially a prompt-and-measurement intervention only. A repeated secret
+is not rejected, regenerated, voided, or penalized. Each iteration logs raw-exact
+and normalized (case/article/punctuation/whitespace canonicalized) repeat rates
+over parsed outputs, along with the retained history size. Parsed outputs enter
+the deque whether or not the later validity judge accepts them, because the deque
+tracks creator sampling rather than playable episodes.
+
+On `--resume-step`, `scripts/train_twentyq.py` reconstructs the deque from the
+run JSONL before generation resumes, retaining only rows before the checkpoint
+step and only the newest configured number of secrets. If iterations were
+retried, the last JSONL row for an iteration wins; a crash-truncated final line
+is ignored. Reusing `--run-name` selects the same log automatically, while
+`--resume-log` permits resuming into a differently named output run.
+
+**Finding (v4 arm A, stopped at iteration 18, 2026-07-16): the prompt-only
+intervention loses to the reward gradient.** The exclusion list was plumbed
+correctly — iteration 11's transcripts show "Okapi" printed in the exclusion
+block and the creator picking Okapi anyway, 8 of 10 ranks. The attempt-0
+exact-repeat rate climbed 0.0 -> 0.9 over 18 iterations, and every repeat was
+byte-identical (normalized rate == exact rate throughout). Three causes:
+
+1. The base model's per-(category, rank) secret distribution is nearly a point
+   mass: the v3 sampling probe measured "Apple" 64/64 at temp 0.9, 97% at 1.5,
+   and 66% at 2.5 where parsing starts failing — sampler-side entropy cannot
+   create diversity that is not there.
+2. With the solver's guess rate ~0 at nearly every rank, the calibration
+   reward degenerates: any never-guessed obscure entity earns
+   `exp(-β·target²) + consistency + validity`, near-maximal at low targets, so
+   duplicates parked on the low-target half of the ramp systematically beat
+   the group mean. Repetition is reward-optimal under this regime.
+3. The exclusion block is part of the creator's training prompt, so every
+   positive-advantage repeat literally trains "see the exclusion list, ignore
+   it". Summing per-secret creator advantages over the run: Okapi +3.51
+   (accelerating: +0.75/+0.68/+0.68/+1.06 in iterations 11/13/15/16),
+   Black Garlic +1.30, Sichuan peppercorn +1.26, Extension cord +1.19. At
+   iteration 11, 112/160 episodes (70%) were rollout compute spent on
+   duplicate Okapi games.
+
+### 6.5b Repeat gate + masked resample (implemented 2026-07-16)
+
+`twentyq.repeat_handling` turns the exclusion list from advice into a
+constraint (`off` preserves the v4 arm-A prompt-and-measurement behaviour):
+
+- **Attempt 0 stays unconstrained.** It measures the policy's true repeat
+  propensity (the logged exact/normalized rates keep their v4 semantics) and
+  gives the gate an on-policy trajectory to train against.
+- **`void`**: a parsed attempt-0 secret matching the exclusion list it was
+  shown (`guess_matches`: normalized + bare-plural tolerance — deliberately
+  broader than the exact/normalized telemetry) is voided. It plays NO
+  episodes, enters the creator GRPO group at the fixed
+  `twentyq.repeat_gate_reward` (default 0.0: well-formed but disallowed, so
+  below every honest secret at ~1.3-1.5 while a parse failure stays strictly
+  worse at -1.0), and its absence from the suite scales `r_gradient` down
+  exactly like a parse drop. Group-relative advantage then pushes probability
+  mass off the attractor every time it fires.
+- **`retry`**: `void` plus ONE masked resample. The SAME prompt is re-decoded
+  at `creator_temp` with every excluded secret banned at the logits level
+  (`bad_words_ids`: the token sequences of each exclusion and its surface
+  variants — case, leading-space, bare plural — are masked to -inf at the
+  step that would complete them, so the decoder continues with the
+  next-most-likely non-excluded continuation). The sample is drawn from the
+  renormalized masked distribution, NOT greedy: greedy would deterministically
+  anoint the policy's #2 candidate as the next attractor, and once the
+  dominant mode is masked the renormalized tail is where the usable entropy
+  lives. A retry that parses non-repeat plays the rank's episodes and trains
+  the creator with its real game reward — the "do say Ocelot" half of the
+  signal alongside the repeat gate's "don't say Okapi". A retry that still
+  matches (a surface variant the token ban missed) voids the rank outright: a
+  repeat never plays episodes.
+
+Off-policy caveat (pre-registered): the retry trajectory is drawn from the
+masked distribution, not the raw policy, so training it under the ratio≡1
+single-step GRPO objective carries the same class of deliberate sampling bias
+as top-p truncation. This is accepted: the masked sample is exactly the
+alternative we want credited. The repeat-gate trajectory itself is fully
+on-policy.
+
+Because reward now depends only on the prompt (the exclusion list is shown
+in-prompt) and the completion, the reward stays a function of the
+conditioning — this trains instruction-following rather than chasing hidden
+state. Telemetry adds `playable_rate`, `repeat_voided`, `repeat_retries`, and
+`repeat_retry_playable` per iteration; `parse_ok_rate` keeps counting
+attempt-0 parses. Every parsed output — voided repeats and masked retries
+included — still enters the rolling deque in sample order, recorded as the
+iteration's `sampled_secrets` list, which `restore_recent_secrets` prefers on
+resume (older logs without the field fall back to the playable summaries,
+which were their complete sample stream). Transcript trees mark these members
+`repeat_void` / `__RETRY`.
+
+The residual risk is serial collapse (the policy re-collapses onto each freed
+next-best candidate in turn). The rolling window plus the gate keep forcing
+novelty mechanically; if post-fix runs still show weak diversity pressure,
+the next levers are conditioning-side diversity (random subcategory/letter
+seeds per rank) and the target ramp itself (0.9 is unreachable for a solver
+at guess rate ~0, which is what makes "any obscure entity" optimal).
+
+### 6.6 Lockstep rollout and ensemble batching (implemented 2026-07-15)
+
+Two independent knobs now remove the largest serial-forward bottlenecks:
+
+- `generation_batch_size` advances the K sibling episodes for one secret in
+  lockstep. At each turn all active guessers decode together, then all questions
+  that need oracle answers decode together. Correct guesses and format failures
+  leave the active set, so ragged termination is preserved. The creator's N
+  secret samples remain serial because each prompt excludes earlier samples from
+  the same iteration. Validation episode generation also remains serial; its
+  relatively small history-scoring diagnostic uses the ensemble batch setting.
+- `ensemble_batch_size` flattens all history prefixes across a secret's K
+  episodes and scores them in chunks for each frozen member. Inputs are
+  right-padded with an attention mask. Only the answer-position logits are
+  promoted to fp32 for log-softmax, avoiding a full fp32
+  `[batch, sequence, vocabulary]` allocation.
+
+Both defaults are `1`, which retains the prior scalar code paths. Every run's
+main JSONL, reward-sidecar metadata, transcript metadata, and iteration rows log
+the configured sizes. Batched stochastic decoding changes the RNG stream, so it
+is distribution-equivalent rather than transcript/seed-identical to serial
+decoding. Deterministic engine tests verify identical ordering, termination,
+turn contents, and active-batch shrinkage between the scalar and lockstep paths.
+
+The reusable benchmark is `scripts/smoke_test_twentyq_batching.py`. On the DGX
+Spark's NVIDIA GB10, with the v4 Gemma-4 policy/LoRA surface, 16 representative
+guesser prompts, 64-token caps, and BF16 CUDA inference, generation measured:
+
+| generation batch | prompts/s | tokens/s | peak CUDA allocation |
+| ---: | ---: | ---: | ---: |
+| 1 | 2.55 | 21.66 | 10.709 GB |
+| 2 | 4.08 | 36.94 | 10.778 GB |
+| 4 | 5.59 | 51.39 | 10.917 GB |
+| 8 | 6.33 | 58.19 | 11.201 GB |
+| 16 | 7.78 | 71.44 | 11.729 GB |
+
+Batch 16 is the K16 rollout optimum: it is 3.05x the scalar prompt throughput,
+uses about 1.02 GB more allocated CUDA memory, and avoids a second decoder chunk
+while all siblings are active. A repeat run measured 72.29 tokens/s. With the
+policy and all four frozen ensemble models resident simultaneously, batch 16
+also completed without OOM at 73.45 tokens/s and 42.753 GB peak allocation.
+
+For 16 representative variable-length histories with the policy retained and
+all four BF16 ensemble scorers resident, aggregate history scoring measured:
+
+| ensemble batch | histories/s | speedup | peak CUDA allocation | max raw score delta vs batch 1 |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 3.88 | 1.00x | 42.094 GB | 0.000 |
+| 2 | 7.67 | 1.97x | 42.096 GB | 0.167 |
+| 4 | 8.84 | 2.28x | 42.520 GB | 0.164 |
+| 8 | 7.43 | 1.91x | 43.374 GB | 0.161 |
+| 16 | 6.87 | 1.77x | 45.082 GB | 0.161 |
+
+Batch 4 is selected because larger batches lose throughput on this workload
+while consuming more memory. BF16 model matmuls are batch-shape-sensitive, so
+batched scores are not bitwise equal to scalar scores even though span selection
+and fp32 log-softmax are unchanged. The worst observed aggregate-potential delta
+was 0.167 raw log-probability units. At v4's `w_ensemble: 0.1`, that is 0.0167 at
+one potential and bounds an adversarial adjacent-potential shaping difference at
+about 0.0334. This drift does not affect terminal reward, and all ensemble v4
+arms use the same batch setting; it is accepted for the measured 2.28x scoring
+gain and is explicitly retained as benchmark telemetry.
+
+The v4 matrix therefore uses `generation_batch_size: 16` and
+`ensemble_batch_size: 4`. These smoke tests exercise inference and joint model
+residency, not GRPO backward or a complete 160-episode iteration. Keep
+`grpo_microbatch: 1`, and treat the first terminal-control iteration's wall time
+and peak memory as the final launch check before increasing N or K further.

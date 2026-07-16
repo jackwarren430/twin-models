@@ -100,6 +100,7 @@ class TwinBase:
         temp: float = 0.7,
         top_p: float = 0.95,
         seed: int | None = None,
+        banned_strings: list[str] | None = None,
     ) -> GenResult:
         """Sample a completion from the model with the *currently active*
         adapter. Returns text plus the prompt/completion token ids.
@@ -107,7 +108,15 @@ class TwinBase:
         The completion ids are the **exact** token ids that were sampled
         (captured from ``stream_generate``), NOT a re-encoding of the decoded
         text — so GRPO (Sprint 3) scores the true trajectory it generated. The
-        EOS that ends generation is included if the model emitted it."""
+        EOS that ends generation is included if the model emitted it.
+
+        ``banned_strings`` (logits-level phrase masking, twentyq repeat
+        handling) is torch-backend-only for now: implementing it here needs a
+        banned-sequence-aware sampler wrapper around ``make_sampler``."""
+        if banned_strings:
+            raise NotImplementedError(
+                "banned_strings masking is only implemented on the torch "
+                "backend (twentyq runs on the DGX Spark)")
         if seed is not None:
             mx.random.seed(seed)
         sampler = make_sampler(temp=temp, top_p=top_p)

@@ -157,10 +157,19 @@ class TwentyQConfig:
     categories: list[str] = field(default_factory=lambda: [
         "animal", "food", "household object", "place", "occupation",
     ])
+    # Parsed creator secrets retained across iterations and role rotations.
+    # Only entries from the active category are shown to the creator.  The
+    # current iteration's earlier picks are always excluded separately, so 0
+    # disables only the cross-iteration rolling window.
+    recent_secret_window: int = 128
     # Credit granularity (DESIGN §2.3). "broadcast": every turn of episode k
     # carries the episode advantage (v1). "per_turn": reward-to-go from judge
     # closeness deltas + terminal reward (Sprint Q7 ablation; needs a judge
     # call per turn instead of per episode).
+    # "terminal": terminal reward-to-go with turn-index baselines, but no dense
+    # scorer. This is the clean no-ensemble control for credit="ensemble": the
+    # grouping and terminal assignment are identical and only dense reward is
+    # removed.
     # "ensemble": dense per-turn shaping from an ensemble of FROZEN base LLMs
     # scoring the secret's log-prob given the Q/A history (r_t = gamma*score_t -
     # score_{t-1}, score(history_0) = empty-history baseline), paid alongside the
@@ -224,14 +233,48 @@ class TwentyQConfig:
     secret_max_tokens: int = 512
     question_max_tokens: int = 256
     answer_max_tokens: int = 128
+    # Repeat handling for creator secrets (twentyq/DESIGN.md §6.5). The v4
+    # arm-A run showed the prompt-only exclusion list LOSES to the reward
+    # gradient: GRPO net-reinforced one per-category attractor (Okapi +3.5
+    # cumulative creator advantage over 18 iterations) and by iter 11 the
+    # creator repeated it 8/10 ranks with the exclusion list in-prompt. Modes:
+    #   "off"   — prompt-and-measurement only (the v4 arm-A behaviour).
+    #   "void"  — a parsed secret that matches the exclusion list it was shown
+    #             (guess_matches: normalized + bare-plural tolerance) is
+    #             voided: NO episodes, fixed repeat_gate_reward in the creator
+    #             GRPO group.
+    #   "retry" — "void" plus ONE masked resample: the same prompt is decoded
+    #             again at creator_temp with every excluded secret banned at
+    #             the logits level (the decoder takes the next-most-likely
+    #             non-excluded continuation — no blind resampling). A retry
+    #             that parses non-repeat plays the rank's episodes and trains
+    #             the creator with its real game reward; a retry that still
+    #             repeats (tokenization-variant slip) voids the rank.
+    repeat_handling: str = "off"
+    # Fixed reward for a voided repeat rollout: well-formed but disallowed, so
+    # below every honest secret (~1.3-1.5) yet above a parse failure (-1.0).
+    repeat_gate_reward: float = 0.0
+    # Lockstep player generation: active sibling episodes at the same turn are
+    # decoded together in chunks of this size. 1 preserves the serial path.
+    # This changes the RNG stream, not the per-prompt sampling distribution.
+    generation_batch_size: int = 1
+    # Frozen-ensemble history scoring batch. Histories are flattened across the
+    # K sibling episodes for one secret and scored in chunks per member model.
+    # 1 preserves the historical one-forward-per-history path.
+    ensemble_batch_size: int = 1
     # Stationary evaluation. 0 disables it; otherwise the launch script runs a
-    # post-update validation after every X completed training iterations. The
+    # pre-training step-0 baseline and post-update validation after every X
+    # completed training iterations. The
     # fixed, versioned set is played by BOTH adapters as guesser against the
     # frozen base answerer, with greedy decoding so checkpoints see identical
     # prompts and validation does not consume the training sampling stream.
     validation_every: int = 0
     validation_secret_set: str = "data/twentyq-validation-v1.json"
     validation_max_turns: int | None = None  # null => use max_turns
+    # Write a compact <run>.rewards.jsonl sidecar containing terminal, dense
+    # ensemble, combined-immediate, and turn-zero-return aggregates for every
+    # training iteration and validation pass. The main JSONL remains complete.
+    reward_log: bool = False
 
 
 @dataclass

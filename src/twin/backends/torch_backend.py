@@ -47,6 +47,40 @@ except ImportError as e:  # pragma: no cover - exercised only on a torch-less ho
 from twin.models.types import GenResult, ReactResult, assemble_react
 from twin.rl.core import Trajectory  # noqa: F401  (re-exported for parity/tests)
 
+
+def banned_phrase_variants(phrase: str) -> list[str]:
+    """Surface variants of one banned phrase for logits-level masking.
+
+    Token-sequence bans are literal, so cover the codings a creator actually
+    emits: case variants (as-is / lower / Title / First-upper), bare plural /
+    singular (mirroring ``guess_matches``'s one-trailing-'s' tolerance), each
+    with and without a leading space (different token ids in BPE vocabs).
+    A wrong variant bans a token sequence that never occurs — harmless."""
+    phrase = (phrase or "").strip()
+    if not phrase:
+        return []
+    bases = {phrase, phrase.lower(), phrase.upper(), phrase.title(),
+             phrase[:1].upper() + phrase[1:].lower()}
+    for b in list(bases):
+        bases.add(b + "s" if not b.endswith("s") else b[:-1])
+    out = []
+    for b in bases:
+        out.extend((b, " " + b))
+    return sorted(set(out))
+
+
+def banned_token_sequences(tokenizer, phrases: list[str]) -> list[list[int]]:
+    """``bad_words_ids`` for ``phrases``: the deduplicated token sequences of
+    every :func:`banned_phrase_variants` expansion, encoded without special
+    tokens (they ban mid-completion continuations, not full prompts)."""
+    seqs: dict[tuple[int, ...], list[int]] = {}
+    for phrase in phrases:
+        for variant in banned_phrase_variants(phrase):
+            ids = tokenizer(variant, add_special_tokens=False)["input_ids"]
+            if ids:
+                seqs.setdefault(tuple(ids), list(ids))
+    return list(seqs.values())
+
 _DTYPES = {
     "bfloat16": torch.bfloat16,
     "bf16": torch.bfloat16,
@@ -198,10 +232,11 @@ class TorchTwinBase:
     def generate(
         self, prompt: str, *, max_tokens: int = 512, temp: float = 0.7,
         top_p: float = 0.95, seed: int | None = None,
+        banned_strings: list[str] | None = None,
     ) -> GenResult:
         return self.generate_batch(
             [prompt], max_tokens=max_tokens, temp=temp, top_p=top_p,
-            seed=seed, completion_batch_size=1,
+            seed=seed, completion_batch_size=1, banned_strings=banned_strings,
         )[0]
 
     @torch.no_grad()
@@ -209,15 +244,23 @@ class TorchTwinBase:
         self, prompts: list[str], *, max_tokens: int = 512, temp: float = 0.7,
         top_p: float = 0.95, seed: int | None = None,
         completion_batch_size: int = 32,
+        banned_strings: list[str] | None = None,
     ) -> list[GenResult]:
         """Batched decode under the active adapter. ``completion_batch_size``
         caps concurrent sequences (KV-cache bound). Semantics match
         :meth:`generate` per prompt: ``completion_tokens`` are the exact sampled
-        ids up to and including the first EOS; ``text`` excludes that EOS."""
+        ids up to and including the first EOS; ``text`` excludes that EOS.
+
+        ``banned_strings`` masks the token sequences of each phrase (and its
+        :func:`banned_phrase_variants`) to -inf at the step that would complete
+        them, so the decoder takes the next-most-likely continuation instead —
+        sampling still draws from the renormalized masked distribution."""
         if seed is not None:
             torch.manual_seed(seed)
         do_sample = temp > 0
         eos = list(self._eos) or None
+        bad_words = (banned_token_sequences(self.tokenizer, banned_strings)
+                     if banned_strings else None)
         bs = max(1, completion_batch_size)
         out: list[GenResult] = []
         for i in range(0, len(prompts), bs):
@@ -233,6 +276,7 @@ class TorchTwinBase:
                 temperature=(temp if do_sample else None),
                 top_p=(top_p if do_sample else None),
                 pad_token_id=self._pad, eos_token_id=eos,
+                bad_words_ids=bad_words,
             )
             plen = input_ids.shape[1]
             for j, p in enumerate(chunk):

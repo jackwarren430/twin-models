@@ -9,6 +9,7 @@ import json
 import math
 import random
 import re
+from collections import deque
 
 import pytest
 
@@ -74,17 +75,24 @@ def _make_trainer(cfg, creator_script, guesser_script, *,
     t.transcript = None
     t.adapters = _FakeAdapters()
     t._init_trees = {"A": None, "B": None}
-    t.captured = {"grpo": {}, "judge": [], "thinking": {}}
+    t.captured = {
+        "grpo": {}, "judge": [], "thinking": {}, "creator_users": [],
+        "creator_banned": [], "creator_temps": [],
+        "generation_batches": [],
+    }
 
     creator_q = list(creator_script)
     guesser_q = list(guesser_script)
 
     def fake_generate(adapter, system, user, *, max_tokens, temp,
-                      enable_thinking=None):
+                      enable_thinking=None, banned_strings=None):
         role = ("creator" if system is CREATOR_SYSTEM
                 else "guesser" if system is GUESSER_SYSTEM else "answerer")
         t.captured["thinking"][role] = enable_thinking
         if system is CREATOR_SYSTEM:
+            t.captured["creator_users"].append(user)
+            t.captured["creator_banned"].append(banned_strings)
+            t.captured["creator_temps"].append(temp)
             return GenResult(text=creator_q.pop(0),
                              prompt_tokens=[1], completion_tokens=[2, 3])
         if system is GUESSER_SYSTEM:
@@ -111,6 +119,25 @@ def _make_trainer(cfg, creator_script, guesser_script, *,
                 "kl": 0.0, "grad_norm": 0.0}
 
     t._generate = fake_generate
+
+    def fake_generate_batch(adapter, system, users, *, max_tokens, temp,
+                            completion_batch_size, enable_thinking=None):
+        t.captured["generation_batches"].append((
+            "guesser" if system is GUESSER_SYSTEM else "answerer", len(users)))
+        out = []
+        for _user in users:
+            if system is GUESSER_SYSTEM:
+                out.append(GenResult(
+                    text=guesser_q.pop(0), prompt_tokens=[4],
+                    completion_tokens=[5, 6]))
+            else:
+                assert system is ANSWERER_SYSTEM
+                out.append(GenResult(
+                    text="ANSWER: YES", prompt_tokens=[7],
+                    completion_tokens=[8]))
+        return out
+
+    t._generate_batch = fake_generate_batch
     t._judge = fake_judge
     t._grpo = fake_grpo
     return t
@@ -273,6 +300,279 @@ def test_truthful_creator_trains_all_episodes():
     # Consistency now tracks validity alone (both secrets valid here).
     assert rec["secrets"][0]["consistent"] is True
     assert rec["secrets"][1]["consistent"] is True
+
+
+# ----- rolling secret exclusions ---------------------------------------------
+
+def test_recent_prompt_is_category_filtered_and_variants_are_telemetry_only():
+    cfg = _config(twentyq={
+        "n_secrets": 2, "episodes_per_secret": 2, "max_turns": 2,
+        "categories": ["animal"], "recent_secret_window": 4,
+    })
+    creator = [_secret_json("cat", 0.0), _secret_json("dog", 1.0)]
+    t = _make_trainer(cfg, creator, ["GUESS: cat"] * 2 + ["GUESS: dog"] * 2)
+    # One deque spans creator A/B; entries retain category so only the active
+    # category reaches the prompt.
+    t._recent_secrets = deque(
+        [("food", "apple"), ("animal", "The Cat")], maxlen=4)
+
+    rec = t.run_iteration(0)
+
+    first, second = t.captured["creator_users"]
+    assert "The Cat" in first
+    assert "apple" not in first
+    assert "neither an exact repeat nor an obvious variant" in first
+    assert "- cat" in second                 # current generation is combined
+    assert rec["recent_secret_exact_repeat_rate"] == 0.0
+    assert rec["recent_secret_normalized_repeat_rate"] == 0.5
+    # No rejection/regeneration/reward gate: the normalized repeat still plays.
+    assert rec["parse_ok_rate"] == 1.0
+    assert rec["episodes"]["total"] == 4
+
+
+def test_current_generation_exact_repeat_is_logged_but_not_rejected():
+    cfg = _config(twentyq={
+        "n_secrets": 2, "episodes_per_secret": 2, "max_turns": 2,
+        "categories": ["animal"], "recent_secret_window": 128,
+    })
+    creator = [_secret_json("dog", 0.0), _secret_json("dog", 1.0)]
+    t = _make_trainer(cfg, creator, ["GUESS: dog"] * 4)
+
+    rec = t.run_iteration(0)
+
+    assert rec["recent_secret_exact_repeat_rate"] == 0.5
+    assert rec["recent_secret_normalized_repeat_rate"] == 0.5
+    assert rec["episodes"]["total"] == 4
+    assert len(t.captured["grpo"]["A"]) == 2
+    # Mode "off" (default): telemetry only — nothing voided, nothing retried.
+    assert rec["repeat_handling"] == "off"
+    assert rec["repeat_voided"] == 0 and rec["repeat_retries"] == 0
+    assert rec["playable_rate"] == 1.0
+    assert rec["sampled_secrets"] == ["dog", "dog"]
+
+
+def test_lockstep_generation_batches_sibling_episodes():
+    cfg = _config(twentyq={
+        "n_secrets": 2, "episodes_per_secret": 2, "max_turns": 2,
+        "categories": ["animal"], "generation_batch_size": 8,
+    })
+    # Batch-consumption order: all active siblings at turn t, then t+1.
+    guesser = [
+        "GUESS: dog", "QUESTION: Is it a pet?", "GUESS: dog",
+        "QUESTION: Is it alive?", "QUESTION: Is it aquatic?",
+        "QUESTION: Does it have gills?", "format broken",
+    ]
+    t = _make_trainer(cfg, list(CREATOR_OK), guesser)
+
+    rec = t.run_iteration(0)
+
+    assert rec["guess_rates_by_rank"] == [1.0, 0.0]
+    assert rec["episodes"]["total"] == 4
+    assert t.captured["generation_batches"] == [
+        ("guesser", 2), ("answerer", 1), ("guesser", 1),
+        ("guesser", 2), ("answerer", 2), ("guesser", 2),
+        ("answerer", 1),
+    ]
+
+
+def test_zero_window_keeps_current_generation_exclusion_only():
+    cfg = _config(twentyq={
+        "n_secrets": 2, "episodes_per_secret": 2, "max_turns": 2,
+        "categories": ["animal"], "recent_secret_window": 0,
+    })
+    creator = [_secret_json("dog", 0.0), _secret_json("dog", 1.0)]
+    t = _make_trainer(cfg, creator, ["GUESS: dog"] * 4)
+
+    rec = t.run_iteration(0)
+
+    assert "- dog" in t.captured["creator_users"][1]
+    assert rec["recent_secret_history_size"] == 0
+    assert rec["recent_secret_exact_repeat_rate"] == 0.5
+
+
+def test_restore_recent_secrets_is_bounded_category_aware_and_retry_safe(tmp_path):
+    cfg = _config(twentyq={
+        "n_secrets": 2, "episodes_per_secret": 2, "max_turns": 2,
+        "categories": ["animal"], "recent_secret_window": 3,
+    })
+    t = _make_trainer(cfg, [], [])
+    records = [
+        {"type": "meta", "run": "demo"},
+        {"type": "iteration", "mode": "twentyq", "iter": 0,
+         "creator": "A", "category": "animal",
+         "secrets": [{"secret": "dog"}]},
+        # A retried iteration replaces the earlier row for checkpoint state.
+        {"type": "iteration", "mode": "twentyq", "iter": 0,
+         "creator": "A", "category": "animal",
+         "secrets": [{"secret": "wolf"}]},
+        {"type": "iteration", "mode": "twentyq", "iter": 1,
+         "creator": "B", "category": "food",
+         "secrets": [{"secret": "apple"}]},
+        {"type": "iteration", "mode": "twentyq", "iter": 2,
+         "creator": "A", "category": "animal",
+         "secrets": [{"secret": "cat"}, {"secret": "fox"}]},
+    ]
+    path = tmp_path / "run.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in records)
+                    + '{"type":"iteration"')  # crash-truncated tail is ignored
+
+    assert t.restore_recent_secrets(path, before_iteration=2) == 2
+    assert list(t._recent_secrets) == [("animal", "wolf"), ("food", "apple")]
+
+    assert t.restore_recent_secrets(path, before_iteration=3) == 3
+    assert list(t._recent_secrets) == [
+        ("food", "apple"), ("animal", "cat"), ("animal", "fox")]
+    assert t._recent_for_category("ANIMAL") == ["cat", "fox"]
+
+
+# ----- repeat handling: void + masked resample (DESIGN §6.5) -------------------
+
+def _repeat_cfg(mode, **twentyq_extra):
+    tq = {"n_secrets": 2, "episodes_per_secret": 2, "max_turns": 2,
+          "categories": ["animal"], "recent_secret_window": 128,
+          "repeat_handling": mode}
+    tq.update(twentyq_extra)
+    return _config(twentyq=tq)
+
+
+def test_repeat_void_mode_voids_without_retry():
+    creator = [_secret_json("dog", 0.0), _secret_json("dog", 1.0)]
+    t = _make_trainer(_repeat_cfg("void"), creator, ["GUESS: dog"] * 2)
+
+    rec = t.run_iteration(0)
+
+    # Rank 1's repeat plays NO episodes; only rank 0's dog is played.
+    assert rec["episodes"]["total"] == 2
+    assert rec["repeat_voided"] == 1 and rec["repeat_retries"] == 0
+    assert rec["parse_ok_rate"] == 1.0 and rec["playable_rate"] == 0.5
+    assert [s["secret"] for s in rec["secrets"]] == ["dog"]
+    assert rec["sampled_secrets"] == ["dog", "dog"]
+    # Attempt-0 propensity telemetry is unchanged by enforcement.
+    assert rec["recent_secret_exact_repeat_rate"] == 0.5
+    trajs = t.captured["grpo"]["A"]
+    assert len(trajs) == 2
+    repeat = next(tr for tr in trajs if tr.meta["repeat"])
+    played = next(tr for tr in trajs if not tr.meta["repeat"])
+    assert repeat.reward == pytest.approx(0.0)      # repeat_gate default
+    assert repeat.advantage < 0 < played.advantage
+    # No masked resample in "void" mode: both creator calls unconstrained.
+    assert t.captured["creator_banned"] == [None, None]
+    # Voided repeats still enter the rolling history (sampling telemetry).
+    assert list(t._recent_secrets) == [("animal", "dog"), ("animal", "dog")]
+
+
+def test_repeat_retry_masked_resample_plays_and_trains():
+    creator = [_secret_json("dog", 0.0), _secret_json("dog", 1.0),
+               _secret_json("axolotl", 1.0)]           # the masked retry
+    t = _make_trainer(_repeat_cfg("retry"), creator,
+                      ["GUESS: dog"] * 2 + ["GUESS: axolotl"] * 2)
+
+    rec = t.run_iteration(0)
+
+    assert rec["repeat_handling"] == "retry"
+    assert rec["repeat_voided"] == 1
+    assert rec["repeat_retries"] == 1 and rec["repeat_retry_playable"] == 1
+    assert rec["playable_rate"] == 1.0
+    # The retry's secret plays the rank's episodes at the rank's target.
+    assert rec["episodes"]["total"] == 4
+    assert [s["secret"] for s in rec["secrets"]] == ["dog", "axolotl"]
+    assert rec["secrets"][1]["target"] == 0.1
+    assert rec["sampled_secrets"] == ["dog", "dog", "axolotl"]
+    # The retry reuses the SAME prompt, bans the exclusion list at the logits
+    # level, and keeps creator_temp sampling (no greedy collapse onto #2).
+    assert t.captured["creator_banned"] == [None, None, ["dog"]]
+    assert t.captured["creator_users"][2] == t.captured["creator_users"][1]
+    assert t.captured["creator_temps"][2] == t.cfg.gen.creator_temp
+    # Creator GRPO group = 3 rollouts: playable, repeat gate, playable retry.
+    trajs = t.captured["grpo"]["A"]
+    assert len(trajs) == 3
+    repeat = next(tr for tr in trajs if tr.meta["repeat"])
+    retry = next(tr for tr in trajs if tr.meta["retry"])
+    assert not retry.meta["repeat"]
+    assert repeat.reward == pytest.approx(0.0)
+    assert retry.reward > 0.5                     # real game reward, trained
+    assert repeat.advantage < retry.advantage
+    assert sum(tr.advantage for tr in trajs) == pytest.approx(0.0)
+
+
+def test_repeat_retry_variant_slip_voids_rank():
+    # The retry emits a case/plural variant that slipped the token ban;
+    # guess_matches still catches it, so the rank voids — a repeat NEVER
+    # plays episodes.
+    creator = [_secret_json("dog", 0.0), _secret_json("dog", 1.0),
+               _secret_json("Dogs", 1.0)]
+    t = _make_trainer(_repeat_cfg("retry"), creator, ["GUESS: dog"] * 2)
+
+    rec = t.run_iteration(0)
+
+    assert rec["episodes"]["total"] == 2
+    assert rec["repeat_voided"] == 2              # attempt AND retry
+    assert rec["repeat_retries"] == 1 and rec["repeat_retry_playable"] == 0
+    assert rec["playable_rate"] == 0.5
+    assert rec["sampled_secrets"] == ["dog", "dog", "Dogs"]
+    trajs = t.captured["grpo"]["A"]
+    assert len(trajs) == 3
+    gated = [tr for tr in trajs if tr.meta["repeat"]]
+    assert len(gated) == 2
+    assert all(tr.reward == pytest.approx(0.0) for tr in gated)
+    assert list(t._recent_secrets) == [
+        ("animal", "dog"), ("animal", "dog"), ("animal", "Dogs")]
+
+
+def test_unknown_repeat_handling_fails_loudly():
+    t = _make_trainer(_repeat_cfg("Retry"), [], [])
+    with pytest.raises(ValueError, match="repeat_handling"):
+        t.run_iteration(0)
+
+
+def test_repeat_gate_reward_is_configurable():
+    creator = [_secret_json("dog", 0.0), _secret_json("dog", 1.0)]
+    t = _make_trainer(_repeat_cfg("void", repeat_gate_reward=-0.5),
+                      creator, ["GUESS: dog"] * 2)
+    t.run_iteration(0)
+    repeat = next(tr for tr in t.captured["grpo"]["A"] if tr.meta["repeat"])
+    assert repeat.reward == pytest.approx(-0.5)
+
+
+def test_repeat_check_matches_cross_iteration_history():
+    # "The Cat" in rolling history: guess_matches voids a same-normalized
+    # attempt-0 pick even though it is not an exact string repeat.
+    creator = [_secret_json("cat", 0.0), _secret_json("dog", 1.0)]
+    t = _make_trainer(_repeat_cfg("void"), creator, ["GUESS: dog"] * 2)
+    t._recent_secrets = deque([("animal", "The Cat")], maxlen=128)
+
+    rec = t.run_iteration(0)
+
+    assert rec["repeat_voided"] == 1
+    assert [s["secret"] for s in rec["secrets"]] == ["dog"]
+    assert rec["episodes"]["total"] == 2
+
+
+def test_restore_prefers_sampled_secrets_over_summaries(tmp_path):
+    cfg = _config(twentyq={
+        "n_secrets": 2, "episodes_per_secret": 2, "max_turns": 2,
+        "categories": ["animal"], "recent_secret_window": 8,
+    })
+    t = _make_trainer(cfg, [], [])
+    records = [
+        # New-style row: sampled_secrets (voided repeats + retries included)
+        # is authoritative over the playable-only summaries.
+        {"type": "iteration", "mode": "twentyq", "iter": 0,
+         "category": "animal",
+         "sampled_secrets": ["dog", "dog", "axolotl"],
+         "secrets": [{"secret": "dog"}, {"secret": "axolotl"}]},
+        # Legacy row (pre-repeat-handling): summaries are the sample stream.
+        {"type": "iteration", "mode": "twentyq", "iter": 1,
+         "category": "food",
+         "secrets": [{"secret": "apple"}]},
+    ]
+    path = tmp_path / "run.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in records))
+
+    assert t.restore_recent_secrets(path) == 4
+    assert list(t._recent_secrets) == [
+        ("animal", "dog"), ("animal", "dog"), ("animal", "axolotl"),
+        ("food", "apple")]
 
 
 # ----- rotation ----------------------------------------------------------------

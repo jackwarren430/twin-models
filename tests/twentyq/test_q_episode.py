@@ -1,12 +1,16 @@
 """Sprint Q3 — episode engine with scripted players (twentyq/DESIGN.md §4 Q3).
 No model anywhere: players are deterministic callables."""
 
+from dataclasses import asdict
 from dataclasses import dataclass, field
+
+import pytest
 
 from twin.games.twentyq.episode import (
     parse_answer,
     parse_guesser_turn,
     run_episode,
+    run_episodes_batched,
 )
 from twin.games.twentyq.schema import Secret
 
@@ -185,3 +189,59 @@ def test_answerer_receives_question_text():
     g = scripted_guesser(["QUESTION: Is it alive?"])
     run_episode(g, answerer, SECRET, max_turns=1)
     assert seen["q"] == "Is it alive?"
+
+
+# ----- lockstep sibling batching ---------------------------------------------
+
+def test_batched_episode_engine_matches_scalar_with_ragged_termination():
+    guesser_batches = iter([
+        [FakeGen("QUESTION: Is it alive?"), FakeGen("GUESS: squid"),
+         FakeGen("QUESTION: Is it alive?")],
+        [FakeGen("GUESS: octopus"), FakeGen("format broken"),
+         FakeGen("QUESTION: Is it aquatic?")],
+        [FakeGen("QUESTION: Does it have arms?")],
+    ])
+    answer_batches = iter([
+        ["ANSWER: YES", "vague"],
+        ["ANSWER: NO"],
+        ["ANSWER: YES"],
+    ])
+    seen_batch_sizes = []
+
+    def guesser_batch(requests):
+        seen_batch_sizes.append(("g", len(requests)))
+        return next(guesser_batches)
+
+    def answerer_batch(requests):
+        seen_batch_sizes.append(("a", len(requests)))
+        return next(answer_batches)
+
+    batched = run_episodes_batched(
+        guesser_batch, answerer_batch, SECRET, n_episodes=3, max_turns=3)
+
+    scalar_scripts = [
+        (["QUESTION: Is it alive?", "GUESS: octopus"],
+         ["ANSWER: YES"]),
+        (["GUESS: squid", "format broken"], []),
+        (["QUESTION: Is it alive?", "QUESTION: Is it aquatic?",
+          "QUESTION: Does it have arms?"],
+         ["vague", "ANSWER: NO", "ANSWER: YES"]),
+    ]
+    scalar = []
+    for guesses, answers in scalar_scripts:
+        guess_iter, answer_iter = iter(guesses), iter(answers)
+        scalar.append(run_episode(
+            lambda qa, i, it=guess_iter: FakeGen(next(it)),
+            lambda q, qa, it=answer_iter: next(it),
+            SECRET, max_turns=3))
+
+    assert [asdict(ep) for ep in batched] == [asdict(ep) for ep in scalar]
+    assert seen_batch_sizes == [
+        ("g", 3), ("a", 2), ("g", 3), ("a", 1), ("g", 1), ("a", 1)]
+
+
+def test_batched_episode_engine_rejects_wrong_result_count():
+    with pytest.raises(ValueError, match="guesser batch returned"):
+        run_episodes_batched(
+            lambda requests: [], lambda requests: [], SECRET,
+            n_episodes=2, max_turns=1)
