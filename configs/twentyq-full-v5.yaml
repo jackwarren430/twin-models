@@ -21,6 +21,12 @@
 #                            validated (repeat 0.1-0.3 at collapse points),
 #                            evasion channels diagnosed.
 #
+# SUPERSEDED by configs/twentyq-full-v6.yaml (2026-07-17): arm A stopped at
+# iters 0-5 — 3.4% episode win rate left 49/57 GRPO groups with zero terminal
+# advantage, so the solver got no game signal (DESIGN §6.8). v6 tightens the
+# guesser prompts, renames the ensemble game to "20 Questions", pins template
+# dates, and runs the ensemble arm first. Kept for the stopped run's provenance.
+#
 # Run sequentially (start with A):
 #
 # A. no rotation, terminal only (first control)
@@ -75,7 +81,7 @@ gen:
 twentyq:
   n_secrets: 10
   episodes_per_secret: 16
-  max_turns: 21
+  max_turns: 20
   categories: ["animal", "food", "household object"]
   recent_secret_window: 128
   repeat_handling: retry

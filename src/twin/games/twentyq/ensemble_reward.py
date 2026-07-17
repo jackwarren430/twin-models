@@ -57,11 +57,26 @@ _DTYPES = {
 }
 
 DEFAULT_SCAFFOLD = "ANSWER:"
+# "20 Questions", not "21 questions": the deduction game is called 20 Questions
+# in the scorers' pretraining data ("21 questions" names a different party
+# game), and the frozen ensemble's whole job is prior-based inference. The
+# 21-turn budget is a trainer setting, not part of the game's name.
 DEFAULT_INSTRUCTION = (
-    "Given this question/answer history for the game 21 questions, guess the "
+    "Given this question/answer history for the game 20 Questions, guess the "
     "secret. Return your answer in this format: ANSWER: <guess>."
 )
-DEFAULT_SYSTEM = "You are playing the game 21 questions. Deduce the secret entity."
+DEFAULT_SYSTEM = "You are playing the game 20 Questions. Deduce the secret entity."
+
+# Chat templates that interpolate "today's date" (SmolLM3 via strftime_now,
+# Llama 3.x via date_string) would make the reward non-stationary: the same
+# (history, answer) pair scores differently after midnight, mid-run. Pin both
+# hooks to a constant so every render is date-stable.
+PINNED_DATE_SHORT = "01 Jan 2026"    # Llama-style  %d %b %Y
+PINNED_DATE_LONG = "01 January 2026"  # SmolLM3-style %d %B %Y
+
+
+def _pinned_strftime_now(fmt: str) -> str:
+    return PINNED_DATE_LONG if "%B" in fmt else PINNED_DATE_SHORT
 # Sentinel for the state BEFORE any question has been asked — the reward's
 # score(history_0) baseline. Must match the probe's H_EMPTY exactly so the
 # trainer and the isolated probe compute the same starting potential.
@@ -150,16 +165,23 @@ class EnsembleMember:
 
     # -- chat rendering ----------------------------------------------------
     def _apply_template(self, msgs: list[dict]) -> str:
-        """Render `msgs` with thinking pinned OFF. Reasoning-capable templates
-        (Qwen3, SmolLM3) accept `enable_thinking`; setting it False keeps their
-        assistant turn a bare answer instead of a reasoning trace. Templates that
-        don't know the kwarg (Gemma, Llama, Mistral) ignore an unused Jinja
-        variable, but if one strictly rejects it we retry without — so scoring is
-        never conditioned on a `<think>` block, whatever the template default."""
+        """Render `msgs` with thinking pinned OFF and the date pinned constant.
+        Reasoning-capable templates (Qwen3, SmolLM3) accept `enable_thinking`;
+        setting it False keeps their assistant turn a bare answer instead of a
+        reasoning trace. `date_string`/`strftime_now` shadow the templates' date
+        hooks (Llama guards on `date_string`; SmolLM3 calls `strftime_now`
+        directly, and a context kwarg shadows the Jinja global) so renders are
+        identical whatever day they run. Templates that don't know a kwarg
+        ignore an unused Jinja variable, but if one strictly rejects it we retry
+        without the optional extras."""
+        extras = dict(
+            enable_thinking=False,
+            date_string=PINNED_DATE_SHORT,
+            strftime_now=_pinned_strftime_now,
+        )
         try:
             return self.tokenizer.apply_chat_template(
-                msgs, tokenize=False, add_generation_prompt=False,
-                enable_thinking=False,
+                msgs, tokenize=False, add_generation_prompt=False, **extras,
             )
         except TypeError:
             return self.tokenizer.apply_chat_template(

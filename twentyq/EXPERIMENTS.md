@@ -586,3 +586,45 @@ read-outs are `playable_rate`, `repeat_voided`, `repeat_retries`,
 restoration exact). Expected signatures if the gate works: attempt-0 repeat
 rate DECLINES over iterations instead of climbing, playable_rate recovers
 toward 1.0, and no secret accumulates a large positive cumulative advantage.
+
+**v5 OUTCOME (stopped 2026-07-16 at iterations 0-5, superseded by v6):**
+`q-fullv5-ctrl-terminal` — the hardened repeat gate was healthy (novel
+secrets, sensible difficulty ordering, parse/valid 1.00), but the run was
+stopped for solver signal starvation: 31/912 episodes won (3.4%), 49/57 GRPO
+groups all-loss ⇒ zero terminal advantage ⇒ the solver's only gradient was
+format penalties while the creator trained one-sided. Root causes from the
+transcript audit (DESIGN §6.8): the guesser was never told wrong guesses are
+free (one forced guess per episode), prose-then-contract-line bleed-through
+("QUESTION: Yes" polluting histories), and grammar-sensitive category
+phrasing (83% degenerate first questions for "a animal" vs 2% for "a
+household object"). A first false-alarm start of this arm (stopped at step-0
+validation only) is archived in tq-runs/aborted-fullv5-falsealarm/.
+
+## exp-fullv6 — tightened prompts + stationary ensemble, ensemble-first (RUNNING 2026-07-17)
+
+Config `configs/twentyq-full-v6.yaml` (settings identical to v5; the delta is
+prompt/reward-surface only, DESIGN §6.8): guesser contract line is the entire
+reply, wrong-guess-is-free stated, article-free category phrasing,
+constraint-consistent forced guess; ensemble scoring prompts renamed to
+"20 Questions" and template dates pinned (SmolLM3/Llama were interpolating
+today's date — reward non-stationary across midnight). Environment + reward
+scale changed ⇒ v6 baselines are NOT comparable to earlier lineages; step-0
+validation re-baselines.
+
+Run order flipped: **arm B first** — `q-fullv6-ctrl-ensemble` (credit
+ensemble, swap 0, full 4-model roster explicit in config). Rationale:
+terminal-only credit starves the solver at the base win rate; the dense
+per-turn channel is the arm that can bootstrap it. A/C/D follow only on
+explicit decision.
+
+What to watch (beyond the standing gate signatures, which carry over):
+- Episode win rate and share of GRPO groups with terminal variance — the
+  point of the prompt changes; v5 baselines were 3.4% and 8/57.
+- Early-guess behavior: wins at turns < 19 (v5: only Toaster), wrong-guess
+  turns appearing mid-episode in transcripts ("Is it X?" -> NO lines).
+- Degenerate first questions by category — the 83%/21%/2% split should
+  collapse if the phrasing fix is right.
+- dense/terminal decomposition in the rewards sidecar: dense should give
+  nonzero within-group variance even where terminal is all-loss.
+- Ensemble memory/wall-time: policy + 4 frozen scorers resident; v3-era
+  smoke peaked ~43-50 GB — expect the high end plus generation batching.

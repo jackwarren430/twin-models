@@ -1,0 +1,151 @@
+# 21-questions FULL v6: the 2x2 matrix under TIGHTENED PROMPTS and the
+# stationary ensemble reward — run order flipped to ensemble-first.
+#
+# Why v5 stopped (q-fullv5-ctrl-terminal, iters 0-5): 31/912 episodes won
+# (3.4%); 49/57 GRPO groups were all-loss, so terminal-only credit gave the
+# solver almost no gradient — only the creator was learning. Transcript audit
+# (DESIGN §6.8) found the base guesser takes exactly ONE guess per episode
+# (at the forced last turn) and that prompt phrasing was destabilizing gemma:
+# 83% of animal episodes opened with a degenerate parsed question ("Yes")
+# under "The secret is a animal." vs 2% for the grammatical household-object
+# phrasing.
+#
+# v5 -> v6 delta (code-level):
+#   - Guesser system prompt: entire reply must be the single contract line
+#     (kills the prose-then-"QUESTION: Yes" transcript bleed-through); states
+#     that a wrong GUESS costs a turn but does not end the game (the engine
+#     always worked this way; the policy was never told), so the solver can
+#     probe with guesses instead of hoarding one forced final guess.
+#   - Guesser user prompt: article-free "The secret is in the category: X."
+#     phrasing; last turn demands the GUESS most consistent with ALL answers.
+#   - Ensemble scoring prompt: the game is named "20 Questions" (its name in
+#     the scorers' pretraining data — "21 questions" is a different game).
+#   - Ensemble chat renders pin date_string/strftime_now to a constant:
+#     SmolLM3 and Llama-3.2 templates interpolate "today's date", which made
+#     the reward non-stationary across midnight.
+#   These change the environment and reward scale: v6 validation baselines are
+#   NOT comparable to v3/v4/v5 numbers. Step-0 validation re-baselines.
+#
+# Prior attempts on this config lineage:
+#   q-fullv4-ctrl-terminal   iters 0-18, repeat_handling off — creator collapse.
+#   q-fullv45-ctrl-terminal  iters 0-13, leaky token-sequence ban — gate
+#                            validated, evasion channels closed (DESIGN §6.7).
+#   q-fullv5-ctrl-terminal   iters 0-5, hardened gate healthy — stopped for
+#                            absent solver signal (this header, DESIGN §6.8).
+#
+# Run order: B FIRST (ensemble dense credit) — the terminal-only control
+# demonstrably starves the solver at the current base win rate, so the dense
+# arm is the one that can bootstrap. A/C/D follow only on explicit decision.
+#
+# B. no rotation, terminal + ensemble (FIRST)
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-full-v6.yaml --credit ensemble --swap-interval 0 \
+#   --run-name q-fullv6-ctrl-ensemble \
+#   --checkpoints-dir checkpoints/twentyq-fullv6-ctrl-ensemble
+#
+# A. no rotation, terminal only
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-full-v6.yaml --credit terminal --swap-interval 0 \
+#   --run-name q-fullv6-ctrl-terminal \
+#   --checkpoints-dir checkpoints/twentyq-fullv6-ctrl-terminal
+#
+# C. rotation, terminal only
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-full-v6.yaml --credit terminal --swap-interval 5 \
+#   --run-name q-fullv6-rot-terminal \
+#   --checkpoints-dir checkpoints/twentyq-fullv6-rot-terminal
+#
+# D. rotation, terminal + ensemble
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-full-v6.yaml --credit ensemble --swap-interval 5 \
+#   --run-name q-fullv6-rot-ensemble \
+#   --checkpoints-dir checkpoints/twentyq-fullv6-rot-ensemble
+
+compute:
+  backend: torch
+  device: cuda
+  dtype: bfloat16
+  attn_impl: sdpa
+  tf32: true
+  matmul_precision: high
+  compile: false
+  grad_checkpointing: false
+
+model:
+  path: ~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/snapshots/9dbdf8a839e4e9e0eb56ed80cc8886661d3817cf
+  enable_thinking: false
+
+lora:
+  num_layers: 16
+  rank: 64
+  alpha: 128.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+
+twentyq:
+  n_secrets: 10
+  episodes_per_secret: 16
+  max_turns: 21
+  categories: ["animal", "food", "household object"]
+  recent_secret_window: 128
+  repeat_handling: retry
+  repeat_gate_reward: 0.0
+
+  # Default arm here is B (ensemble credit, no rotation) — the first v6 run.
+  # CLI overrides select the other cells; all remaining settings identical.
+  credit: ensemble
+  gamma: 1.0
+  w_ensemble: 0.1
+  # Explicit roster (== the full ensemble_reward.ENSEMBLE_MODELS registry) for
+  # run provenance; an empty list would load the same four.
+  ensemble_models: ["gemma-4-e2b", "qwen3-4b", "smollm3-3b", "llama-3.2-3b"]
+  ensemble_device: cuda
+  ensemble_dtype: bfloat16
+
+  w_guess: 1.0
+  w_efficiency: 0.5
+  w_close: 0
+  w_format: 0.5
+  secret_validity: fail_open
+
+  creator_thinking: false
+  guesser_thinking: false
+  answerer_thinking: false
+  judge_thinking: false
+  secret_max_tokens: 512
+  question_max_tokens: 512
+  answer_max_tokens: 512
+  generation_batch_size: 16
+  ensemble_batch_size: 4
+
+  validation_every: 10
+  validation_secret_set: data/twentyq-validation-v1.json
+  validation_max_turns: 21
+  reward_log: true
+
+rewards:
+  target_hi: 0.9
+  target_lo: 0.1
+
+roles:
+  swap_interval: 0
+  warmup_iterations: 0
+  injection_rate: 0.0
+
+train:
+  iters: 60
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  adv_mode: mean
+  grpo_microbatch: 1
+  logit_chunk: 0
+  checkpoint_every: 10
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints/twentyq
+  runs: tq-runs

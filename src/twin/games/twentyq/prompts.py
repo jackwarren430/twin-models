@@ -33,11 +33,15 @@ task asks for (VERDICT, AUDIT, or CLOSENESS) and nothing after it."""
 GUESSER_SYSTEM = """You are the guesser in a game of 20 questions. A secret has \
 been chosen; you probe it with yes/no questions and win by naming it within the \
 turn budget — the fewer turns, the better. Ask about broad splits first, then \
-narrow. Never repeat a question the transcript already answers. Each turn, end \
-your reply with exactly ONE line, either:
+narrow. Never repeat a question the transcript already answers. A wrong GUESS \
+does not end the game: it costs one turn, you are told NO, and play continues — \
+so name your best candidate whenever the answers point to one.
+
+Your ENTIRE reply must be exactly one line, either:
 QUESTION: <one yes/no question>
-or, when you are ready to name the secret:
-GUESS: <the secret>"""
+or:
+GUESS: <the secret>
+Write nothing before or after that line."""
 
 
 def creator_secret_user(
@@ -100,13 +104,19 @@ def guesser_user(
         transcript = "(none yet — this is your first question)"
     remaining = max_turns - turn_index
     if remaining <= 1:
-        instruction = ("This is your LAST turn: you MUST end with a GUESS: line "
-                       "naming the secret.")
+        instruction = ("This is your LAST turn: reply with exactly one GUESS: "
+                       "line naming the secret most consistent with ALL the "
+                       "answers above.")
     else:
         instruction = (f"You have {remaining} turns left (this one included). "
-                       "End with one QUESTION: line, or a GUESS: line if you are "
-                       "confident.")
-    return f"""The secret is a {category}.
+                       "Reply with exactly one QUESTION: line, or one GUESS: "
+                       "line if you have a strong candidate.")
+    # "Category: X" (not "The secret is a X."): article-free, so it stays
+    # grammatical for any category string. "The secret is a animal." measurably
+    # destabilized gemma4-E2B — 83% of animal episodes opened with a degenerate
+    # parsed question vs 2% for the grammatical "a household object" (v4/v4.5/v5
+    # transcript audit, DESIGN §6.8).
+    return f"""The secret is in the category: {category}.
 
 Questions so far:
 {transcript}

@@ -893,3 +893,71 @@ noise now more visible under diversity pressure ('Calamine', 'Sajou',
 collapse (the policy re-collapsing onto each freed candidate in turn — the
 rolling window keeps forcing novelty mechanically; conditioning-side seeds and
 the unreachable 0.9 target band remain the next levers per §6.5b).
+
+### 6.8 Prompt audit: solver signal starvation and gemma prompt sensitivity (2026-07-17)
+
+**Why v5 arm A was stopped (iters 0–5).** 31/912 episodes won (3.4%). At
+K=16, 49 of 57 GRPO groups were all-loss — identical rewards, zero terminal
+advantage, no solver gradient. The only variance in those groups came from
+format penalties, so the solver was learning line formatting, not deduction,
+while the creator collected full calibration signal every iteration (Rc
++0.47…+1.14, novel secrets, sensible difficulty ordering). Self-play was
+running one-sided.
+
+**Transcript audit findings (v4 + v4.5 + v5, ~3,900 episodes):**
+
+1. *One guess per episode.* The engine has always treated a wrong GUESS as
+   free (referee answers NO, play continues — `episode.py`), but the guesser
+   was never told. The base policy volunteered a guess only at the forced
+   last turn: 24 of 31 wins landed at turn ≥ 19. The lone exception (Toaster,
+   12/16 wins, guesses from turn 13) shows the ceiling when the modal
+   candidate happens to be the secret.
+2. *Prose-then-contract-line bleed-through.* The dominant malformed output is
+   the model writing its question as prose, then "completing the pattern" on
+   the contract line — `Is it a mammal?\nQUESTION: Yes` — because the
+   flattened history it reads is `"question" -> YES`. The parsed "question"
+   becomes `Yes`, which pollutes every later turn of that episode. The old
+   prompt invited this: "END your reply with exactly ONE line".
+3. *Grammar-correlated destabilization.* Fraction of episodes whose first
+   parsed question was degenerate (`Yes`/`No`/…), by category phrasing of
+   the old `"The secret is a {category}."` line:
+   animal ("a animal", ungrammatical) **83.4%**; food ("a food", odd mass
+   noun) **21.5%**; household object (natural) **1.8%**. Category semantics
+   and grammaticality are confounded (probe skipped by decision), but the
+   ordering tracks grammaticality exactly and the fix costs nothing.
+4. *Forced last guess ignores constraints.* E.g. fruit/sweet/whole/uncooked
+   established, final guess "Tofu". The last-turn instruction never asked for
+   consistency with the accumulated answers.
+
+**Ensemble scoring-path audit** (all four members rendered with their own
+tokenizers, span alignment checked):
+
+- Span location correct on all members; Qwen3/SmolLM3 no-think rendering
+  correct (Qwen3's empty `<think>` block is its native no-think format).
+- *Non-stationary reward (fixed):* SmolLM3 and Llama-3.2 templates
+  interpolate today's date into the system header, so identical
+  (history, answer) pairs scored differently across midnight — mid-run, and
+  across runs. `_apply_template` now pins `date_string` and shadows the
+  `strftime_now` Jinja global with a constant.
+- *Naming miscue (fixed):* the scoring prompts said "the game 21 questions";
+  the deduction game is "20 Questions" in the scorers' pretraining data ("21
+  questions" names a different party game). DEFAULT_SYSTEM/INSTRUCTION now
+  say "20 Questions". The 21-turn budget is a trainer setting, not the
+  game's name.
+- Policy-side rendering was audited clean: the gemma-4 template accepts the
+  `system` role natively, `enable_thinking=False` injects no think tokens,
+  and `add_special_tokens=False` avoids double-BOS.
+
+**Changes (v6, all prompt/reward-surface — no algorithm change):** guesser
+system prompt makes the contract line the ENTIRE reply and states that wrong
+guesses cost a turn but never end the game; user prompt uses article-free
+"The secret is in the category: X."; the last turn demands the guess most
+consistent with ALL answers. Ensemble prompts renamed + date-pinned as above.
+These change the environment and the reward scale: v6 numbers are not
+comparable to earlier lineages, and step-0 validation re-baselines.
+
+**Run-order decision:** v6 starts with arm B (ensemble dense credit,
+no rotation). Terminal-only credit demonstrably starves the solver at the
+base win rate; the dense per-turn channel is the arm that can bootstrap it.
+Wrong-guess rendering in history ("Is it X?" -> NO) also feeds the dense
+potential exactly like a question, so guess-probing and dense credit compose.
