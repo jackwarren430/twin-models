@@ -1,0 +1,175 @@
+{
+  "name": "twentyq-validation-v2",
+  "version": 2,
+  "description": "Stationary 21-questions evaluation set, superset of twentyq-validation-v1: the 12 v1 entries verbatim (val-v1-*) plus 12 new entries (val-v2-*) mirroring the per-category difficulty ladder. New entries verified absent from the q-fullv6-ctrl-ensemble training secrets (308 distinct). Do not use these entries as creator demonstrations or training secrets.",
+  "secrets": [
+    {
+      "secret_id": "val-v1-animal-00",
+      "secret": "giraffe",
+      "category": "animal",
+      "difficulty": 0.15,
+      "notes": "common, visually distinctive animal"
+    },
+    {
+      "secret_id": "val-v1-animal-01",
+      "secret": "penguin",
+      "category": "animal",
+      "difficulty": 0.35,
+      "notes": "common non-flying bird"
+    },
+    {
+      "secret_id": "val-v1-animal-02",
+      "secret": "platypus",
+      "category": "animal",
+      "difficulty": 0.65,
+      "notes": "unusual semiaquatic mammal"
+    },
+    {
+      "secret_id": "val-v1-animal-03",
+      "secret": "pangolin",
+      "category": "animal",
+      "difficulty": 0.85,
+      "notes": "less common scaled mammal; LEAKED into q-fullv6 training (most-sampled creator secret) — interpret with care"
+    },
+    {
+      "secret_id": "val-v2-animal-04",
+      "secret": "cow",
+      "category": "animal",
+      "difficulty": 0.15,
+      "notes": "common farm animal"
+    },
+    {
+      "secret_id": "val-v2-animal-05",
+      "secret": "kangaroo",
+      "category": "animal",
+      "difficulty": 0.35,
+      "notes": "well-known hopping marsupial"
+    },
+    {
+      "secret_id": "val-v2-animal-06",
+      "secret": "hedgehog",
+      "category": "animal",
+      "difficulty": 0.65,
+      "notes": "small spiny mammal"
+    },
+    {
+      "secret_id": "val-v2-animal-07",
+      "secret": "tapir",
+      "category": "animal",
+      "difficulty": 0.85,
+      "notes": "less common snouted mammal"
+    },
+    {
+      "secret_id": "val-v1-food-00",
+      "secret": "banana",
+      "category": "food",
+      "difficulty": 0.15,
+      "notes": "common fruit"
+    },
+    {
+      "secret_id": "val-v1-food-01",
+      "secret": "pizza",
+      "category": "food",
+      "difficulty": 0.35,
+      "notes": "common prepared food"
+    },
+    {
+      "secret_id": "val-v1-food-02",
+      "secret": "hummus",
+      "category": "food",
+      "difficulty": 0.65,
+      "notes": "legume-based spread"
+    },
+    {
+      "secret_id": "val-v1-food-03",
+      "secret": "rambutan",
+      "category": "food",
+      "difficulty": 0.85,
+      "notes": "less common tropical fruit"
+    },
+    {
+      "secret_id": "val-v2-food-04",
+      "secret": "bread",
+      "category": "food",
+      "difficulty": 0.15,
+      "notes": "staple baked food"
+    },
+    {
+      "secret_id": "val-v2-food-05",
+      "secret": "popcorn",
+      "category": "food",
+      "difficulty": 0.35,
+      "notes": "common popped snack"
+    },
+    {
+      "secret_id": "val-v2-food-06",
+      "secret": "couscous",
+      "category": "food",
+      "difficulty": 0.65,
+      "notes": "granular wheat dish"
+    },
+    {
+      "secret_id": "val-v2-food-07",
+      "secret": "persimmon",
+      "category": "food",
+      "difficulty": 0.85,
+      "notes": "less common orange fruit"
+    },
+    {
+      "secret_id": "val-v1-household-00",
+      "secret": "refrigerator",
+      "category": "household object",
+      "difficulty": 0.15,
+      "notes": "common large appliance"
+    },
+    {
+      "secret_id": "val-v1-household-01",
+      "secret": "stapler",
+      "category": "household object",
+      "difficulty": 0.35,
+      "notes": "common hand-operated object"
+    },
+    {
+      "secret_id": "val-v1-household-02",
+      "secret": "smoke detector",
+      "category": "household object",
+      "difficulty": 0.65,
+      "notes": "mounted safety device"
+    },
+    {
+      "secret_id": "val-v1-household-03",
+      "secret": "shoehorn",
+      "category": "household object",
+      "difficulty": 0.85,
+      "notes": "less common dressing aid"
+    },
+    {
+      "secret_id": "val-v2-household-04",
+      "secret": "television",
+      "category": "household object",
+      "difficulty": 0.15,
+      "notes": "common living-room electronics"
+    },
+    {
+      "secret_id": "val-v2-household-05",
+      "secret": "scissors",
+      "category": "household object",
+      "difficulty": 0.35,
+      "notes": "common cutting tool"
+    },
+    {
+      "secret_id": "val-v2-household-06",
+      "secret": "corkscrew",
+      "category": "household object",
+      "difficulty": 0.65,
+      "notes": "bottle-opening tool"
+    },
+    {
+      "secret_id": "val-v2-household-07",
+      "secret": "trivet",
+      "category": "household object",
+      "difficulty": 0.85,
+      "notes": "less common heat-protecting stand"
+    }
+  ]
+}

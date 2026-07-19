@@ -314,18 +314,21 @@ class TorchTwinBase:
     @torch.no_grad()
     def generate(
         self, prompt: str, *, max_tokens: int = 512, temp: float = 0.7,
-        top_p: float = 0.95, seed: int | None = None,
+        top_p: float = 0.95, top_k: int | None = None,
+        min_p: float | None = None, seed: int | None = None,
         banned_strings: list[str] | None = None,
     ) -> GenResult:
         return self.generate_batch(
             [prompt], max_tokens=max_tokens, temp=temp, top_p=top_p,
-            seed=seed, completion_batch_size=1, banned_strings=banned_strings,
+            top_k=top_k, min_p=min_p, seed=seed, completion_batch_size=1,
+            banned_strings=banned_strings,
         )[0]
 
     @torch.no_grad()
     def generate_batch(
         self, prompts: list[str], *, max_tokens: int = 512, temp: float = 0.7,
-        top_p: float = 0.95, seed: int | None = None,
+        top_p: float = 0.95, top_k: int | None = None,
+        min_p: float | None = None, seed: int | None = None,
         completion_batch_size: int = 32,
         banned_strings: list[str] | None = None,
     ) -> list[GenResult]:
@@ -343,6 +346,16 @@ class TorchTwinBase:
         if seed is not None:
             torch.manual_seed(seed)
         do_sample = temp > 0
+        # ``None`` means UNSET: the kwarg is omitted so HF falls back to the
+        # model's generation_config (gemma-4-E2B ships top_k=64 — the implicit
+        # historical sampler for every run in the lineage). Passing None
+        # through would instead OVERRIDE the config and disable the warper;
+        # use top_k=0 to request that explicitly.
+        sampler_overrides: dict = {}
+        if do_sample and top_k is not None:
+            sampler_overrides["top_k"] = top_k
+        if do_sample and min_p is not None:
+            sampler_overrides["min_p"] = min_p
         eos = list(self._eos) or None
         bs = max(1, completion_batch_size)
         out: list[GenResult] = []
@@ -365,6 +378,7 @@ class TorchTwinBase:
                 top_p=(top_p if do_sample else None),
                 pad_token_id=self._pad, eos_token_id=eos,
                 logits_processor=processors,
+                **sampler_overrides,
             )
             plen = input_ids.shape[1]
             for j, p in enumerate(chunk):
