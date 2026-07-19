@@ -628,3 +628,67 @@ What to watch (beyond the standing gate signatures, which carry over):
   nonzero within-group variance even where terminal is all-loss.
 - Ensemble memory/wall-time: policy + 4 frozen scorers resident; v3-era
   smoke peaked ~43-50 GB — expect the high end plus generation batching.
+
+### exp-fullv6 RESULTS — arm B `q-fullv6-ctrl-ensemble` (completed 2026-07-19)
+
+60/60 iterations clean: zero errors, zero restarts, ~31.4 h wall (~31 min/iter
+including 7 validation passes), memory 46.6-50.3 GB peak against the 100 GB
+cgroup cap. parse=valid=1.00 every iteration (fail-open gate, zero false
+voids). Training episodes won: 688/8944 (7.7%), first-10 mean 0.040 ->
+last-10 0.089. Artifacts: `tq-runs/q-fullv6-ctrl-ensemble.jsonl` (+ rewards
+sidecar + transcript tree), checkpoints `checkpoints/twentyq-fullv6-ctrl-ensemble`.
+
+Stationary validation (12 secrets, greedy, base answerer), B = solver:
+
+    step        0      10     20     30     40     50     60
+    wins/12     2      0      2      1      3      2      2
+    dense     0.575  0.471  0.562  0.563  0.622  0.616  0.616
+
+**Findings:**
+1. **All three prompt fixes landed.** Degenerate first questions 83% (v5
+   animal) -> 0%; mid-episode guessing appeared immediately (33-73 wrong-guess
+   turns/iter) and converted (wins as early as turn 9 vs v5's single forced
+   final guess); dense per-turn credit produced nonzero advantages inside
+   all-loss GRPO groups (solver grad_norm ~0.04 every iteration) — the v5
+   signal-starvation mechanism is gone.
+2. **In-distribution learning, no measurable transfer.** Training win rate
+   roughly doubled (last-10 0.089 vs first-10 0.040; category records
+   household 46/160, animal 15/160) but fixed-validation wins ended exactly
+   where they started (2/12, series above). Style DID transfer: greedy
+   turns-on-success 16.5 vs 21.0 at step 0, the first-ever household
+   validation win (step 40), final dense +7% over baseline. Reading: the
+   solver learned to beat its co-adapting creator; whether a small real
+   transfer exists is below the resolution of 12 greedy episodes.
+   -> `data/twentyq-validation-v2.json` doubles the set to 24 secrets
+   (superset; the 12 new entries are verified absent from this run's 308
+   distinct training secrets), and a sampled-eval sweep is queued.
+3. **Hardened gate held; the evasion arms race is documented end-to-end.**
+   Zero played repeats. Rungs: duplicate -> misspelling ("Wasbi") -> accent
+   ("Pangolín") -> space-split ("Ok API") -> foreign letter ("Axolotل") — all
+   caught/voided — with 4 borderline breakthroughs that PLAYED (Sunchyon,
+   Xerophyte, Pangol., Pinguin; all <= iter 16, none after). Two Okapi-style
+   collapse episodes recurred (iters 13, 22) but the gate inverts the v4
+   economics (repeats now take the 0.0 gate reward against a positive group
+   baseline), producing oscillating recovery: from iter 37, diverse slates
+   with zero voids.
+4. **Creator calibration asymmetry (structural, unaddressed).** The
+   calibration reward pays ~1.0 for a 0-to-1-win slate (iters 33, 57): while
+   solver guess rate is low, hard-rank targets (0.1) are met by ANY obscure
+   pick, so obscurity is reward-optimal at most ranks and the exclusion gate
+   does not counter it. Candidate v7 lever.
+5. **Format fails are purely sampling-tail.** Sampled rollouts 3-40%/iter
+   (mean 14.4%); greedy validation 0% at all 7 steps. Two regimes:
+   weird-secret concentration (iter 6) and stereotyped attractors on sane
+   slates (iter 35+: bare "Towel" guesses, a Japanese prefix). Fails cluster
+   at discrete turns because lockstep turn-indexed prompts synchronize any
+   turn-sensitive failure. NOTE uncovered during closeout: solver sampling
+   silently inherits **top_k=64** from gemma-4-E2B's generation_config.json —
+   never set in any config, never recorded in run metadata, active in every
+   sampled rollout of the lineage. Sampler sensitivity probe:
+   `scripts/probe_twentyq_base_sampling.py`.
+6. **Validation-set leakage note:** pangolin is both `val-v1-animal-03` and
+   this run's most-sampled training secret (20 exact + 7 "Pangolín"). The
+   description forbade using validation entries as training secrets but
+   nothing enforces it against the creator's own sampling. v2 keeps the entry
+   (series continuity); treat its cell with suspicion, and a creator-side
+   exclusion of validation entries is a cheap v7 fix.
