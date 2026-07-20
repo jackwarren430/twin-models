@@ -961,3 +961,110 @@ no rotation). Terminal-only credit demonstrably starves the solver at the
 base win rate; the dense per-turn channel is the arm that can bootstrap it.
 Wrong-guess rendering in history ("Is it X?" -> NO) also feeds the dense
 potential exactly like a question, so guess-probing and dense credit compose.
+
+### 6.9 Decoding-policy audit: the silent top_k=64, and sampler sensitivity (2026-07-19)
+
+**Discovery.** While reconstructing solver inference after the v6 run, we
+found that every sampled rollout in the lineage has been running under
+**top_k=64** — a setting that appears nowhere in this repo. The backend
+passes only `temperature` and `top_p` to HF `model.generate`
+(`torch_backend.py`); HF merges every unset knob from the model's own
+`generation_config.json`, and the pinned gemma-4-E2B snapshot ships
+`{"do_sample": true, "temperature": 1.0, "top_k": 64, "top_p": 0.95}`. So
+the effective sampler was temp -> top_k=64 -> top_p=0.95 (HF warper order)
+for the solver (0.8), creator (0.9), and answerer (0.2) in every run,
+unrecorded in any config or run metadata. Greedy validation is unaffected
+(`do_sample=False` builds no warpers), which is also why the format-fail
+asymmetry of §6.8/EXPERIMENTS v6 finding 5 (sampled 3–40%/iter, greedy 0%
+at all 7 checkpoints) cleanly brackets the fails as sampling-tail events.
+Portability trap for reproduction attempts: an unstated top_k means three
+different samplers in three stacks (llama.cpp defaults 40, vLLM disables
+top_k, HF's library fallback is 50).
+
+**Code change (commit be35a62).** `generate`/`generate_batch` now accept
+optional `top_k`/`min_p`. `None` means UNSET — the kwarg is omitted so HF
+still falls back to the model config (i.e. exactly the historical behavior;
+passing `None` through would instead override-and-disable the warper), and
+`top_k=0` requests no truncation explicitly. No caller changed; configs
+should start pinning the sampler explicitly from v7 (whatever the value) so
+runs stop depending on a file HF could revise.
+
+**Validation set v2 (same commit).** The sensitivity probe needed more
+resolution than 12 greedy episodes (±1 win ≈ ±8.3pp), so
+`data/twentyq-validation-v2.json` doubles the set to 24: the 12 v1 entries
+verbatim (ids preserved — the v1 series stays computable as a subset) plus
+12 new entries mirroring the 0.15/0.35/0.65/0.85 ladder per category. New
+entries were screened against the v6 run's 308 distinct training secrets
+("apple" was rejected for this — the creator had used it). Known blemish
+carried over: pangolin is both `val-v1-animal-03` and the v6 run's
+most-sampled training secret (20 exact + 7 "Pangolín"); nothing stops the
+creator from sampling validation entries. Cheap v7 fix: seed the creator's
+exclusion list with the validation secrets.
+
+**Probe design** (`scripts/probe_twentyq_base_sampling.py`). BASE model, no
+adapters — this isolates the decoding policy from anything training did.
+Sampled episodes on the v2 set, 8 per secret (192/arm, 1152 total), guesser
+at solver temp 0.8, answerer pinned at oracle settings (temp 0.2,
+config-default truncation) so only the guesser's sampler varies; 21-turn
+budget, per-arm seeds (20260719+i). Six arms; min_p arms disable top_k and
+top_p so min_p is read alone, not stacked under two other warpers:
+
+    arm                       win%   fmt%  | easy(.15) med(.35) hard(>=.65)
+    top_k=64  (historical)    13.5   19.8  |   37.5     16.7      0.0
+    top_k=40                  13.0   13.5  |   37.5     14.6      0.0
+    top_k=20                  10.9   18.8  |   27.1     16.7      0.0
+    top_k=0   (top_p .95)     14.1   17.7  |   39.6     14.6      1.0
+    min_p=.05 (top_p 1.0)     13.5   15.6  |   39.6     14.6      0.0
+    min_p=.10 (top_p 1.0)     12.5   20.3  |   33.3     16.7      0.0
+
+    n=192/arm -> SE ~2.4pp (win), ~2.7pp (fmt). Wall: ~9 min/arm, 53 min total.
+
+**Findings** (raw per-episode rows: `tq-runs/probe-base-sampling-v1.json`,
+`settings[i].episodes[]`, each row `{secret, category, guessed, ended,
+turns}`; per-secret console lines in the `.log` sibling):
+
+1. **Win rate is sampler-flat.** 10.9–14.1% spans ~1.3 SE. top_k=64 was
+   buying nothing; nominal best is NO truncation beyond top_p 0.95. The
+   decoding policy is not a lever on wins.
+2. **Sampler sensitivity is real but localized to easy secrets** —
+   confirming the observation that motivated the probe. The easy tier
+   spreads 27.1–39.6% across arms while medium is flat (~15–17%) and hard
+   is floored. The variance is carried by a few volatile secrets: banana
+   3/0/0/4/5/1 wins-of-8 across arms (k64/k40/k20/k0/mp05/mp10),
+   television 3/5/2/3/5/4, bread 2/3/3/4/1/3 — while robust secrets ignore
+   the sampler entirely (cow 8/8/8/7/8/8, penguin 6/7/8/7/7/8). By
+   category: animal is stable (23.4–25.0%) across all six arms; food
+   (4.7–14.1%) and household (3.1–10.9%) carry all the sampler variance.
+3. **The difficulty cliff is capability, not decoding.** Difficulty >=0.65:
+   1 win in 576 episodes pooled across all six arms (hummus, 1/8, top_k=0
+   arm); the 0.85 tier is 0 for every arm. No sampler rescues what the
+   model cannot deduce — training, not decoding, owns the medium/hard tiers.
+4. **Format fails are v-shaped in BOTH truncation families.** Moderate
+   truncation trims the tail (top_k=40: 19.8 -> 13.5%; min_p=.05: ->
+   15.6%) but harder truncation gives it back (top_k=20: 18.8%; min_p=.10:
+   20.3% — the worst arm). Consistent with §6.8/EXPERIMENTS: the fail modes
+   are partly HEAD-of-distribution attractors (bare-guess/stereotyped
+   lines), which aggressive truncation concentrates rather than removes.
+   Caveat: the key 64-vs-40 fmt gap (6.3pp) is ~1.7 SE — suggestive, not
+   proven.
+5. **The difficulty labels do not track winnability.** giraffe (0.15) wins
+   1/0/0/1/0/0 across arms; penguin (0.35) is near-automatic. Rank-based
+   analyses should use measured winnability, not the authored difficulty.
+
+**Decisions/recommendations.** (a) Pin the sampler explicitly in every v7
+config — independent of value chosen. (b) Candidate solver setting is
+top_k=40 (best fmt arm at zero win cost), but it should not be baked in on
+a 1.7-SE read: the cheap firm-up is a 64-vs-40 head-to-head at 16
+eps/secret (~35 min) before v7. (c) Expect nothing from decoding on
+medium/hard secrets. (d) The creator/answerer samplers were NOT probed
+here; creator diversity under truncation interacts with the §6.5b collapse
+dynamics and needs its own read before touching creator_temp's sampler.
+
+**Verify:** re-run the full grid with
+`.venv/bin/python -u scripts/probe_twentyq_base_sampling.py` (defaults =
+this probe exactly: config `twentyq-full-v6.yaml`, v2 set, seed 20260719);
+summaries via `jq '.settings[] | {label, guess_rate, format_rate,
+by_category}' tq-runs/probe-base-sampling-v1.json`. The snapshot's shipped
+sampler: `cat ~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/
+snapshots/9dbdf8a.../generation_config.json`. Closeout context:
+EXPERIMENTS.md "exp-fullv6 RESULTS" findings 5–6 (commit 506ade1).
