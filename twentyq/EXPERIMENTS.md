@@ -916,10 +916,23 @@ calibration is not polish but the mechanism keeping solver training alive.
   base answerer, so part of "win rate" is *my twin answers the way I predict*
   rather than 21-questions skill. Inherent to self-play, but the number is not
   pure ability.
-- `early_win_rate` is ~0.10 and barely moves: the policy has essentially no
-  "guess now" decision, and almost every win is the forced final guess.
-  `w_efficiency` is the gradient meant to fix that; it is the secondary metric
-  to watch in v8.
+- ~~`early_win_rate` is ~0.10 and barely moves: the policy has essentially no
+  "guess now" decision, and almost every win is the forced final guess.~~
+  **CORRECTION (2026-07-26): this was backwards.** `early_win_rate` is
+  `(wins - won_on_last_turn) / n`, so an early rate of 0.099 against a win rate
+  of 0.104 means 95% of wins were *voluntary*, not forced. Counted directly:
+
+      probe            wins   forced final   share
+      v1 baseline        20        1          5%
+      v2 gemma baseline  22        5         23%
+      v2 gemma dedup     28        6         21%
+      v2 smollm3          8        3         38%
+      v2 llama32          6        5         83%
+
+  gemma's voluntary wins are spread over turns 11-20, so it does have a
+  "guess now" decision and exercises it. `w_efficiency` is therefore sharpening
+  an existing behaviour rather than creating a missing one — still worth
+  watching in v8, but not for the stated reason.
 - v1..v7 validation (24 greedy episodes, ±13 points) could not have resolved
   these effects. See DESIGN §9.4 — "no transfer to validation" was never
   established by that data, so nothing here should be read as *explaining* v6.
@@ -950,6 +963,46 @@ Three consequences, all acted on:
 - For priority two this is the number to beat. A creator that has learned
   calibration is one whose dictated target predicts the measured rate; the
   baseline for that claim is a 0.87 gap.
+
+### Sub-4B base-model bake-off
+
+All arms: `dedup` (question_retries=4), validation-v2, K=8, n=192 episodes,
+post-parser-fix so the comparison measures 21-questions ability rather than
+markdown habits.
+
+    model              win            early   fmt   budget  distinctQ  usable_grp  wall
+    gemma-4-E2B  0.146 [0.10,0.20]    0.115  0.016   0.839    0.975      0.167     688s
+    SmolLM3-3B   0.042 [0.02,0.08]    0.026  0.000   0.958    0.995      0.208    2389s
+    Llama-3.2-3B 0.031 [0.01,0.07]    0.005  0.000   0.969    1.000      0.167     906s
+
+**gemma-4-E2B wins and it is not close** — 3.5x the win rate of either
+challenger and 3.5x faster than SmolLM3 (challengers lose more, losing episodes
+run the full 21-turn budget, so weakness costs wall-clock too). The CIs of the
+two challengers overlap each other but not gemma's.
+
+Two traps in this table worth stating, because both would mislead a reader
+scanning for the best number:
+
+- **SmolLM3 has the highest `usable_group_rate` (0.208) and is the worst
+  choice.** Four of its five nonzero secrets sit at exactly 1/8 — "barely
+  winnable", not "well matched". And since the bank is calibrated per model,
+  usable_group_rate on a fixed secret set is largely equalised by construction;
+  it is a property of the set-model pairing, not of the model.
+- **`fmt` favours the losers spuriously.** SmolLM3 and Llama score 0.000 format
+  failures against gemma's 0.016, but an episode that never reaches a confident
+  guess has fewer chances to break the output contract. Cleanliness here is a
+  symptom of not playing, not of formatting discipline.
+
+The qualitative split is sharper than the rate. Counting where wins land:
+gemma's are spread over turns 11-20 with only 21% on the forced final turn,
+whereas Llama-3.2 won 6 games total, 5 of them on the forced final guess, with
+a single voluntary win at turn 6. gemma is the only candidate with a real
+"guess now" behaviour for RL to amplify — which matters more than the headline
+rate, since reinforcement sharpens existing behaviour rather than inventing it.
+
+Decision: **gemma-4-E2B**, unchanged from v1..v7. Also the model the LoRA
+text-decoder pinning is already tuned for (it is multimodal; the towers must
+not be adapted).
 
 ### Actions taken
 
