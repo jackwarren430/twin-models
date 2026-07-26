@@ -1464,3 +1464,49 @@ retracted. Bank mode draws category-balanced within an iteration
 (`bank_balance_categories`), and the episode loop now uses each SECRET's
 category rather than the iteration's. Per-secret summaries record it, so the
 confound is conditionable-on even where it still exists.
+
+### 9.6 Resolution: the measured frontier bank (built 2026-07-26)
+
+§9.1 states the problem; this is what was actually built and what it delivers.
+
+`scripts/build_twentyq_bank.py` generates creator candidates, dedups them
+(including against the validation holdout), vets them, then **plays** each one K
+times and keeps only those whose measured win rate lands in [0.125, 0.875].
+Difficulty stops being dictated and becomes measured: a bank entry's
+`difficulty` is `1 - measured_guess_rate`, which is also the supervision target
+that makes creator calibration trainable later.
+
+    750 creator rollouts -> 118 unique -> 118 vetted -> 61 in band (51.7%)
+    animal 22, food 15, household object 24;  mean measured rate 0.391
+
+Delivered, measured at iteration 0 of the v8 run:
+
+    usable_group_rate   0.875      (v1..v7 secret source: 0.125)
+
+That is the wall removed — 7 of 8 groups now carry a gradient where 7 of 8
+previously carried none.
+
+Three things learned in the build that change how the next one should be run:
+
+- **Diversity, not yield, now bounds bank size.** 750 rollouts produced only 118
+  distinct secrets. Targets at the easy end of the scale draw from a small
+  vocabulary of instantly-recognizable entities, so more rollouts saturate.
+  Raising bank size means raising creator diversity, not sampling harder.
+- **Selecting on a noisy measurement causes winner's curse.** Entries near the
+  top of the band were partly lucky at K=8 and regress when replayed: measured
+  drift after one update was -0.070, concentrated entirely in the high-rate
+  secrets (Tiger .88->.62, Whale .75->.31). Correcting for measurement noise
+  (posterior over p) does NOT correct for selection on it. Either calibrate at
+  larger K, or expect the delivered bank to sit below its nominal band.
+- **The validity judge is partial and the vet rate hid it.** 118/118 passed;
+  driven over deliberate negatives the same judge false-accepts 4 of 8 (water
+  as a food, "a dog or a cat", Pikachu, an invented obscure name) at 0/6 false
+  rejects. The bank's guarantee is the measured band, not the judge. This
+  blocks any priority-two design that rewards the creator for "valid" secrets
+  refereed by this judge alone.
+
+Success criterion for the run this bank feeds, fixed in advance: adapter B's
+VALIDATION guess rate must rise beyond its own confidence interval AND beyond
+the spread of the frozen adapter A control measured on the same schedule.
+Training win rate on a bank selected to be winnable proves nothing by
+construction.
