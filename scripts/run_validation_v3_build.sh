@@ -77,7 +77,14 @@ $PY scripts/check_bank_disjoint.py "$OUT" \
     --holdout data/twentyq-validation-v2.json data/twentyq-bank-v1.json \
   || { echo "DISJOINTNESS CHECK FAILED — do not use $OUT" >&2; exit 1; }
 
-$PY - "$OUT" <<'EOF'
+# Size gate. Derived from v8's measured paired per-secret sd of 0.187 (see
+# scripts/validation_power.py): at 80% power and p<0.05 a paired comparison
+# needs ~27 all-live secrets to resolve +0.10 and ~56 to resolve +0.07. Below
+# ~30 this set would reproduce v8's failure in a new costume — a null that
+# cannot distinguish "no transfer" from "could not have seen it" — after
+# spending hours to build it and hours more to score against it.
+MIN_V3=${MIN_V3:-30}
+$PY - "$OUT" "$MIN_V3" <<'EOF'
 import json, sys
 from collections import Counter
 d = json.load(open(sys.argv[1]))
@@ -88,6 +95,17 @@ for c, n in sorted(Counter(x["category"] for x in s).items()):
 rates = [x["measured_guess_rate"] for x in s]
 print(f"  measured win rate: min {min(rates):.3f} "
       f"mean {sum(rates) / len(rates):.3f} max {max(rates):.3f}")
+sd = 0.187
+z = 1.96 + 0.8416
+print(f"  minimum detectable effect (paired, 80% power, sd={sd}): "
+      f"{z * sd / len(s) ** 0.5:+.4f}")
+need = int(sys.argv[2])
+if len(s) < need:
+    print(f"\nTOO SMALL: {len(s)} secrets < {need}. This set could not resolve "
+          f"the effect\nsizes in play; raise --rollouts-per-category and "
+          f"rebuild, or widen --band.", file=sys.stderr)
+    raise SystemExit(1)
 EOF
+[ $? -eq 0 ] || { echo "V3 REJECTED — do not use $OUT" >&2; exit 1; }
 
 echo "VALIDATION-V3 BUILD COMPLETE" >&2

@@ -1597,3 +1597,63 @@ in. The re-scorer also reseeds identically before every step, so all
 checkpoints face the same sampled games; in-run validation cannot do that
 without disturbing the training stream, which makes the replay strictly more
 sensitive than the series it re-scores.
+
+### 9.8 The v8 null is uninformative: minimum detectable effect (2026-07-26)
+
+§9.7 argued from composition that validation-v2 could not resolve the question
+it was asked. That argument can be made quantitative, and the number is
+decisive. `scripts/validation_power.py` computes it from the run's own data.
+
+The comparison is PAIRED — adapters A and B are scored on the same secrets at
+every checkpoint — so the noise estimate is the spread of the per-secret
+difference B-A, not the spread of either rate. This matters: per-secret rates
+run 0/8 to 8/8, and in an unpaired calculation all of that between-secret
+spread counts as noise even though both adapters face the same items. Unpaired,
+v8 would appear to need ~188 secrets to resolve +0.05; paired it needs ~136.
+
+Measured on v8 (5 checkpoints, 24 secrets, 9 live, 15 dead):
+
+    paired sd of per-secret (B - A)     ALL  0.1159      LIVE  0.1867
+    minimum detectable effect           ALL +0.0663      LIVE +0.1744
+    (80% power, two-sided p<0.05)
+
+Against the +0.148 within-secret training gain, checked both ways because the
+two views can only mislead separately:
+
+    pooled   0.148 x (9/24 live) = +0.0555  vs MDE +0.0663  -> INVISIBLE
+    live     0.148                          vs MDE +0.1744  -> INVISIBLE
+
+**Both framings agree.** Even PERFECT transfer of the measured training gain
+would have produced a validation series indistinguishable from flat. The v8
+null therefore carries no evidence about transfer in either direction, and the
+run's pre-registered criterion — correct as a guard against reading trends out
+of noise — could never have fired. This is worth stating plainly because for
+most of the run the flat series was treated as being in tension with the rising
+training curve. It never was.
+
+A finer-grained look confirms there is no hidden signal to rescue either. On
+the 9 live secrets the pooled series is B 0.375, 0.375, 0.458, 0.375, 0.389
+against control A 0.375, 0.292, 0.319, 0.347, 0.403 — B is not above A at the
+last checkpoint. Mean turns-on-success fell 16.77 -> 16.40 for B and 17.56 ->
+17.13 for A, so B is not winning faster either. Off-the-floor events (a secret
+at 0 in step 0 later reaching >=1) are 2 for B and 1 for A. None of this is
+evidence of anything; it is confirmation that the instrument is silent rather
+than that the policy is.
+
+**Consequence for validation-v3, which is now a sized instrument rather than a
+hopeful one.** A band-selected set is live by construction, so the LIVE sd of
+0.1867 is the right planning number:
+
+    effect   +0.15   +0.10   +0.07   +0.05   +0.03
+    secrets     12      27      56     109     304
+
+`scripts/run_validation_v3_build.sh` therefore hard-fails below 30 secrets
+(MIN_V3). Below that it would reproduce v8's failure in a new costume — a null
+that cannot distinguish "no transfer" from "could not have seen it" — after
+spending hours to build and hours more to score against.
+
+Note the honest limit of this analysis: the sd is estimated from validation-v2,
+whose live secrets sit mid-range, and a band-selected set concentrates
+everything mid-range where per-secret binomial variance is highest. The
+planning number is therefore mildly optimistic, which is a further argument for
+overshooting on size rather than hitting 30 exactly.
