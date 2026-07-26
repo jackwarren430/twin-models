@@ -65,6 +65,7 @@ from twin.games.twentyq.rewards import (
     guess_rate,
     history_states,
     per_turn_secret_trajectories,
+    repeat_penalties,
     secret_turn_trajectories,
     secrets_as_suite,
     shaped_reward_trace,
@@ -169,17 +170,37 @@ def load_validation_secret_set(path: str | Path) -> tuple[dict, list[Secret]]:
     return meta, secrets
 
 
+def _wilson_ci(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """95% Wilson score interval for a binomial rate.
+
+    Wilson rather than normal-approximation because validation rates sit near
+    0.1 on samples as small as 24, exactly where the normal interval misbehaves
+    (it happily returns a negative lower bound). Reported so a step-to-step
+    change can be read against its own noise instead of by eye — the v6/v7
+    series moved 2,0,2,1,3,2,2 wins out of 24 and was discussed as a trend."""
+    if n <= 0:
+        return (0.0, 0.0)
+    p = wins / n
+    denom = 1 + z * z / n
+    center = (p + z * z / (2 * n)) / denom
+    half = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / denom
+    return (max(0.0, center - half), min(1.0, center + half))
+
+
 def _validation_metrics(rows: list[dict]) -> dict:
     traces = [[StepReward(**s) for s in row["step_rewards"]] for row in rows]
     wins = [row for row in rows if row["guessed"]]
+    lo, hi = _wilson_ci(len(wins), len(rows))
     return {
         "n_episodes": len(rows),
         "guessed": len(wins),
         "guess_rate": round(len(wins) / max(1, len(rows)), 6),
+        "guess_rate_ci95": [round(lo, 6), round(hi, 6)],
         "mean_turns": round(_mean([row["turns"] for row in rows]), 6),
         "mean_turns_on_success": (round(_mean([row["turns"] for row in wins]), 6)
                                   if wins else None),
         "format_ended": sum(row["ended"] == "format" for row in rows),
+        "repeat_turns": sum(row.get("repeat_turns", 0) for row in rows),
         "reward_signals": _reward_signal_report(traces),
     }
 
@@ -290,9 +311,27 @@ class TwentyQTrainer(BaseTrainer):
             self._ensemble = ens
         return ens
 
+    def _ensemble_scoring_active(self) -> bool:
+        """Whether the frozen ensemble can affect any number this run.
+
+        Guards the VALIDATION potential call, which historically ran
+        unconditionally. Under ``credit: terminal`` with ``w_ensemble: 0.0``
+        every potential it produced was multiplied by zero, yet the run still
+        paid to load the 4-model roster and score every history prefix of every
+        validation episode (v7: "[ensemble] 4 models resident on cuda", dense
+        +0.000). Harmless when validation was 24 greedy games; not harmless once
+        validation_episodes multiplies that by K."""
+        qcfg = self.cfg.twentyq
+        return qcfg.credit == "ensemble" or qcfg.w_ensemble != 0.0
+
     def _ensemble_potentials(self, ep, secret) -> list[float]:
         """Per-turn ensemble potentials Φ_0..Φ_T for one episode: the frozen
-        ensemble's mean log-prob of ``secret`` given each Q/A history prefix."""
+        ensemble's mean log-prob of ``secret`` given each Q/A history prefix.
+
+        Returns flat zeros — without touching the ensemble — when no reward
+        path can read them (see :meth:`_ensemble_scoring_active`)."""
+        if not self._ensemble_scoring_active():
+            return [0.0] * (len(history_states(ep)))
         ens = self._get_ensemble()
         states = history_states(ep)
         size = max(1, int(self.cfg.twentyq.ensemble_batch_size))
@@ -416,6 +455,34 @@ class TwentyQTrainer(BaseTrainer):
         return out
 
     # ----- stationary evaluation -------------------------------------------
+    def _validation_episodes(self, adapter: str, secret, max_turns: int):
+        """The K validation games for one secret under one adapter.
+
+        K=1 keeps the historical path exactly: one GREEDY game through the
+        scalar engine. K>1 switches to SAMPLED decoding at ``gen.solver_temp``
+        (greedy would return K identical transcripts and buy no power) and runs
+        the games in lockstep through the batched engine, so the extra episodes
+        cost roughly one game's wall time rather than K.
+        """
+        qcfg = self.cfg.twentyq
+        k = max(1, int(qcfg.validation_episodes))
+        if k == 1:
+            return [run_episode(
+                self._make_guesser(
+                    adapter, secret.category, max_turns=max_turns, temp=0.0),
+                self._make_answerer("base", secret, temp=0.0),
+                secret,
+                max_turns=max_turns,
+            )]
+        return run_episodes_batched(
+            self._make_guesser_batch(
+                adapter, secret.category, max_turns=max_turns),
+            self._make_answerer_batch("base", secret, temp=0.0),
+            secret,
+            n_episodes=k,
+            max_turns=max_turns,
+        )
+
     def run_validation(self, step: int) -> dict:
         """Evaluate both trained adapters on a fixed secret set, without GRPO.
 
@@ -441,75 +508,83 @@ class TwentyQTrainer(BaseTrainer):
                 rows: list[dict] = []
                 adapter_tree_entries: list[dict] = []
                 for si, secret in enumerate(secrets):
-                    ep = run_episode(
-                        self._make_guesser(
-                            adapter, secret.category, max_turns=max_turns, temp=0.0),
-                        self._make_answerer("base", secret, temp=0.0),
-                        secret,
-                        max_turns=max_turns,
-                    )
-                    terminal = episode_reward(
-                        qcfg,
-                        guessed=ep.guessed,
-                        turns_used=ep.turns_used,
-                        max_turns=max_turns,
-                        # Validation deliberately keeps the sparse signal pure:
-                        # no judge closeness is folded into a terminal miss.
-                        phi_final=None,
-                        format_fail=(ep.ended == "format"),
-                    )
-                    potentials = self._ensemble_potentials(ep, secret)
-                    trace = ensemble_reward_trace(
-                        potentials,
-                        terminal.total,
-                        gamma=qcfg.gamma,
-                        scale=qcfg.w_ensemble,
-                    )
-                    all_traces.append(trace)
-                    row = {
-                        "secret_id": secret.secret_id,
-                        "secret": secret.secret,
-                        "category": secret.category,
-                        "difficulty": secret.difficulty,
-                        "guessed": ep.guessed,
-                        "ended": ep.ended,
-                        "turns": ep.turns_used,
-                        "terminal_reward": round(terminal.total, 6),
-                        "dense_reward_total": round(sum(s.dense for s in trace), 6),
-                        "combined_immediate_total": round(sum(s.total for s in trace), 6),
-                        "combined_return_start": round(
-                            trace[0].return_ if trace else 0.0, 6),
-                        "step_rewards": [asdict(s) for s in trace],
-                    }
-                    rows.append(row)
-                    adapter_tree_entries.append({
-                        "ep": ep,
-                        "secret": secret.secret,
-                        "category": secret.category,
-                        "reward": terminal.total,
-                        "reward_obj": terminal,
-                        "step_rewards": row["step_rewards"],
-                        "adv_by_turn": {},
-                        "prompts": self._episode_prompts(
-                            ep, secret, secret.category, max_turns),
-                    })
-                    game_lines = [
-                        f"  {t.index}: [{t.kind}] {t.content} -> {t.answer}"
-                        for t in ep.turns
-                    ]
-                    self._tr(
-                        f"validation[{adapter}.{si}] secret='{secret.secret}' "
-                        f"ended={ep.ended} turns={ep.turns_used}",
-                        "\n".join(game_lines),
-                        guessed=ep.guessed,
-                        answerer="base",
-                    )
-                    self._tr(
-                        f"validation[{adapter}.{si}] per-turn reward components",
-                        _format_reward_trace(trace),
-                        terminal=round(terminal.total, 6),
-                        dense=round(sum(s.dense for s in trace), 6),
-                    )
+                    # No question_retries here, deliberately, whatever training
+                    # uses: retries are a scaffold that spends extra compute to
+                    # paper over the policy's repeat lock. Measuring under them
+                    # would score the scaffold, and the number would stop being
+                    # comparable to the v1..v7 series. Validation is always the
+                    # bare policy; w_repeat is what has to move this.
+                    eps = self._validation_episodes(adapter, secret, max_turns)
+                    for ei, ep in enumerate(eps):
+                        terminal = episode_reward(
+                            qcfg,
+                            guessed=ep.guessed,
+                            turns_used=ep.turns_used,
+                            max_turns=max_turns,
+                            # Validation keeps the sparse signal pure: no judge
+                            # closeness is folded into a terminal miss.
+                            phi_final=None,
+                            format_fail=(ep.ended == "format"),
+                        )
+                        potentials = self._ensemble_potentials(ep, secret)
+                        trace = ensemble_reward_trace(
+                            potentials,
+                            terminal.total,
+                            gamma=qcfg.gamma,
+                            scale=qcfg.w_ensemble,
+                        )
+                        all_traces.append(trace)
+                        row = {
+                            "secret_id": secret.secret_id,
+                            "secret": secret.secret,
+                            "category": secret.category,
+                            "difficulty": secret.difficulty,
+                            "guessed": ep.guessed,
+                            "ended": ep.ended,
+                            "turns": ep.turns_used,
+                            "repeat_turns": ep.n_repeat_turns,
+                            "terminal_reward": round(terminal.total, 6),
+                            "dense_reward_total": round(
+                                sum(s.dense for s in trace), 6),
+                            "combined_immediate_total": round(
+                                sum(s.total for s in trace), 6),
+                            "combined_return_start": round(
+                                trace[0].return_ if trace else 0.0, 6),
+                            "step_rewards": [asdict(s) for s in trace],
+                        }
+                        rows.append(row)
+                        adapter_tree_entries.append({
+                            "ep": ep,
+                            "secret": secret.secret,
+                            "category": secret.category,
+                            "reward": terminal.total,
+                            "reward_obj": terminal,
+                            "step_rewards": row["step_rewards"],
+                            "adv_by_turn": {},
+                            "prompts": self._episode_prompts(
+                                ep, secret, secret.category, max_turns),
+                        })
+                        game_lines = [
+                            f"  {t.index}: [{t.kind}] {t.content} -> {t.answer}"
+                            for t in ep.turns
+                        ]
+                        # Episode suffix only when there is more than one game
+                        # per secret, so K=1 transcripts stay byte-identical to
+                        # the v1..v7 series.
+                        tag = f"{adapter}.{si}" + (f".{ei}" if len(eps) > 1 else "")
+                        self._tr(
+                            f"validation[{tag}] secret='{secret.secret}' "
+                            f"ended={ep.ended} turns={ep.turns_used}",
+                            "\n".join(game_lines),
+                            guessed=ep.guessed,
+                            answerer="base",
+                        )
+                        self._tr(
+                            f"validation[{tag}] per-turn reward components",
+                            _format_reward_trace(trace),
+                            terminal=round(terminal.total, 6),
+                            dense=round(sum(s.dense for s in trace), 6),
+                        )
 
                 categories: dict[str, dict] = {}
                 for category in sorted({row["category"] for row in rows}):
@@ -533,7 +608,9 @@ class TwentyQTrainer(BaseTrainer):
             "w_ensemble": qcfg.w_ensemble,
             "secret_set": meta,
             "max_turns": max_turns,
-            "decoding": "greedy",
+            "decoding": ("greedy" if qcfg.validation_episodes <= 1
+                         else f"sampled@{self.cfg.gen.solver_temp}"),
+            "episodes_per_secret": max(1, int(qcfg.validation_episodes)),
             "answerer": "base",
             "adapters": by_adapter,
             "reward_signals": _reward_signal_report(all_traces),
@@ -757,6 +834,10 @@ class TwentyQTrainer(BaseTrainer):
         guesser_think: list[float] = []
         n_guessed = n_episodes = 0
         n_format_ended = n_answer_ffails = 0
+        # Turn-waste telemetry: questions asked vs. distinct questions asked.
+        # The headline win rate cannot distinguish "lost while probing" from
+        # "lost while locked", and the lock is the fixable one.
+        n_questions = n_repeat_turns = n_retries = 0
         phi_vals: list[float] = []
         reward_traces: list[list[StepReward]] = []
         # Per-secret solver-episode entries for the transcript tree (secret
@@ -794,14 +875,19 @@ class TwentyQTrainer(BaseTrainer):
                     secret,
                     n_episodes=k,
                     max_turns=qcfg.max_turns,
+                    question_retries=qcfg.question_retries,
                 )
             else:
                 episodes = [run_episode(
-                    guesser_fn, answerer_fn, secret, max_turns=qcfg.max_turns)
+                    guesser_fn, answerer_fn, secret, max_turns=qcfg.max_turns,
+                    question_retries=qcfg.question_retries)
                     for _ in range(k)]
             for ki, ep in enumerate(episodes):
                 n_episodes += 1
                 n_answer_ffails += ep.n_answer_format_fails
+                n_questions += len(ep.turns)
+                n_repeat_turns += ep.n_repeat_turns
+                n_retries += ep.n_question_retries
                 if ep.ended == "format":
                     n_format_ended += 1
                 guesser_think.extend(think_share(t.raw_text) for t in ep.turns)
@@ -875,7 +961,8 @@ class TwentyQTrainer(BaseTrainer):
                     # exactly the shape every log reader expects.
                     traces = [ensemble_reward_trace(
                         [0.0] * (ep.turns_used + 1), rew.total,
-                        gamma=qcfg.gamma, scale=0.0)
+                        gamma=qcfg.gamma, scale=0.0,
+                        local=repeat_penalties(ep, qcfg.w_repeat))
                         for ep, rew in zip(kept_eps, kept_rewards)]
                     adv_map = {}
                 elif qcfg.credit == "ensemble":
@@ -886,8 +973,9 @@ class TwentyQTrainer(BaseTrainer):
                     # ensemble pass per history state; no per-turn judge call.
                     potentials = self._ensemble_potentials_many(kept_eps, secret)
                     traces = [ensemble_reward_trace(
-                        pots, rew.total, gamma=qcfg.gamma, scale=qcfg.w_ensemble)
-                        for pots, rew in zip(potentials, kept_rewards)]
+                        pots, rew.total, gamma=qcfg.gamma, scale=qcfg.w_ensemble,
+                        local=repeat_penalties(ep, qcfg.w_repeat))
+                        for pots, ep, rew in zip(potentials, kept_eps, kept_rewards)]
                     returns = [[s.return_ for s in trace] for trace in traces]
                     new_trajs = per_turn_secret_trajectories(
                         kept_eps, returns, adv_mode=cfg.train.adv_mode)
@@ -899,7 +987,8 @@ class TwentyQTrainer(BaseTrainer):
                     # isolates the ensemble term without loading/scoring it.
                     traces = [ensemble_reward_trace(
                         [0.0] * (ep.turns_used + 1), rew.total,
-                        gamma=qcfg.gamma, scale=0.0)
+                        gamma=qcfg.gamma, scale=0.0,
+                        local=repeat_penalties(ep, qcfg.w_repeat))
                         for ep, rew in zip(kept_eps, kept_rewards)]
                     returns = [[s.return_ for s in trace] for trace in traces]
                     new_trajs = per_turn_secret_trajectories(
@@ -1104,6 +1193,10 @@ class TwentyQTrainer(BaseTrainer):
                 "total": n_episodes, "guessed": n_guessed,
                 "format_ended": n_format_ended,
                 "answer_format_fails": n_answer_ffails,
+                "turns": n_questions,
+                "repeat_turns": n_repeat_turns,
+                "repeat_turn_rate": round(n_repeat_turns / max(1, n_questions), 4),
+                "question_retries": n_retries,
             },
             "reward_signals": _reward_signal_report(reward_traces),
             "phi_mean": round(_mean(phi_vals), 4),

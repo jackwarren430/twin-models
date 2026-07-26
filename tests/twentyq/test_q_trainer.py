@@ -173,6 +173,9 @@ def test_iteration_record_shape(record_and_trainer):
     assert rec["episodes"] == {
         "total": 4, "guessed": 2,
         "format_ended": 1, "answer_format_fails": 0,
+        # Turn-waste telemetry: the scripted guesser never repeats itself.
+        "turns": 7, "repeat_turns": 0, "repeat_turn_rate": 0.0,
+        "question_retries": 0,
     }
     assert rec["phi_mean"] == pytest.approx(0.4)
 
@@ -360,7 +363,7 @@ def test_lockstep_generation_batches_sibling_episodes():
     guesser = [
         "GUESS: dog", "QUESTION: Is it a pet?", "GUESS: dog",
         "QUESTION: Is it alive?", "QUESTION: Is it aquatic?",
-        "QUESTION: Does it have gills?", "format broken",
+        "QUESTION: Does it have gills?", "Unable to determine anything from these answers",
     ]
     t = _make_trainer(cfg, list(CREATOR_OK), guesser)
 
@@ -760,3 +763,62 @@ def test_unknown_difficulty_mode_raises():
     t = _ensemble_trainer(_ensemble_cfg(difficulty_mode="ramp"))
     with pytest.raises(ValueError, match="difficulty_mode"):
         t.run_iteration(0)
+
+
+# ----- validation statistical power (multi-episode) ----------------------------
+
+def _validation_cfg(tmp_path, **twentyq):
+    secret_set = tmp_path / "validation.json"
+    secret_set.write_text(json.dumps({
+        "name": "test-set", "version": 1,
+        "secrets": [{"secret_id": "fixed-dog", "secret": "dog",
+                     "category": "animal", "difficulty": 0.2}],
+    }))
+    # w_ensemble 0.0 with credit=terminal is the real no-ensemble posture, and
+    # it is what keeps _ensemble_potentials from loading a 4-model roster in a
+    # unit test (see TwentyQTrainer._ensemble_scoring_active).
+    base = {"n_secrets": 2, "episodes_per_secret": 2, "max_turns": 3,
+            "categories": ["animal"], "credit": "terminal", "w_ensemble": 0.0,
+            "validation_every": 1, "validation_secret_set": str(secret_set)}
+    base.update(twentyq)
+    return _config(twentyq=base)
+
+
+def test_validation_single_episode_stays_greedy_and_scalar(tmp_path):
+    cfg = _validation_cfg(tmp_path, validation_episodes=1)
+    t = _make_trainer(cfg, [], ["GUESS: dog"] * 8)
+    rec = t.run_validation(1)
+    assert rec["decoding"] == "greedy"
+    assert rec["episodes_per_secret"] == 1
+    assert all(m["n_episodes"] == 1 for m in rec["adapters"].values())
+
+
+def test_validation_multi_episode_samples_and_reports_ci(tmp_path):
+    # One turn per game, alternating right/wrong: a real 0.5 rate on n=4.
+    cfg = _validation_cfg(tmp_path, validation_episodes=4, max_turns=1)
+    t = _make_trainer(cfg, [], ["GUESS: dog", "GUESS: cat"] * 4)
+    rec = t.run_validation(1)
+
+    assert rec["decoding"].startswith("sampled@")
+    assert rec["episodes_per_secret"] == 4
+    for metrics in rec["adapters"].values():
+        assert metrics["n_episodes"] == 4
+        lo, hi = metrics["guess_rate_ci95"]
+        assert lo < metrics["guess_rate"] < hi
+        # 4 samples cannot pin a rate down; the interval must say so.
+        assert hi - lo > 0.5
+
+
+def test_wilson_ci_brackets_rate_and_never_leaves_unit_interval():
+    from twin.games.twentyq.trainer import _wilson_ci
+    lo, hi = _wilson_ci(3, 24)          # the v6/v7 validation regime
+    assert 0.0 <= lo < 3 / 24 < hi <= 1.0
+    # The historical instrument's honest width: ~±13 points at n=24.
+    assert hi - lo > 0.20
+    # Tightens as n grows at the same rate.
+    lo2, hi2 = _wilson_ci(24, 192)
+    assert (hi2 - lo2) < (hi - lo)
+    # Degenerate inputs stay in range rather than producing negative bounds.
+    assert _wilson_ci(0, 24)[0] == 0.0
+    assert _wilson_ci(24, 24)[1] == 1.0
+    assert _wilson_ci(0, 0) == (0.0, 0.0)

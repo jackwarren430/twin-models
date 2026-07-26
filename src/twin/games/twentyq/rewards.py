@@ -48,6 +48,7 @@ class StepReward:
     return_: float
     potential_before: float | None = None
     potential_after: float | None = None
+    local: float = 0.0
 
 
 def _step_trace(
@@ -57,10 +58,26 @@ def _step_trace(
     gamma: float,
     potentials: list[float] | None = None,
     broadcast_return: bool = False,
+    local: list[float] | None = None,
 ) -> list[StepReward]:
-    """Build an auditable per-step trace from immediate dense rewards."""
+    """Build an auditable per-step trace from immediate dense rewards.
+
+    ``local[t]`` is a NON-PROPAGATING per-turn term: it lands on turn ``t``'s
+    return and nowhere else, unlike ``dense``/``terminal``, which flow backwards
+    through the reward-to-go accumulation. That asymmetry is deliberate and is
+    the whole point of the field. Winning is a shared property of an episode —
+    every turn helped get there, so outcome credit is rightly spread. Asking a
+    question the transcript already answered is not shared: it is a defect of
+    exactly one turn, and propagating it backwards would debit the informative
+    turns that preceded it for a mistake they did not make. Under the per-turn-
+    index GRPO baseline that backwards smear is pure variance, since siblings
+    that repeat at DIFFERENT turns would penalize each other's good turns.
+    """
     if not dense:
         return []
+    local = list(local) if local is not None else [0.0] * len(dense)
+    if len(local) != len(dense):
+        raise ValueError(f"local has {len(local)} entries for {len(dense)} turns")
     terminal_by_step = [0.0] * len(dense)
     terminal_by_step[-1] = float(terminal)
     immediate = [d + term for d, term in zip(dense, terminal_by_step)]
@@ -76,10 +93,11 @@ def _step_trace(
         StepReward(
             dense=float(dense[t]),
             terminal=terminal_by_step[t],
-            total=immediate[t],
-            return_=returns[t],
+            total=immediate[t] + local[t],
+            return_=returns[t] + local[t],
             potential_before=(potentials[t] if potentials is not None else None),
             potential_after=(potentials[t + 1] if potentials is not None else None),
+            local=float(local[t]),
         )
         for t in range(len(dense))
     ]
@@ -278,14 +296,37 @@ def ensemble_reward_trace(
     *,
     gamma: float,
     scale: float = 1.0,
+    local: list[float] | None = None,
 ) -> list[StepReward]:
-    """Component-level counterpart of :func:`ensemble_shaped_returns`."""
+    """Component-level counterpart of :func:`ensemble_shaped_returns`.
+
+    ``local`` (see :func:`_step_trace`) carries non-propagating per-turn terms —
+    the repeat penalty from :func:`repeat_penalties`."""
     n_turns = len(potentials) - 1
     if n_turns <= 0:
         return []
     dense = [scale * (gamma * potentials[t + 1] - potentials[t])
              for t in range(n_turns)]
-    return _step_trace(dense, terminal, gamma=gamma, potentials=potentials)
+    return _step_trace(dense, terminal, gamma=gamma, potentials=potentials,
+                       local=local)
+
+
+def repeat_penalties(ep: Episode, w_repeat: float) -> list[float]:
+    """Per-turn local penalty for turns flagged ``Turn.repeat`` (DESIGN §9).
+
+    Under terminal credit with gamma=1 every turn of a winning episode receives
+    the SAME return, so GRPO raises the log-probability of the repeated question
+    exactly as much as the informative ones. The v7 penguin transcript is the
+    worst case: ten consecutive "Is the animal a parrot?" turns in an episode
+    that won, i.e. ten reinforced repetitions of the lock that caused the near
+    loss. This term is what breaks the tie between the turns of a won episode.
+
+    Note discounting is NOT a substitute. The lock occupies the LATE turns and
+    the informative questions the early ones, so gamma < 1 would move credit
+    towards the repeats rather than away from them."""
+    if w_repeat <= 0:
+        return [0.0] * len(ep.turns)
+    return [(-w_repeat if t.repeat else 0.0) for t in ep.turns]
 
 
 def per_turn_secret_trajectories(

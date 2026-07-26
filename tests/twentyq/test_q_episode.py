@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from twin.games.twentyq.episode import (
+    normalize_question,
     parse_answer,
     parse_guesser_turn,
     run_episode,
@@ -197,7 +198,7 @@ def test_batched_episode_engine_matches_scalar_with_ragged_termination():
     guesser_batches = iter([
         [FakeGen("QUESTION: Is it alive?"), FakeGen("GUESS: squid"),
          FakeGen("QUESTION: Is it alive?")],
-        [FakeGen("GUESS: octopus"), FakeGen("format broken"),
+        [FakeGen("GUESS: octopus"), FakeGen("Unable to determine anything from these answers"),
          FakeGen("QUESTION: Is it aquatic?")],
         [FakeGen("QUESTION: Does it have arms?")],
     ])
@@ -222,7 +223,7 @@ def test_batched_episode_engine_matches_scalar_with_ragged_termination():
     scalar_scripts = [
         (["QUESTION: Is it alive?", "GUESS: octopus"],
          ["ANSWER: YES"]),
-        (["GUESS: squid", "format broken"], []),
+        (["GUESS: squid", "Unable to determine anything from these answers"], []),
         (["QUESTION: Is it alive?", "QUESTION: Is it aquatic?",
           "QUESTION: Does it have arms?"],
          ["vague", "ANSWER: NO", "ANSWER: YES"]),
@@ -245,3 +246,187 @@ def test_batched_episode_engine_rejects_wrong_result_count():
         run_episodes_batched(
             lambda requests: [], lambda requests: [], SECRET,
             n_episodes=2, max_turns=1)
+
+
+# ----- question de-duplication (repeat retry) --------------------------------
+
+def test_normalize_question_collapses_surface_variants():
+    key = lambda t: normalize_question(t, category="animal")
+    # The v7 parrot lock: same content word, three phrasings, one key.
+    assert key("Is the animal a parrot?") == key("Is it a parrot?")
+    assert key("Is it a parrot?") == key("Are they parrots?")
+    # Hedges and the category noun are not content.
+    assert key("Is the animal usually a parrot?") == key("Is it a parrot?")
+    # Genuinely different questions stay apart.
+    assert key("Is it a parrot?") != key("Is it a penguin?")
+    assert key("Is it bigger than a cat?") != key("Is it smaller than a cat?")
+    # Multi-word categories drop wholly.
+    assert normalize_question("Is the household object made of metal?",
+                              category="household object") == "made metal"
+
+
+def test_normalize_question_ignores_pure_punctuation_and_case():
+    assert (normalize_question("IS IT A PARROT???", category="animal")
+            == normalize_question("is it, a parrot", category="animal"))
+
+
+def test_repeat_retry_resamples_until_question_is_new():
+    draws = iter([
+        "QUESTION: Is it a parrot?",     # turn 1: fresh
+        "QUESTION: Is the animal a parrot?",  # turn 2: repeat -> retry
+        "QUESTION: Are they parrots?",        # still a repeat -> retry
+        "QUESTION: Is it aquatic?",           # fresh, accepted
+    ])
+    ep = run_episode(
+        lambda qa, i: FakeGen(next(draws)),
+        yes_answerer, SECRET, max_turns=2, question_retries=3)
+    assert [t.content for t in ep.turns] == ["Is it a parrot?", "Is it aquatic?"]
+    assert ep.n_question_retries == 2
+    assert ep.n_repeat_turns == 0
+
+
+def test_repeat_retry_accepts_last_draw_when_retries_exhausted():
+    draws = iter(["QUESTION: Is it a parrot?"] * 4)
+    ep = run_episode(
+        lambda qa, i: FakeGen(next(draws)),
+        yes_answerer, SECRET, max_turns=2, question_retries=2)
+    # Turn is spent, never dropped: the exhausted draw still plays.
+    assert [t.content for t in ep.turns] == ["Is it a parrot?", "Is it a parrot?"]
+    assert ep.n_question_retries == 2
+    assert ep.n_repeat_turns == 1
+
+
+def test_repeat_retry_covers_repeated_guesses():
+    draws = iter([
+        "GUESS: squid",     # wrong, engine answers NO
+        "GUESS: squid",     # repeat of a dead guess -> retry
+        "GUESS: octopus",   # fresh and correct
+    ])
+    ep = run_episode(
+        lambda qa, i: FakeGen(next(draws)),
+        yes_answerer, SECRET, max_turns=3, question_retries=1)
+    assert ep.guessed and ep.ended == "guessed"
+    assert ep.n_question_retries == 1
+
+
+def test_repeat_retry_does_not_fire_on_format_failure():
+    draws = iter(["QUESTION: Is it a parrot?", "no contract line here"])
+    ep = run_episode(
+        lambda qa, i: FakeGen(next(draws)),
+        yes_answerer, SECRET, max_turns=3, question_retries=3)
+    assert ep.ended == "format"
+    assert ep.n_question_retries == 0
+
+
+def test_batched_repeat_retry_reissues_only_the_repeating_episodes():
+    batches = iter([
+        # turn 0: both fresh
+        [FakeGen("QUESTION: Is it a parrot?"), FakeGen("QUESTION: Is it aquatic?")],
+        # turn 1: ep0 repeats, ep1 fresh
+        [FakeGen("QUESTION: Is the animal a parrot?"), FakeGen("QUESTION: Does it swim?")],
+        # retry round: ONLY ep0 is re-requested
+        [FakeGen("QUESTION: Is it a penguin?")],
+    ])
+    sizes = []
+
+    def guesser_batch(requests):
+        sizes.append(len(requests))
+        return next(batches)
+
+    eps = run_episodes_batched(
+        guesser_batch, lambda reqs: ["ANSWER: YES"] * len(reqs),
+        SECRET, n_episodes=2, max_turns=2, question_retries=1)
+
+    assert sizes == [2, 2, 1]
+    assert [t.content for t in eps[0].turns] == ["Is it a parrot?", "Is it a penguin?"]
+    assert [t.content for t in eps[1].turns] == ["Is it aquatic?", "Does it swim?"]
+    assert eps[0].n_question_retries == 1
+    assert eps[1].n_question_retries == 0
+
+
+def test_batched_repeat_retry_matches_scalar_engine():
+    lines = ["QUESTION: Is it a parrot?", "QUESTION: Is it a parrot?",
+             "QUESTION: Is it aquatic?"]
+
+    batch_iter = iter(lines)
+    batched = run_episodes_batched(
+        lambda reqs: [FakeGen(next(batch_iter))],
+        lambda reqs: ["ANSWER: YES"] * len(reqs),
+        SECRET, n_episodes=1, max_turns=2, question_retries=1)
+
+    scalar_iter = iter(lines)
+    scalar = run_episode(
+        lambda qa, i: FakeGen(next(scalar_iter)),
+        yes_answerer, SECRET, max_turns=2, question_retries=1)
+
+    assert asdict(batched[0]) == asdict(scalar)
+
+
+def test_question_retries_default_is_off():
+    draws = iter(["QUESTION: Is it a parrot?"] * 3)
+    ep = run_episode(
+        lambda qa, i: FakeGen(next(draws)), yes_answerer, SECRET, max_turns=3)
+    assert ep.n_question_retries == 0
+    assert ep.n_repeat_turns == 2
+    assert [t.content for t in ep.turns] == ["Is it a parrot?"] * 3
+
+
+# ----- decoration-tolerant contract parsing -----------------------------------
+# Every raw string below is a VERBATIM guesser completion from the v7 run that
+# the old parser scored as a format failure, ending the episode. 558 of the
+# run's 632 format failures are of these shapes.
+
+@pytest.mark.parametrize("raw,expected", [
+    ("<h3>QUESTION: Is the food animal-based?</h3>", "Is the food animal-based?"),
+    ("<strong>QUESTION: Is it a type of cured meat?</strong>",
+     "Is it a type of cured meat?"),
+    ("**QUESTION: Is it a processed food?**", "Is it a processed food?"),
+    ("$\\text{QUESTION: Is the food a cooked item?}$", "Is the food a cooked item?"),
+    ("{QUESTION: Is it a liquid?}", "Is it a liquid?"),
+    ('"Is it a nut?"', "Is it a nut?"),
+    ("*Is the food item a fruit?*", "Is the food item a fruit?"),
+])
+def test_parse_recovers_decorated_questions(raw, expected):
+    assert parse_guesser_turn(raw) == ("question", expected)
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("Key lime pie", "Key lime pie"),
+    ("Taco", "Taco"),
+    ("Truffle", "Truffle"),
+    ("Closure: GUESS: clear broth", "clear broth"),
+])
+def test_parse_recovers_bare_and_inline_guesses(raw, expected):
+    assert parse_guesser_turn(raw) == ("guess", expected)
+
+
+@pytest.mark.parametrize("raw", [
+    "",
+    "Key: The previous questions have established that the food is edible,",
+    "Not a specific food item yet.",
+    "Let's see if it's a fruit.",
+    "I give up, I have no idea.",
+    "Unable to determine anything from these answers",
+])
+def test_parse_still_rejects_genuine_non_answers(raw):
+    assert parse_guesser_turn(raw) == (None, "")
+
+
+def test_bare_entity_guess_is_a_last_resort_only():
+    """The ladder must not let the bare-entity rung reinterpret a good line."""
+    # A contract line anywhere wins over the bare-entity reading.
+    assert parse_guesser_turn("GUESS: octopus") == ("guess", "octopus")
+    # Multi-line output is never read as a bare entity.
+    assert parse_guesser_turn("Squid\nOctopus") == (None, "")
+    # Nor is anything long enough to be prose.
+    assert parse_guesser_turn("a b c d e f") == (None, "")
+
+
+def test_decoration_stripping_preserves_inner_punctuation():
+    # Apostrophes and hyphens inside the entity must survive edge-stripping.
+    assert parse_guesser_turn("**GUESS: shepherd's pie**") == ("guess", "shepherd's pie")
+    assert parse_guesser_turn("Ice-cream") == ("guess", "Ice-cream")
+
+
+def test_full_width_question_mark_is_a_question():
+    assert parse_guesser_turn("それは果物ですか？") == ("question", "それは果物ですか？")

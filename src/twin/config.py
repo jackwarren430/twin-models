@@ -204,6 +204,21 @@ class TwentyQConfig:
     # judge call). See games/twentyq/ensemble_reward.py + twentyq-ensemble-reward.
     credit: str = "broadcast"
     gamma: float = 1.0            # per-turn discount (per_turn / ensemble credit)
+    # --- turn-waste controls (DESIGN §9) ---------------------------------
+    # A weak guesser's dominant loss channel is not bad questions, it is
+    # REPEATED ones: v7 validation has gemma-4-E2B asking "Is the animal a
+    # parrot?" on ten consecutive turns, then winning on the forced final
+    # guess. Those turns are pure waste, and terminal credit reinforces them.
+    #   question_retries  engine-level: resample a turn whose content words
+    #     duplicate an earlier question/guess in the same episode, up to this
+    #     many extra draws. Salvages the turn. 0 = historical behaviour.
+    #   w_repeat  reward-level: local (non-propagating) penalty on a turn that
+    #     repeated anyway. Teaches the POLICY not to lock, where the retry only
+    #     hides it — so validation without retries still improves.
+    # They are independent on purpose: retries change the data distribution,
+    # the penalty changes the gradient, and the ablation needs them separable.
+    question_retries: int = 0
+    w_repeat: float = 0.0
     # Ensemble-reward knobs (credit="ensemble" only). Empty models list = the
     # whole ENSEMBLE_MODELS registry. w_ensemble scales the per-turn shaping
     # delta (the terminal reward is never scaled); 1.0 = the bare spec formula.
@@ -299,6 +314,15 @@ class TwentyQConfig:
     validation_every: int = 0
     validation_secret_set: str = "data/twentyq-validation-v1.json"
     validation_max_turns: int | None = None  # null => use max_turns
+    # Episodes per validation secret. 1 (the v1..v7 default) means ONE GREEDY
+    # game per secret — 24 episodes total, so the metric moves in steps of
+    # 1/24 = 4.2% and a 24-flip binomial at p=0.125 has a 95% CI of roughly
+    # ±13 points. That instrument cannot resolve the effect sizes this project
+    # is chasing, which is a live alternative explanation for the flat
+    # validation series in v6 and v7. Above 1, validation samples at
+    # gen.solver_temp (greedy would just replay one game K times) and runs the
+    # K games per secret in lockstep through the batched engine.
+    validation_episodes: int = 1
     # Write a compact <run>.rewards.jsonl sidecar containing terminal, dense
     # ensemble, combined-immediate, and turn-zero-return aggregates for every
     # training iteration and validation pass. The main JSONL remains complete.
