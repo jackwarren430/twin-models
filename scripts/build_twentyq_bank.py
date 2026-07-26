@@ -93,8 +93,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", type=Path,
                     default=ROOT / "configs/twentyq-v7-solver-only.yaml")
-    ap.add_argument("--rollouts-per-category", type=int, default=80,
+    ap.add_argument("--rollouts-per-category", type=int, default=170,
                     help="creator draws per category before dedup")
+    ap.add_argument("--targets", nargs="+", type=float,
+                    default=[0.95, 0.9, 0.8, 0.7, 0.5],
+                    help="dictated guess-rate targets cycled during generation")
     ap.add_argument("--episodes-per-candidate", type=int, default=8,
                     help="K games used to measure each candidate's win rate")
     ap.add_argument("--band", nargs=2, type=float, default=[0.125, 0.875],
@@ -133,13 +136,18 @@ def main() -> None:
     for category in qcfg.categories:
         seen_names: list[str] = []
         for i in range(args.rollouts_per_category):
-            # The rank/target dictation is irrelevant here (nothing is being
-            # calibrated against it yet) but keeping the real creator prompt
-            # means the bank is drawn from the same distribution the creator
-            # will later have to reproduce.
+            # Sweep the dictated target rather than fixing it at 0.5. Two
+            # reasons. The band is selected by MEASUREMENT afterwards, so the
+            # generator's job is coverage, not accuracy — a single target
+            # clusters candidates in one place and most of them then miss the
+            # band. And this base model runs far harder than it is asked
+            # (measured win rate ~0.16), so the mass of usable secrets sits at
+            # dictated targets well above 0.5.
+            target_rate = args.targets[i % len(args.targets)]
             user = creator_secret_user(
                 category, rank=i % max(1, qcfg.n_secrets),
-                n_secrets=qcfg.n_secrets, difficulty=0.5, target_rate=0.5,
+                n_secrets=qcfg.n_secrets,
+                difficulty=round(1.0 - target_rate, 2), target_rate=target_rate,
                 recent=seen_names[-qcfg.recent_secret_window:],
                 difficulty_mode="flat",
             )

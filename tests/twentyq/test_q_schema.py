@@ -114,3 +114,37 @@ def test_guess_matches(guess, secret, expect):
 def test_repeat_matches_catches_misspell_evasion(candidate, secret, expect):
     from twin.games.twentyq.schema import repeat_matches
     assert repeat_matches(candidate, secret) is expect
+
+
+# ----- flat-mode difficulty steer must track the target ------------------------
+
+def test_flat_dictation_steers_familiar_at_high_targets():
+    """v7 asked for a 90% guess rate while the prompt unconditionally said
+    'not so obvious', and the creator duly rejected winnable secrets by name."""
+    from twin.games.twentyq.prompts import creator_secret_user
+    user = creator_secret_user("animal", 0, 3, 0.1, 0.9, difficulty_mode="flat")
+    assert "90% of games" in user
+    assert "FAMILIAR" in user
+    assert "not so obvious" not in user
+
+
+def test_flat_dictation_steers_obscure_at_low_targets():
+    from twin.games.twentyq.prompts import creator_secret_user
+    user = creator_secret_user("animal", 0, 3, 0.9, 0.1, difficulty_mode="flat")
+    assert "10% of games" in user
+    assert "OBSCURE" in user
+
+
+def test_flat_dictation_keeps_the_middle_steer_mid_range():
+    from twin.games.twentyq.prompts import creator_secret_user
+    user = creator_secret_user("animal", 0, 3, 0.5, 0.5, difficulty_mode="flat")
+    assert "50% of games" in user
+    assert "not so obvious" in user and "not so obscure" in user
+    assert "FAMILIAR" not in user and "OBSCURE" not in user
+
+
+def test_gradient_mode_dictation_is_untouched():
+    from twin.games.twentyq.prompts import creator_secret_user
+    user = creator_secret_user("animal", 1, 3, 0.5, 0.5, difficulty_mode="gradient")
+    assert "Difficulty for this secret: 0.50" in user
+    assert "FAMILIAR" not in user and "OBSCURE" not in user

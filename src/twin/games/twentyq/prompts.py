@@ -79,12 +79,29 @@ def creator_secret_user(
             "version).\n"
         )
     if difficulty_mode == "flat":
+        # The steer must TRACK the target. Until 2026-07-26 this block ended
+        # with a fixed "not so obvious ... not so obscure" clause, i.e. an
+        # unconditional aim-for-the-middle instruction that flatly contradicts
+        # its own sentence at extreme targets. The v7 run asked for a 90% guess
+        # rate and got creator notes rejecting winnable secrets BY NAME ("known
+        # but not universally recognized, like a tiger or elephant") — the
+        # prompt told it to, and the run's bank came out harder than the 50%
+        # one it replaced.
+        if target_rate >= 0.75:
+            steer = ("Err toward the FAMILIAR: a common, instantly "
+                     "recognizable member of the category, the kind of thing "
+                     "most people would name in the first handful of guesses.")
+        elif target_rate <= 0.25:
+            steer = ("Err toward the OBSCURE: something a well-read person "
+                     "would recognize but rarely think of early.")
+        else:
+            steer = ("Pitch it in the middle — not so obvious it is named in "
+                     "a few questions, not so obscure it is rarely identified "
+                     "within 20.")
         dictation = (
             f"Every secret this round has the SAME target: the guesser should "
-            f"succeed on about {int(round(target_rate * 100))}% of games. Pick "
-            f"something pitched at exactly that level — not so obvious it is "
-            f"named in a few questions, not so obscure it is rarely identified "
-            f"within 20."
+            f"succeed on about {int(round(target_rate * 100))}% of games. "
+            f"{steer}"
         )
     elif difficulty_mode == "gradient":
         dictation = (
