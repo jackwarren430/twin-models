@@ -67,6 +67,22 @@
 # Training win rate on a bank selected to be winnable proves nothing by
 # construction — that is true of bank-v2 exactly as it was of bank-v1.
 #
+# But note what v8 taught about reading a NULL, because v9 can repeat the
+# mistake (DESIGN §9.8). v8's instrument had a minimum detectable effect of
+# +0.174 on live secrets and +0.066 pooled, against a training gain of +0.148:
+# even perfect transfer would have produced a flat series, so its null was
+# uninformative rather than negative. Before concluding anything from v9's
+# validation, run
+#
+#     .venv/bin/python scripts/validation_power.py \
+#       tq-runs/q-v9-bank2-solver.jsonl --effect <v9's within-secret gain>
+#
+# A null only means "no transfer" if the MDE is below the effect in play. With
+# validation-v3 all-live by construction and paired sd ~0.187, that needs ~27
+# secrets for +0.10 and ~56 for +0.07; run_validation_v3_build.sh hard-fails
+# below 30. If v3 lands near the floor, treat a null as inconclusive and say so
+# rather than reporting it as a negative result.
+#
 # Expect bank-v2 to decay during v9 as bank-v1 decayed during v8. That is
 # inherent to a static bank and is not a defect of this run; it is the
 # measurement that motivates priority two.
