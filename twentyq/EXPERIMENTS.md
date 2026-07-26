@@ -924,10 +924,48 @@ calibration is not polish but the mechanism keeping solver training alive.
   these effects. See DESIGN §9.4 — "no transfer to validation" was never
   established by that data, so nothing here should be read as *explaining* v6.
 
+### The creator's natural output distribution (sizes the bank build)
+
+Measured on the v7 run record — 196 draws, 174 distinct secrets, dictated a
+**90% guess rate on every one of them**:
+
+    mean per-secret win rate      0.034
+    secrets at exactly 0/K        148 of 174   (85%)
+    secrets at 1.0                0
+    secrets in [0.125, 0.875]     9.2%
+
+Asked for 90%, the creator delivered 3.4%. This is the same failure as the
+group-variance wall seen from the other side: the creator's output is not
+merely miscalibrated, it is *concentrated on unwinnable*, so the band has to be
+found by measurement rather than requested.
+
+Three consequences, all acted on:
+
+- The generation target sweep dropped 0.7 and 0.5 (they buy nothing but hours
+  of calibration spent confirming 0/8); it is now 0.95/0.9/0.8.
+- 9.2% is the yield **floor** for the bank build, not the estimate. It was
+  measured under the flat-mode prompt bug — an unconditional "not so obvious
+  ... not so obscure" clause that contradicted its own stated target, so the
+  run asking for 90% was simultaneously told to aim for the middle. Fixed.
+- For priority two this is the number to beat. A creator that has learned
+  calibration is one whose dictated target predicts the measured rate; the
+  baseline for that claim is a 0.87 gap.
+
 ### Actions taken
 
 DESIGN §9. Parser recovers markup/quote/bare-entity turns; `question_retries`
 + local `w_repeat`; `secret_source: bank` with deck dealing and category
 balance; `validation_episodes` + Wilson CIs; flat-mode difficulty steer now
-tracks its own target; validation ensemble call guarded. 401 tests pass.
+tracks its own target; validation ensemble call guarded.
+
+Hardening found while sizing the bank build (all pre-run, none of it measured
+yet): the bank builder promised resumability and had none, so calibration now
+checkpoints per candidate behind a signature gate; the judge model is dropped
+before the calibration loop instead of held through it; and bank mode no longer
+re-judges pre-vetted secrets with the small base model — that gate polices the
+creator, and under `fail_closed` its ~10% unparseable verdicts were deleting
+bank entries outright (confirmed: 0 of 4 episodes played). `usable_group_rate`
+is now first-class iteration telemetry, since the run must not be altered on
+telemetry and the metric moves independently of the win rate. 280 tests pass.
+
 Next: build the calibrated bank, then run `configs/twentyq-v8-bank-solver.yaml`.
