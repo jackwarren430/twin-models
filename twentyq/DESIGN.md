@@ -1510,3 +1510,90 @@ VALIDATION guess rate must rise beyond its own confidence interval AND beyond
 the spread of the frozen adapter A control measured on the same schedule.
 Training win rate on a bank selected to be winnable proves nothing by
 construction.
+
+### 9.7 The instrument, not the policy: validation-v2 is composition-limited (2026-07-26)
+
+The v8 run does what §9.6 predicted on the axis it targeted, and nothing on the
+axis that was pre-registered. Both facts are solid, and they are not in
+tension — but reading them requires knowing what the metric can and cannot
+register.
+
+What moved:
+
+    usable_group_rate     0.125  ->  0.896 mean over 24 iterations   (7.2x)
+    within-secret change  +0.148 +-0.048 (95%) over 59 secrets played in both halves
+    bank drift            +0.074 mean, 0 of 61 secrets gone all-win or all-loss
+
+The within-secret panel is the one to trust: the same secrets appear on both
+sides, so neither the category draw (§9.5) nor regression to the mean applies.
+Instance memorisation is ruled out separately — regressing each play's delta on
+iteration + prior exposures to that secret gives exposures -0.082 +-0.085 (n.s.)
+against iteration +0.021 (t = +3.5), and a matched within-iteration contrast of
+first vs second exposure gives -0.117 +-0.121. The solver is getting better at
+the game, not at these secrets.
+
+What did not move, on the pre-registered criterion:
+
+    step        A (frozen control)    B (solver)     B-A
+       0      0.141                 0.141          +0.000
+       5      0.109                 0.141          +0.031
+      10      0.120                 0.172          +0.052
+      15      0.130                 0.141          +0.010
+      20      0.151                 0.146          -0.005
+
+The frozen control's own spread across those checkpoints is 0.042, which
+exceeds every B-A in the table. The step-10 "+0.052" was noise, and the
+criterion in §9.6 exists precisely so that it gets read as noise.
+
+**Why this run cannot resolve the disagreement.** Per-secret, adapter B scores
+0/8 on fifteen of validation-v2's twenty-four secrets at EVERY checkpoint
+(platypus, pangolin, kangaroo, hedgehog, tapir, pizza, hummus, rambutan,
+popcorn, couscous, persimmon, stapler, smoke detector, shoehorn, corkscrew),
+while cow is pinned at 8/8. The metric's entire dynamic range is about seven
+secrets.
+
+This is §9.1's wall applied to the MEASURING INSTRUMENT. A secret that no
+checkpoint ever wins carries no information about whether the policy improved,
+in exactly the way an all-loss group carries no gradient — the same
+zero-variance argument, one level up. Raising K from 1 to 8 (§9.4) fixed the
+sample size and could not fix this, because the binding limit is which secrets
+are in the set, not how many times each is played.
+
+Two explanations remain live and this run distinguishes neither: real skill the
+instrument cannot see, versus bank-distribution fitting that genuinely does not
+transfer. Honesty requires keeping a counter-caveat attached: validation-v2's
+*reachable* subset (television, penguin, banana, bread, refrigerator, scissors)
+is also roughly flat, so resolution alone does not explain the null.
+
+**The protocol, and why it is shaped this way.** The instrument is never
+swapped mid-run. The pre-registered number stands on validation-v2, for that
+criterion and for comparability with v1..v7. What is legitimate is to replay
+the SAVED checkpoints against a better set afterwards
+(`scripts/rescore_checkpoints.py`), reported as a clearly labelled secondary
+analysis. Choosing a new instrument after seeing the first one's answer is the
+goalpost move a pre-registered criterion exists to prevent; the two defences
+are that the primary number still stands, and that validation-v3
+(`scripts/run_validation_v3_build.sh`) is selected by playing the BASE policy
+alone and never consults a trained adapter. Selecting test items on which the
+model under test does well would be contamination; selecting them on being
+resolvable at all is not.
+
+Two deliberate differences from the bank build, everything else held fixed so
+that exactly one property of the instrument changes:
+
+- **K=16 rather than 8.** Band membership is decided on a noisy measurement, so
+  entries near an edge are partly lucky and regress on replay (the winner's
+  curse in §9.6). A training bank tolerates that; for a measuring instrument
+  selection error is the dominant risk, and K is the knob that reduces it.
+- **400 rollouts per category rather than 250.** 85 names are already spoken
+  for by the bank and validation-v2, and this creator yielded only 118 distinct
+  secrets in 750 draws. Diversity, not calibration yield, bounds set size.
+
+Note what band-selected validation does and does not cost. Selection noise
+shifts the absolute level of the set (selected entries regress toward the
+population mean on replay), but it does not bias the CONTRAST between two
+adapters scored on the same fixed set — which is what the criterion is stated
+in. The re-scorer also reseeds identically before every step, so all
+checkpoints face the same sampled games; in-run validation cannot do that
+without disturbing the training stream, which makes the replay strictly more
+sensitive than the series it re-scores.
