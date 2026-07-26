@@ -1141,11 +1141,13 @@ whether the policy improved, exactly as an all-loss GRPO group contributes no
 gradient. Raising `validation_episodes` from 1 to 8 fixed the sample size and
 could not fix this, because the limit is which secrets are in the set.
 
-Caveat against over-claiming: validation's *reachable* subset (television,
+~~Caveat against over-claiming: validation's *reachable* subset (television,
 penguin, banana, bread, refrigerator, scissors) is also roughly flat, so
-resolution alone does not explain the null. The defensible statement is that
-training improved and validation-v2 largely cannot resolve whether it
-transferred.
+resolution alone does not explain the null.~~ **RETRACTED — see the MDE section
+at the end of this file.** The live subset's minimum detectable effect is
++0.18; its being flat is precisely what resolution predicts, not evidence
+against it. The defensible statement is simply that training improved and
+validation-v2 cannot resolve whether it transferred.
 
 Action: `validation-v3`, built like the bank (play candidates, keep those in a
 resolvable band), held out and fixed in advance; then re-score the saved v8
@@ -1159,3 +1161,56 @@ started with, for the pre-registered criterion and v1..v7 comparability.
 `usable_group_rate` has not yet moved, because at K=16 a secret at p=0.875
 still yields a mixed group 88% of the time. It is a leading indicator, not yet
 a cost.
+
+### UPDATE at iteration 25: the null is uninformative, and one retraction
+
+Six checkpoints in, with `scripts/validation_power.py`:
+
+    step        A (frozen control)      B (solver)             B-A
+       0    0.141 [0.098,0.197]    0.141 [0.098,0.197]      +0.000
+       5    0.109 [0.073,0.161]    0.141 [0.098,0.197]      +0.031
+      10    0.120 [0.081,0.173]    0.172 [0.125,0.232]      +0.052
+      15    0.130 [0.090,0.185]    0.141 [0.098,0.197]      +0.010
+      20    0.151 [0.107,0.209]    0.146 [0.103,0.203]      -0.005
+      25    0.172 [0.125,0.232]    0.188 [0.139,0.249]      +0.016
+
+B posted its best value at step 25 — and so did the FROZEN control. A's weights
+are byte-identical at every checkpoint, so its entire 0.062 swing is sampled-
+decoding noise, and it now exceeds B's total rise from step 0 (+0.047). That is
+the cleanest possible demonstration that this instrument cannot see an effect
+of the size in play.
+
+Quantified, paired because both adapters are scored on the same secrets:
+
+    paired sd of per-secret (B - A)   ALL 0.1159    LIVE 0.1946
+    minimum detectable effect         ALL +0.0685   LIVE +0.1817
+
+    vs the +0.148 within-secret training gain:
+      pooled   0.148 x (9/24 live) = +0.0555  vs +0.0685  -> INVISIBLE
+      live     0.148                          vs +0.1817  -> INVISIBLE
+
+**Even perfect transfer would have produced this series.** The v8 null is not a
+negative result; it is an absent measurement. The pre-registered criterion was
+correct as a guard against reading trends out of noise — v6 and v7 both did
+exactly that — but it could never have fired here.
+
+**Retraction.** The "reachable subset is also flat, so resolution alone does not
+explain the null" caveat above is wrong and is struck through. The live
+subset's MDE is +0.18, so its flatness is what resolution *predicts*. Checked
+for hidden signal and there is none either: on the 9 live secrets B ends below
+its own control (0.389 vs 0.403 at step 20), mean turns-on-success falls
+equally for both (B 16.77->16.40, A 17.56->17.13), and off-the-floor events are
+2 for B against 1 for A. The instrument is silent, not the policy.
+
+**This is the third time in this project that a conclusion was read off an
+instrument that could not support it** — v6's 2,0,2,1,3,2,2 "trend", v7's
+per-iteration `guess%` (which mostly measured which category came up), and now
+v8's null. The generalisable lesson is to compute the minimum detectable effect
+BEFORE interpreting any result, not after: `validation_power.py RUN.jsonl
+--effect <the effect in play>`.
+
+Consequence: validation-v3 is sized rather than hoped for. At paired sd 0.19 an
+all-live set needs ~27 secrets to resolve +0.10 and ~56 for +0.07, so
+`run_validation_v3_build.sh` hard-fails below 30 (MIN_V3). The sd is estimated
+from v2's live secrets, which sit mid-range where per-secret variance is
+highest, so that planning number is mildly optimistic — overshoot on size.
