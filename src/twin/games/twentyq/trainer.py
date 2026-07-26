@@ -475,23 +475,36 @@ class TwentyQTrainer(BaseTrainer):
             if not bank:
                 raise ValueError(f"empty secret bank: {qcfg.bank_path}")
             self._bank = bank
+            self._bank_decks = {}
+
+        # Dealt from DECKS, not sampled i.i.d. Independent draws would revisit
+        # some secrets every few iterations while leaving others untouched for
+        # dozens, and a solver that keeps meeting the same secret memorizes it
+        # — which raises the training win rate without moving validation, the
+        # exact failure this project keeps having to rule out. A deck gives
+        # every secret one appearance per epoch and maximal spacing between
+        # repeats. Decks persist on the trainer across iterations.
+        def deal(pool_key: str, source: list[Secret]) -> Secret:
+            deck = self._bank_decks.get(pool_key)
+            if not deck:
+                deck = self.rng.sample(source, len(source))   # fresh epoch
+                self._bank_decks[pool_key] = deck
+            return deck.pop()
+
         if not qcfg.bank_balance_categories:
-            return self.rng.sample(bank, min(n, len(bank)))
+            return [deal("*", bank) for _ in range(min(n, len(bank)))]
+
         by_category: dict[str, list[Secret]] = {}
         for secret in bank:
             by_category.setdefault(secret.category, []).append(secret)
-        drawn: list[Secret] = []
-        # Round-robin the categories so a short draw still spans them.
         order = sorted(by_category)
         self.rng.shuffle(order)
-        pools = {c: self.rng.sample(by_category[c], len(by_category[c]))
-                 for c in order}
-        while len(drawn) < n and any(pools[c] for c in order):
-            for c in order:
+        drawn: list[Secret] = []
+        while len(drawn) < n:
+            for category in order:
                 if len(drawn) >= n:
                     break
-                if pools[c]:
-                    drawn.append(pools[c].pop())
+                drawn.append(deal(category, by_category[category]))
         return drawn
 
     # ----- stationary evaluation -------------------------------------------

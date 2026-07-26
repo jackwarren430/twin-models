@@ -947,3 +947,44 @@ def test_bank_mode_records_mixed_category_honestly(tmp_path):
     # The iteration-level label must not claim a single category it did not play.
     assert rec["category"] == "mixed:animal,food"
     assert {s["category"] for s in rec["secrets"]} == {"animal", "food"}
+
+
+def test_bank_deck_covers_every_secret_before_repeating(tmp_path):
+    """Deck dealing, not i.i.d. sampling: a solver that keeps meeting the same
+    secret memorizes it, which lifts training win rate without moving
+    validation — the confound this project keeps having to rule out."""
+    entries = [(f"s{i}", "animal", 0.5) for i in range(6)]
+    cfg = _bank_cfg(tmp_path, entries, n_secrets=2,
+                    bank_balance_categories=False)
+    t = _make_trainer(cfg, [], ["GUESS: nope"] * 400)
+    seen = []
+    for it in range(3):                     # 3 iterations x 2 = one full epoch
+        seen += [s.secret for s in t._draw_bank_secrets(2)]
+    assert sorted(seen) == sorted(e[0] for e in entries)   # each exactly once
+    # The next epoch reshuffles rather than running dry.
+    assert len({s.secret for s in t._draw_bank_secrets(6)}) == 6
+
+
+def test_bank_deck_is_balanced_and_exhaustive_per_category(tmp_path):
+    entries = ([(f"a{i}", "animal", 0.5) for i in range(3)]
+               + [(f"f{i}", "food", 0.5) for i in range(3)])
+    cfg = _bank_cfg(tmp_path, entries, n_secrets=2)
+    t = _make_trainer(cfg, [], ["GUESS: nope"] * 400)
+    seen = []
+    for _ in range(3):
+        drawn = t._draw_bank_secrets(2)
+        assert sorted(s.category for s in drawn) == ["animal", "food"]
+        seen += [s.secret for s in drawn]
+    assert sorted(seen) == sorted(e[0] for e in entries)
+
+
+def test_bank_deck_survives_across_iterations(tmp_path):
+    """The deck lives on the trainer, so consecutive run_iteration calls do not
+    each restart from a full deck and re-draw the same secrets."""
+    entries = [(f"a{i}", "animal", 0.5) for i in range(4)]
+    cfg = _bank_cfg(tmp_path, entries, n_secrets=2, categories=["animal"])
+    t = _make_trainer(cfg, [], ["GUESS: nope"] * 400)
+    first = {s["secret"] for s in t.run_iteration(0)["secrets"]}
+    second = {s["secret"] for s in t.run_iteration(1)["secrets"]}
+    assert first & second == set()          # disjoint within one epoch
+    assert first | second == {e[0] for e in entries}
