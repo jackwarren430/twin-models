@@ -170,13 +170,30 @@ def main() -> None:
     judge_model = backend.load_base(
         ModelConfig(path=args.judge_model, enable_thinking=False), cfg.compute)
 
-    def judge_oracle(question: str) -> str:
+    def judge_once(question: str, *, terse: bool) -> str:
+        # The stock validity prompt says "Think briefly", which under a token
+        # cap can spend the whole budget before reaching the verdict line. That
+        # is harmless under fail_open and fatal under fail_closed, so the second
+        # attempt forbids preamble outright.
+        if terse:
+            question += ("\n\nReply with ONLY the verdict line and nothing "
+                         "else. Do not explain.")
         prompt = judge_model.render(question, system=JUDGE_SYSTEM,
                                     enable_thinking=False)
         return judge_model.generate(
-            prompt, max_tokens=256, temp=0.0, top_p=1.0,
+            prompt, max_tokens=384, temp=0.0, top_p=1.0,
             suppress_thinking=True,
         ).text
+
+    n_terse_rescues = 0
+
+    def judge_oracle(question: str) -> str:
+        nonlocal n_terse_rescues
+        reply = judge_once(question, terse=False)
+        if "VERDICT" in (reply or "").upper():
+            return reply
+        n_terse_rescues += 1
+        return judge_once(question, terse=True)
 
     vetted: list[Secret] = []
     rejected: list[dict] = []
@@ -191,8 +208,20 @@ def main() -> None:
             rejected.append({"secret": secret.secret,
                              "category": secret.category,
                              "reason": result.detail})
+    vet_rate = len(vetted) / max(1, len(unique))
     print(f"vetted {len(vetted)}/{len(unique)} valid "
-          f"({len(rejected)} rejected)", flush=True)
+          f"({len(rejected)} rejected, {n_terse_rescues} needed a terse retry)",
+          flush=True)
+    # Calibration is the expensive stage (hours). If vetting collapsed, that is
+    # a judge/prompt failure, not a statement about the candidates — stop here
+    # rather than spend the night measuring whatever survived.
+    if vet_rate < 0.30:
+        for r in rejected[:10]:
+            print(f"  REJECTED {r['secret']!r}: {r['reason']}", flush=True)
+        raise SystemExit(
+            f"vet rate {vet_rate:.1%} is implausibly low — the judge is "
+            f"probably not emitting parseable verdicts. Inspect the reasons "
+            f"above before spending hours on calibration.")
     if args.max_candidates:
         vetted = vetted[: args.max_candidates]
 
