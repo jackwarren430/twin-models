@@ -96,15 +96,30 @@ def main() -> None:
               f"min {min(vals_u):.3f}  max {max(vals_u):.3f}")
         print(f"  v1..v7 secret source measured 0.125 — "
               f"{(sum(vals_u)/len(vals_u))/0.125:.1f}x")
+        # `train win` is the confounded series: each iteration draws a fresh
+        # set of secrets, so it largely measures WHICH secrets came up. `paired`
+        # subtracts each secret's own calibrated rate before averaging, which
+        # controls for that. Observed in this run's first 5 iterations: raw win
+        # climbed 0.29 -> 0.47 while paired stayed flat at ~-0.07, i.e. the
+        # entire apparent rise was the draw. Read `paired`, not `train win`.
+        cal_r = ({s["secret"]: s["measured_guess_rate"]
+                  for s in json.loads(args.bank.read_text())["secrets"]}
+                 if args.bank.exists() else {})
         w = max(1, len(iters) // 6)
-        print(f"\n  {'window':>12} {'usable':>8} {'train win':>10} {'fmt/ep':>8}")
+        print(f"\n  {'window':>12} {'usable':>8} {'train win':>10} {'paired':>8} "
+              f"{'fmt/ep':>8}")
         for i in range(0, len(iters), w):
             ch = iters[i:i + w]
             u = sum(r["usable_group_rate"] for r in ch) / len(ch)
             g = sum(r["guess_rate_mean"] for r in ch) / len(ch)
+            d = [s["guess_rate"] - cal_r[s["secret"]] for r in ch
+                 for s in r.get("secrets", [])
+                 if s.get("guess_rate") is not None and s["secret"] in cal_r]
             f = sum(r["episodes"]["format_ended"] for r in ch) / sum(
                 r["episodes"]["total"] for r in ch)
-            print(f"  {f'{i}-{i+len(ch)-1}':>12} {u:>8.3f} {g:>10.3f} {f:>8.3f}")
+            pd = f"{sum(d)/len(d):+.3f}" if d else "-"
+            print(f"  {f'{i}-{i+len(ch)-1}':>12} {u:>8.3f} {g:>10.3f} {pd:>8} "
+                  f"{f:>8.3f}")
 
     # ---- bank drift -------------------------------------------------------
     if iters and args.bank.exists():
