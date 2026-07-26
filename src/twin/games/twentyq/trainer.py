@@ -930,9 +930,24 @@ class TwentyQTrainer(BaseTrainer):
 
         playable_ranks = [r["rank"] for r in rollouts if r["playable"]]
         for si, secret in enumerate(secrets):
-            valid = judge_secret_validity(
-                secret, self._grade, mode=qcfg.secret_validity).correct
-            self._tr(f"secret[{si}] '{secret.secret}' valid={valid}")
+            # The validity gate polices the CREATOR. In bank mode there is no
+            # creator output to police — the secrets were authored offline and
+            # already vetted fail-closed by a far stronger judge (Qwen3-8B,
+            # with a terse-retry fallback for unparseable verdicts). Re-judging
+            # them every iteration with `self._grade`, which is the small BASE
+            # model and has no such fallback, can only subtract: an invalid
+            # verdict voids the secret outright and plays zero episodes, so
+            # each unparseable verdict silently deletes a bank entry from the
+            # iteration. v7 logged 21/206 unparseable verdicts (~10%), all of
+            # which fail_closed turns into rejections. That is ~10% of solver
+            # compute lost per iteration, biased toward whatever confuses the
+            # weak judge, on the one resource this run is bottlenecked by.
+            if bank_mode:
+                valid = True
+            else:
+                valid = judge_secret_validity(
+                    secret, self._grade, mode=qcfg.secret_validity).correct
+                self._tr(f"secret[{si}] '{secret.secret}' valid={valid}")
             summary = {
                 "secret": secret.secret,
                 # Per-secret, because a bank iteration spans categories and the

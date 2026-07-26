@@ -924,6 +924,42 @@ def test_bank_mode_requires_a_frozen_creator(tmp_path):
         t.run_iteration(0)
 
 
+def test_bank_mode_does_not_re_judge_pre_vetted_secrets(tmp_path):
+    """The validity gate polices the CREATOR, and bank mode has no creator
+    output to police. Re-judging with the in-training grader — the small base
+    model, no terse-retry fallback — can only subtract, because an invalid
+    verdict voids the secret and plays ZERO episodes. Under fail_closed the
+    ~10% unparseable verdicts v7 logged would delete bank entries outright."""
+    cfg = _bank_cfg(tmp_path, BANK_ENTRIES, secret_validity="fail_closed")
+    # A grader that rejects every secret it is asked about. If the gate still
+    # ran, both secrets would be voided and no episode would be played.
+    t = _make_trainer(cfg, [], ["GUESS: dog"] * 40,
+                      validity={e[0]: False for e in BANK_ENTRIES})
+    rec = t.run_iteration(0)
+
+    assert rec["episodes"]["total"] == 4
+    assert all(s["valid"] for s in rec["secrets"])
+    assert not [q for q in t.captured["judge"] if "vetting a secret" in q]
+
+
+def test_creator_mode_still_voids_invalid_secrets(tmp_path):
+    """The bank-mode skip must not leak into the creator path, where the gate
+    is the only thing standing between a gamed secret and the solver."""
+    cfg = _bank_cfg(tmp_path, BANK_ENTRIES, secret_source="creator",
+                    freeze_creator=False)
+    creator = [json.dumps({"secret": s, "category": "animal",
+                           "difficulty": 0.5, "notes": "n"})
+               for s in ("dog", "cat")]
+    t = _make_trainer(cfg, creator, ["GUESS: dog"] * 40,
+                      validity={"dog": False, "cat": True})
+    rec = t.run_iteration(0)
+
+    voided = [s for s in rec["secrets"] if not s["valid"]]
+    assert [s["secret"] for s in voided] == ["dog"]
+    assert voided[0]["episodes"] == []
+    assert [q for q in t.captured["judge"] if "vetting a secret" in q]
+
+
 def test_unknown_secret_source_is_rejected(tmp_path):
     cfg = _bank_cfg(tmp_path, BANK_ENTRIES, secret_source="wishful")
     t = _make_trainer(cfg, [], ["GUESS: dog"] * 40)

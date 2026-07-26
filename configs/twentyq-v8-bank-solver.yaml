@@ -124,10 +124,16 @@ twentyq:
   w_efficiency: 0.5
   w_close: 0
   w_format: 0.5
-  # FAIL-CLOSED, reversing v7. Bank secrets were already judge-vetted offline,
-  # so this gate should almost never fire here; leaving it fail_open would keep
-  # the posture that passed 21/206 unparseable verdicts as VALID in v7,
-  # clustered on exactly the corrupted non-words that needed rejecting.
+  # FAIL-CLOSED, reversing v7 — but INERT under secret_source: bank, where the
+  # in-training gate is skipped entirely. That gate exists to police creator
+  # output; bank secrets were authored offline and already vetted fail-closed
+  # by Qwen3-8B with a terse-retry fallback, whereas the in-training judge is
+  # the small base model with no fallback. Re-judging could only delete vetted
+  # entries (an invalid verdict plays ZERO episodes), and v7 logged ~10%
+  # unparseable verdicts. Kept set so a --secret-source creator override keeps
+  # the strict posture rather than v7's fail_open, which passed 21/206
+  # unparseable verdicts as VALID, clustered on exactly the corrupted non-words
+  # that needed rejecting.
   secret_validity: fail_closed
 
   creator_thinking: false
