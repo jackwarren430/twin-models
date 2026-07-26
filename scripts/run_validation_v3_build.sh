@@ -52,6 +52,13 @@ for f in data/twentyq-validation-v2.json data/twentyq-bank-v1.json; do
   [ -f "$f" ] || { echo "missing holdout: $f" >&2; exit 1; }
 done
 
+# Selection MUST use the base policy alone. BANK_ADAPTER exported for a bank-v2
+# build and still set in the environment here would silently select validation
+# items against the very adapter under test — test-set contamination that no
+# downstream check could detect, because the resulting file looks perfectly
+# well-formed. Unset rather than trusted to be absent.
+unset BANK_ADAPTER BANK_ADAPTER_NAME
+
 scripts/run_bank_build.sh \
     --rollouts-per-category 400 \
     --episodes-per-candidate 16 \

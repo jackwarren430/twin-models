@@ -48,10 +48,12 @@ from __future__ import annotations
 
 import argparse
 import gc
+import hashlib
 import json
 import sys
 import time
 from collections import defaultdict
+from contextlib import nullcontext
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -128,6 +130,25 @@ def build_secret_rows(in_band: list[dict], set_name: str) -> list[dict]:
     return rows
 
 
+def adapter_fingerprint(path: Path | None) -> str | None:
+    """Content hash of the solver adapter, or None when playing the base model.
+
+    The path is not the identity. A frontier bank is defined by the policy it
+    was measured against, and `adapter_B_step60.safetensors` names a different
+    policy after every run — so gating resume on the filename would happily
+    merge candidates measured against two different solvers into one file that
+    claims a single calibration. Hashing 200MB costs about a second against a
+    build measured in hours.
+    """
+    if path is None:
+        return None
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def signature_of(args, cfg) -> dict:
     """Everything that would change the measured numbers.
 
@@ -137,6 +158,10 @@ def signature_of(args, cfg) -> dict:
     qcfg = cfg.twentyq
     return {
         "model": str(cfg.model.path),
+        # None for a base-model build. The whole point of bank-v2 is that it is
+        # measured against the IMPROVED policy, so this is the field that keeps
+        # a bank-v1 checkpoint from being resumed into it.
+        "solver_adapter": adapter_fingerprint(getattr(args, "adapter", None)),
         "judge_model": str(args.judge_model),
         "categories": list(qcfg.categories),
         "rollouts_per_category": args.rollouts_per_category,
@@ -308,6 +333,15 @@ def main() -> None:
     ap.add_argument("--band", nargs=2, type=float, default=[0.125, 0.875],
                     metavar=("LO", "HI"),
                     help="keep candidates with LO <= win rate <= HI")
+    # Calibrating against a trained solver is what makes a bank a FRONTIER bank
+    # for the policy that will actually train on it. Measured on v8: 61 of 61
+    # bank-v1 secrets drifted +0.074 mean within 24 iterations, so a rebuild
+    # against the base model would re-deal secrets the solver has outgrown.
+    ap.add_argument("--adapter", type=Path, default=None,
+                    help="solver LoRA checkpoint to calibrate against; "
+                         "omit to measure with the base model")
+    ap.add_argument("--adapter-name", default="B", choices=["A", "B"],
+                    help="adapter slot to load --adapter into")
     ap.add_argument("--model", default=None,
                     help="override the config's player model (the bake-off "
                          "winner). MUST match the model the bank will be "
@@ -347,6 +381,8 @@ def main() -> None:
     qcfg = cfg.twentyq
     lo, hi = args.band
     max_turns = qcfg.max_turns
+    if args.adapter is not None and not args.adapter.exists():
+        ap.error(f"--adapter not found: {args.adapter}")
 
     signature = signature_of(args, cfg)
     prior: dict | None = None
@@ -377,6 +413,27 @@ def main() -> None:
     base = backend.load_base(cfg.model, cfg.compute)
     backend.seed(args.seed)
 
+    # Only the GUESSER plays through the adapter. The answerer stays base, as
+    # it is in both training and validation: the oracle is the fixed
+    # environment, and letting it drift with the solver would change the game
+    # itself rather than measure the policy against it. Candidate generation
+    # also stays base — the creator is frozen, and generating from the solver
+    # adapter would sample secrets from a policy trained to guess them.
+    if args.adapter is not None:
+        adapters = backend.build_adapters(base, cfg.lora)
+        adapters.load(args.adapter_name, str(args.adapter))
+        adapters.activate("base")
+        print(f"calibrating against adapter {args.adapter_name} "
+              f"<- {args.adapter}", flush=True)
+
+        def solver_ctx():
+            return adapters.using(args.adapter_name)
+
+        def oracle_ctx():
+            return adapters.using("base")
+    else:
+        solver_ctx = oracle_ctx = nullcontext
+
     # ---- stages 1+2: generate, dedup, vet ---------------------------------
     if prior is not None:
         vetted = [Secret.from_dict(d) for d in prior["vetted"]]
@@ -404,12 +461,13 @@ def main() -> None:
                                    system=GUESSER_SYSTEM,
                                    enable_thinking=qcfg.guesser_thinking)
                        for qa, i in requests]
-            return base.generate_batch(
-                prompts, max_tokens=qcfg.question_max_tokens,
-                temp=cfg.gen.solver_temp, top_p=cfg.gen.top_p,
-                completion_batch_size=qcfg.generation_batch_size,
-                suppress_thinking=not qcfg.guesser_thinking,
-            )
+            with solver_ctx():
+                return base.generate_batch(
+                    prompts, max_tokens=qcfg.question_max_tokens,
+                    temp=cfg.gen.solver_temp, top_p=cfg.gen.top_p,
+                    completion_batch_size=qcfg.generation_batch_size,
+                    suppress_thinking=not qcfg.guesser_thinking,
+                )
         return fn
 
     def answerer_batch(secret: Secret):
@@ -418,18 +476,24 @@ def main() -> None:
                 answerer_user(secret.secret, secret.category, q),
                 system=ANSWERER_SYSTEM,
                 enable_thinking=qcfg.answerer_thinking) for q, _ in requests]
-            return [g.text for g in base.generate_batch(
-                prompts, max_tokens=qcfg.answer_max_tokens,
-                temp=cfg.gen.oracle_temp, top_p=cfg.gen.top_p,
-                completion_batch_size=qcfg.generation_batch_size,
-                suppress_thinking=not qcfg.answerer_thinking,
-            )]
+            # Explicit rather than relying on the guesser's context manager to
+            # have restored base: the two alternate inside one episode, and an
+            # oracle that silently answered through the solver adapter would
+            # corrupt every measured rate with no visible symptom.
+            with oracle_ctx():
+                return [g.text for g in base.generate_batch(
+                    prompts, max_tokens=qcfg.answer_max_tokens,
+                    temp=cfg.gen.oracle_temp, top_p=cfg.gen.top_p,
+                    completion_batch_size=qcfg.generation_batch_size,
+                    suppress_thinking=not qcfg.answerer_thinking,
+                )]
         return fn
 
     def write_report(elapsed: float) -> None:
         args.report.write_text(json.dumps({
             "signature": signature,
             "config": str(args.config), "model": cfg.model.path,
+            "solver_adapter": (str(args.adapter) if args.adapter else None),
             "band": [lo, hi],
             "episodes_per_candidate": args.episodes_per_candidate,
             "max_turns": max_turns, "question_retries": qcfg.question_retries,
@@ -492,6 +556,8 @@ def main() -> None:
     for row in secrets_out:
         by_cat[row["category"]] += 1
 
+    solver_desc = ("the base model" if args.adapter is None else
+                   f"solver adapter {args.adapter_name} from {args.adapter}")
     args.output.write_text(json.dumps({
         "name": set_name,
         "version": args.set_version,
@@ -499,8 +565,9 @@ def main() -> None:
             f"Band-selected secret set: creator-generated candidates, "
             f"judge-vetted fail-closed, then CALIBRATED by playing "
             f"{args.episodes_per_candidate} "
-            f"real episodes each with the base model; kept only where the "
-            f"measured win rate is in [{lo}, {hi}], i.e. the base policy both "
+            f"real episodes each, guesser = {solver_desc} and answerer = base; "
+            f"kept only where the "
+            f"measured win rate is in [{lo}, {hi}], i.e. that policy both "
             f"wins and loses each secret. As a training bank that gives every "
             f"GRPO group a win and a loss to compare; as an evaluation set it "
             f"is what gives the metric dynamic range, since a secret no "
@@ -510,6 +577,10 @@ def main() -> None:
             f"question_retries={qcfg.question_retries}; they drift as the "
             f"solver improves and must be re-measured."),
         "source_model": str(cfg.model.path),
+        # Which POLICY the band describes. A bank is only a frontier bank
+        # relative to one solver, so a file that omitted this would be
+        # uninterpretable the moment a second one existed.
+        "solver_adapter": (str(args.adapter) if args.adapter else None),
         "band": [lo, hi],
         "secrets": secrets_out,
     }, indent=2) + "\n")

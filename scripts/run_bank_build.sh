@@ -21,9 +21,16 @@
 #   thinking suppression all differ per model). Omit to use whatever the config
 #   points at.
 #
+#   BANK_ADAPTER is a solver LoRA checkpoint to calibrate against (bank-v2 is
+#   measured against the trained policy, not the base model). It also applies
+#   to BOTH passes, for the same reason: adapter loading and per-turn adapter
+#   switching is a CODE PATH, not a scale knob, and it is the newest and least
+#   exercised part of the build. Smoke-testing the base path and then running
+#   hours of the adapter path would defeat the gate precisely where it matters.
+#
 #   EXTRA_ARGS go to the real build only, e.g. --rollouts-per-category 250. The
 #   smoke pass keeps fixed toy args so it stays fast whatever the real build is
-#   asked to do.
+#   asked to do — scale knobs only, never a change of code path.
 set -u
 cd /home/jackwarren430/Documents/repos/twin-models
 
@@ -34,6 +41,11 @@ MODEL_ARGS=()
 if [ -n "${BANK_MODEL:-}" ]; then
   MODEL_ARGS=(--model "$BANK_MODEL")
   echo "player model override: $BANK_MODEL" >&2
+fi
+if [ -n "${BANK_ADAPTER:-}" ]; then
+  [ -f "$BANK_ADAPTER" ] || { echo "BANK_ADAPTER not found: $BANK_ADAPTER" >&2; exit 1; }
+  MODEL_ARGS+=(--adapter "$BANK_ADAPTER" --adapter-name "${BANK_ADAPTER_NAME:-B}")
+  echo "calibrating against adapter: $BANK_ADAPTER" >&2
 fi
 
 echo "=== smoke pass (toy scale, real judge, full pipeline) ===" >&2

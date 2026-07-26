@@ -25,10 +25,16 @@ _spec.loader.exec_module(btb)
 def _args(**over):
     base = dict(judge_model="Qwen/Qwen3-8B", rollouts_per_category=170,
                 targets=[0.95, 0.9, 0.8], episodes_per_candidate=8,
-                exclusion_cap=250,
+                exclusion_cap=250, adapter=None, adapter_name="B",
                 holdout=[Path("data/twentyq-validation-v2.json")], seed=1)
     base.update(over)
     return SimpleNamespace(**base)
+
+
+def _adapter(tmp_path: Path, name: str, content: bytes) -> Path:
+    p = tmp_path / name
+    p.write_bytes(content)
+    return p
 
 
 def _cfg(**over):
@@ -72,6 +78,48 @@ def test_signature_is_json_round_trippable():
     import json
     sig = btb.signature_of(_args(targets=(0.95, 0.5)), _cfg())
     assert json.loads(json.dumps(sig)) == sig
+
+
+# ----- calibrating policy --------------------------------------------------
+def test_adapter_identity_is_content_not_path(tmp_path):
+    """``adapter_B_step60.safetensors`` names a DIFFERENT policy after every
+    run. Gating resume on the filename would merge candidates measured against
+    two different solvers into one file claiming a single calibration — and the
+    merge would be invisible, because both halves look like valid rows."""
+    (tmp_path / "v9run").mkdir()
+    # Same basename, different run: the case a path-keyed gate would conflate.
+    v8 = _adapter(tmp_path, "adapter_B_step60.safetensors", b"weights-v8")
+    v9 = _adapter(tmp_path / "v9run", "adapter_B_step60.safetensors",
+                  b"weights-v9")
+    same_bytes_elsewhere = _adapter(tmp_path, "copy.safetensors", b"weights-v8")
+
+    assert btb.adapter_fingerprint(v8) == btb.adapter_fingerprint(
+        same_bytes_elsewhere)
+    assert btb.adapter_fingerprint(v8) != btb.adapter_fingerprint(v9)
+
+
+def test_base_model_build_has_no_adapter_fingerprint():
+    assert btb.adapter_fingerprint(None) is None
+
+
+def test_signature_separates_a_base_build_from_an_adapter_build(tmp_path):
+    """bank-v1 was measured against the base model and bank-v2 is measured
+    against the trained solver. Those are different populations describing
+    different policies; resuming one into the other is the exact failure the
+    signature gate exists to stop."""
+    ckpt = _adapter(tmp_path, "adapter_B_step60.safetensors", b"trained")
+    base_sig = btb.signature_of(_args(), _cfg())
+    adapter_sig = btb.signature_of(_args(adapter=ckpt), _cfg())
+    assert base_sig["solver_adapter"] is None
+    assert adapter_sig["solver_adapter"] is not None
+    assert base_sig != adapter_sig
+
+
+def test_signature_separates_two_different_adapters(tmp_path):
+    a = _adapter(tmp_path, "a.safetensors", b"policy-one")
+    b = _adapter(tmp_path, "b.safetensors", b"policy-two")
+    assert (btb.signature_of(_args(adapter=a), _cfg())
+            != btb.signature_of(_args(adapter=b), _cfg()))
 
 
 # ----- checkpoint round-trip ----------------------------------------------
