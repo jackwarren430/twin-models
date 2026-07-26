@@ -131,6 +131,8 @@ def main() -> None:
     parser.add_argument("--arms", nargs="+", default=DEFAULT_ARMS)
     parser.add_argument("--judge-model", default="Qwen/Qwen3-8B",
                         help="frozen oracle for the 'oracle' arms")
+    parser.add_argument("--model", default=None,
+                        help="override cfg.model.path (base-model bake-off)")
     parser.add_argument("--max-secrets", type=int, default=0)
     parser.add_argument("--seed", type=int, default=20260726)
     parser.add_argument("--output", type=Path,
@@ -138,6 +140,8 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = Config.from_yaml(args.config)
+    if args.model:
+        cfg.model.path = args.model
     qcfg = cfg.twentyq
     meta, secrets = load_validation_secret_set(args.secret_set)
     if args.max_secrets:
