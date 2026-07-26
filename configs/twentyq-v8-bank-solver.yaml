@@ -146,6 +146,15 @@ twentyq:
   generation_batch_size: 16
   ensemble_batch_size: 4
 
+  # Validation evaluates BOTH adapters, and under freeze_creator adapter A
+  # never changes — which is the point, not waste. A is a frozen CONTROL arm
+  # measured on the same secrets, the same instrument and the same schedule as
+  # the solver. Pooled over the run it is 13 x 192 = ~2.5k episodes of a policy
+  # known not to move, which is an EMPIRICAL noise floor for the metric the run
+  # is judged on, rather than a theoretical Wilson interval. Given that reading
+  # trends out of noise is exactly how v6 and v7 went wrong, that is worth the
+  # ~2.9h it costs. B rising while A stays flat is the result; both drifting
+  # together is an instrument artifact.
   validation_every: 5
   validation_secret_set: data/twentyq-validation-v2.json
   validation_episodes: 8
