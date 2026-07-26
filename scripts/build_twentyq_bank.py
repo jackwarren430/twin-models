@@ -258,6 +258,11 @@ def main() -> None:
     ap.add_argument("--band", nargs=2, type=float, default=[0.125, 0.875],
                     metavar=("LO", "HI"),
                     help="keep candidates with LO <= win rate <= HI")
+    ap.add_argument("--model", default=None,
+                    help="override the config's player model (the bake-off "
+                         "winner). MUST match the model the bank will be "
+                         "trained with — the measured rates describe one "
+                         "policy and mean nothing for another.")
     ap.add_argument("--judge-model", default="Qwen/Qwen3-8B")
     ap.add_argument("--holdout", type=Path,
                     default=ROOT / "data/twentyq-validation-v2.json",
@@ -276,6 +281,8 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = Config.from_yaml(args.config)
+    if args.model:
+        cfg.model.path = args.model
     qcfg = cfg.twentyq
     lo, hi = args.band
     max_turns = qcfg.max_turns
