@@ -1234,7 +1234,11 @@ class TwentyQTrainer(BaseTrainer):
             "iter": iteration,
             "mode": "twentyq",
             "credit": qcfg.credit,
-            "category": category,
+            # In bank mode one iteration deliberately spans categories, so the
+            # single drawn category would be a lie. Per-secret categories are
+            # in "secrets"; this stays the honest iteration-level summary.
+            "category": ("mixed:" + ",".join(sorted({s.category for s in secrets}))
+                         if bank_mode and secrets else category),
             "creator": assign.creator,
             "solver": assign.solver,
             "n_swaps": assign.n_swaps,

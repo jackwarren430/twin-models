@@ -938,3 +938,12 @@ def test_creator_mode_is_unchanged_by_the_bank_addition():
     assert rec["guess_rates_by_rank"] == [1.0, 0.0]
     assert rec["target_by_rank"] == [0.9, 0.1]
     assert len(t.captured["creator_users"]) == 2
+
+
+def test_bank_mode_records_mixed_category_honestly(tmp_path):
+    cfg = _bank_cfg(tmp_path, BANK_ENTRIES)
+    t = _make_trainer(cfg, [], ["GUESS: dog"] * 40)
+    rec = t.run_iteration(0)
+    # The iteration-level label must not claim a single category it did not play.
+    assert rec["category"] == "mixed:animal,food"
+    assert {s["category"] for s in rec["secrets"]} == {"animal", "food"}

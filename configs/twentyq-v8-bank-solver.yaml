@@ -1,0 +1,175 @@
+# 21-questions v8 — solver on a MEASURED frontier bank.
+#
+# What v5/v6/v7 were actually blocked on, found by instrumenting rather than
+# theorizing. A GRPO group in this trainer is the K episodes played on ONE
+# secret, so its advantages are identically zero when the group is all-win or
+# all-loss. Measured on the v7 base model over validation-v2 at K=8:
+#
+#     usable_group_rate  0.125          3 of 24 secrets
+#     per-secret wins    cow 8/8, penguin 7/8, television 4/8, bread 1/8,
+#                        and 0/8 for the other twenty
+#
+# Per-secret win probability is BIMODAL. The variance GRPO needs therefore
+# lives between secrets, where the per-secret baseline cannot reach it, and not
+# within a secret, where it can. Seven eighths of every iteration's compute
+# produced no gradient. That accounts for the flat solver in v5 (49/57 all-loss
+# groups), v6 and v7 without appealing to reward design, difficulty ramps, or
+# credit schemes — the levers all three of those runs spent themselves on.
+#
+# Difficulty dictation was supposed to prevent exactly this and structurally
+# cannot: the creator is asked to hit a target guess rate for an opponent whose
+# competence it cannot observe, and v6 separately measured obscurity as
+# reward-optimal for it. Worse, the creator cannot learn calibration while the
+# solver it calibrates against is itself untrained — the two are circular.
+#
+# v8 cuts the circle on the solver's side, which is priority one:
+#
+#   1. secret_source: bank   Secrets come from data/twentyq-bank-v1.json, whose
+#                            entries were kept ONLY where the base model's
+#                            measured win rate falls in [0.125, 0.875] — i.e.
+#                            every group has both a win and a loss to compare.
+#                            The creator adapter still ANSWERS, so the twin
+#                            structure is intact; only authorship moves, and
+#                            only until the creator can do this job (v9).
+#   2. question_retries: 4   Resample a turn that repeats a question already
+#                            answered. Greedy v7 transcripts show ten
+#                            consecutive "Is the animal a parrot?" turns.
+#   3. w_repeat: 0.05        LOCAL (non-propagating) penalty on a turn that
+#                            repeated anyway. The retry fixes the data; this
+#                            fixes the POLICY, which is what validation — which
+#                            never uses retries — actually measures.
+#   4. credit: terminal      Kept sparse and honest. The bank is what makes
+#                            terminal credit viable: at p in [0.125, 0.875] and
+#                            K=16, ~88% of groups carry signal instead of 12%.
+#                            No dense proxy is introduced, because v6 showed a
+#                            proxy can rise (ensemble 0.575 -> 0.616) while wins
+#                            do not, and there is no longer a reason to need one.
+#
+# Read the run as a success only if the VALIDATION guess rate for adapter B
+# rises beyond its own confidence interval. Training win rate on a bank that
+# was selected to be winnable proves nothing by construction.
+#
+# Measurement, fixed before this run because the old instrument could not have
+# seen the effect it was looking for: validation was 24 GREEDY episodes, so it
+# moved in steps of 1/24 = 4.2% with a 95% Wilson interval near +/-13 points.
+# The v6 series (2,0,2,1,3,2,2 wins) was discussed as a trend inside that
+# noise. validation_episodes: 8 samples instead, giving n=192 per adapter and a
+# ~+/-4.5 point interval, and guess_rate_ci95 is now reported alongside.
+#
+# Held from v7 so the comparison stays readable: N/K/T, lr, kl_beta, adv_mode,
+# microbatch, the v2 validation set, top_k=64 inherited from the model's
+# generation_config (DESIGN §6.9 — still no config surface).
+#
+# PREREQUISITE: data/twentyq-bank-v1.json must exist.
+#   .venv/bin/python scripts/build_twentyq_bank.py
+#
+# Launch:
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-v8-bank-solver.yaml \
+#   --run-name q-v8-bank-solver \
+#   --checkpoints-dir checkpoints/twentyq-v8-bank
+
+compute:
+  backend: torch
+  device: cuda
+  dtype: bfloat16
+  attn_impl: sdpa
+  tf32: true
+  matmul_precision: high
+  compile: false
+  # Mandatory on the Spark: unified memory means a runaway GPU alloc takes the
+  # whole box down, and the trunk activations are what overflow.
+  grad_checkpointing: true
+
+model:
+  path: ~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/snapshots/9dbdf8a839e4e9e0eb56ed80cc8886661d3817cf
+  enable_thinking: false
+
+lora:
+  num_layers: 16
+  rank: 64
+  alpha: 128.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+
+twentyq:
+  n_secrets: 8
+  episodes_per_secret: 16
+  max_turns: 21
+  categories: ["animal", "food", "household object"]
+  recent_secret_window: 128
+  repeat_handling: retry
+  repeat_gate_reward: 0.0
+
+  # --- the bank (DESIGN §9) ---
+  secret_source: bank
+  bank_path: data/twentyq-bank-v1.json
+  bank_balance_categories: true
+  freeze_creator: true      # required by bank mode: creator authors nothing
+  freeze_solver: false
+
+  # --- turn waste ---
+  question_retries: 4
+  w_repeat: 0.05
+
+  credit: terminal
+  gamma: 1.0
+  w_ensemble: 0.0
+
+  w_guess: 1.0
+  w_efficiency: 0.5
+  w_close: 0
+  w_format: 0.5
+  # FAIL-CLOSED, reversing v7. Bank secrets were already judge-vetted offline,
+  # so this gate should almost never fire here; leaving it fail_open would keep
+  # the posture that passed 21/206 unparseable verdicts as VALID in v7,
+  # clustered on exactly the corrupted non-words that needed rejecting.
+  secret_validity: fail_closed
+
+  creator_thinking: false
+  guesser_thinking: false
+  answerer_thinking: false
+  judge_thinking: false
+  secret_max_tokens: 512
+  question_max_tokens: 512
+  answer_max_tokens: 512
+  generation_batch_size: 16
+  ensemble_batch_size: 4
+
+  validation_every: 5
+  validation_secret_set: data/twentyq-validation-v2.json
+  validation_episodes: 8
+  validation_max_turns: 21
+  reward_log: true
+
+# Ignored under secret_source: bank (targets come from each entry's MEASURED
+# rate, not a dictated curve). Kept so a --secret-source creator override
+# reproduces the v7 band exactly.
+rewards:
+  target_hi: 0.9
+  target_lo: 0.1
+
+# No rotation: freezing is by ROLE, so a swap would hand the frozen role to the
+# other adapter and both would end up training. Must stay 0.
+roles:
+  swap_interval: 0
+  warmup_iterations: 0
+  injection_rate: 0.0
+
+train:
+  iters: 60
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  adv_mode: mean
+  grpo_microbatch: 1
+  logit_chunk: 0
+  checkpoint_every: 5
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints/twentyq
+  runs: tq-runs
