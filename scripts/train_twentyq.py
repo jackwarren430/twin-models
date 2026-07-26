@@ -55,6 +55,12 @@ def main() -> None:
                     default=None,
                     help="override twentyq.secret_validity (fail_open = new default; "
                          "fail_closed = pre-fix posture for the v2 control arm)")
+    ap.add_argument("--secret-source", choices=["creator", "bank"],
+                    default=None,
+                    help="override twentyq.secret_source (creator = the v1..v7 "
+                         "path, the creator authors every secret; bank = deal "
+                         "from a pre-calibrated frontier bank, which requires "
+                         "freeze_creator and is the v8 warm start)")
     ap.add_argument("--repeat-handling", choices=["off", "void", "retry"],
                     default=None,
                     help="override twentyq.repeat_handling (off = prompt-and-"
@@ -92,6 +98,8 @@ def main() -> None:
         cfg.roles.swap_interval = args.swap_interval
     if args.secret_validity is not None:
         cfg.twentyq.secret_validity = args.secret_validity
+    if args.secret_source is not None:
+        cfg.twentyq.secret_source = args.secret_source
     if args.repeat_handling is not None:
         cfg.twentyq.repeat_handling = args.repeat_handling
     if args.freeze_creator is not None:
@@ -151,6 +159,17 @@ def main() -> None:
                                          "validation_every": cfg.twentyq.validation_every,
                                          "validation_secret_set": cfg.twentyq.validation_secret_set,
                                          "recent_secret_window": cfg.twentyq.recent_secret_window,
+                                         # Where the secrets came from. A bank
+                                         # is calibrated against one policy and
+                                         # decays as the solver improves, so a
+                                         # run is uninterpretable later without
+                                         # knowing which file it dealt from.
+                                         "secret_source": cfg.twentyq.secret_source,
+                                         "bank_path": (cfg.twentyq.bank_path
+                                                       if cfg.twentyq.secret_source == "bank"
+                                                       else None),
+                                         "question_retries": cfg.twentyq.question_retries,
+                                         "validation_episodes": cfg.twentyq.validation_episodes,
                                          "repeat_handling": cfg.twentyq.repeat_handling,
                                          "generation_batch_size": cfg.twentyq.generation_batch_size,
                                          "ensemble_batch_size": cfg.twentyq.ensemble_batch_size,
@@ -194,6 +213,11 @@ def main() -> None:
             "K_episodes": cfg.twentyq.episodes_per_secret,
             "T_max_turns": cfg.twentyq.max_turns,
             "recent_secret_window": cfg.twentyq.recent_secret_window,
+            "secret_source": cfg.twentyq.secret_source,
+            "bank_path": (cfg.twentyq.bank_path
+                          if cfg.twentyq.secret_source == "bank" else None),
+            "question_retries": cfg.twentyq.question_retries,
+            "validation_episodes": cfg.twentyq.validation_episodes,
             "repeat_handling": cfg.twentyq.repeat_handling,
             "generation_batch_size": cfg.twentyq.generation_batch_size,
             "ensemble_batch_size": cfg.twentyq.ensemble_batch_size,
