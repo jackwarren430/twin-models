@@ -1,0 +1,500 @@
+{
+  "name": "twentyq-bank-v1",
+  "version": 1,
+  "description": "Frontier bank: creator-generated candidates, judge-vetted fail-closed, then CALIBRATED by playing 8 real episodes each with the base model; kept only where the measured win rate is in [0.125, 0.875] so every GRPO group has both a win and a loss to compare. Disjoint from twentyq-validation-v2. Rates measured at max_turns=21, question_retries=4; they drift as the solver improves and must be re-measured.",
+  "source_model": "~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/snapshots/9dbdf8a839e4e9e0eb56ed80cc8886661d3817cf",
+  "band": [
+    0.125,
+    0.875
+  ],
+  "secrets": [
+    {
+      "secret_id": "bank-v1-animal-000",
+      "secret": "Lion",
+      "category": "animal",
+      "difficulty": 0.25,
+      "measured_guess_rate": 0.75,
+      "notes": "A very common and instantly recognizable large cat, fitting the familiar target."
+    },
+    {
+      "secret_id": "bank-v1-animal-001",
+      "secret": "Dog",
+      "category": "animal",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "Very familiar and common, fitting the target of an 80% success rate."
+    },
+    {
+      "secret_id": "bank-v1-animal-002",
+      "secret": "Tiger",
+      "category": "animal",
+      "difficulty": 0.125,
+      "measured_guess_rate": 0.875,
+      "notes": "A very common and instantly recognizable large cat, fitting the familiar target."
+    },
+    {
+      "secret_id": "bank-v1-animal-003",
+      "secret": "Whale",
+      "category": "animal",
+      "difficulty": 0.25,
+      "measured_guess_rate": 0.75,
+      "notes": "A very common and instantly recognizable large marine mammal."
+    },
+    {
+      "secret_id": "bank-v1-animal-004",
+      "secret": "Snake",
+      "category": "animal",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "A common, instantly recognizable animal that fits the familiar criteria."
+    },
+    {
+      "secret_id": "bank-v1-animal-005",
+      "secret": "Parrot",
+      "category": "animal",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "A common, recognizable bird that fits the target of being familiar but not immediately obvious."
+    },
+    {
+      "secret_id": "bank-v1-animal-006",
+      "secret": "Dolphin",
+      "category": "animal",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common, recognizable marine mammal that fits the familiar target."
+    },
+    {
+      "secret_id": "bank-v1-animal-007",
+      "secret": "Bear",
+      "category": "animal",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A very common, instantly recognizable mammal."
+    },
+    {
+      "secret_id": "bank-v1-animal-008",
+      "secret": "Zebra",
+      "category": "animal",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, instantly recognizable striped mammal."
+    },
+    {
+      "secret_id": "bank-v1-animal-009",
+      "secret": "Monkey",
+      "category": "animal",
+      "difficulty": 0.25,
+      "measured_guess_rate": 0.75,
+      "notes": "A very common, instantly recognizable animal that fits the familiar target profile."
+    },
+    {
+      "secret_id": "bank-v1-animal-010",
+      "secret": "Ant",
+      "category": "animal",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "Very common, instantly recognizable, but less guessed than the larger mammals/marine life listed."
+    },
+    {
+      "secret_id": "bank-v1-animal-011",
+      "secret": "Eagle",
+      "category": "animal",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A common, instantly recognizable bird, fitting the familiar target."
+    },
+    {
+      "secret_id": "bank-v1-animal-012",
+      "secret": "Shark",
+      "category": "animal",
+      "difficulty": 0.125,
+      "measured_guess_rate": 0.875,
+      "notes": "A common, instantly recognizable marine animal that fits the familiar target profile."
+    },
+    {
+      "secret_id": "bank-v1-animal-013",
+      "secret": "Rabbit",
+      "category": "animal",
+      "difficulty": 0.5,
+      "measured_guess_rate": 0.5,
+      "notes": "A very common, instantly recognizable small mammal."
+    },
+    {
+      "secret_id": "bank-v1-animal-014",
+      "secret": "Deer",
+      "category": "animal",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "Deer is a very common, recognizable mammal, fitting the familiar target."
+    },
+    {
+      "secret_id": "bank-v1-animal-015",
+      "secret": "Butterfly",
+      "category": "animal",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, instantly recognizable insect that fits the familiar animal category."
+    },
+    {
+      "secret_id": "bank-v1-animal-016",
+      "secret": "Dinosaur",
+      "category": "animal",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A very common, instantly recognizable, and singular concept within the animal category."
+    },
+    {
+      "secret_id": "bank-v1-animal-017",
+      "secret": "Octopus",
+      "category": "animal",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A common, recognizable sea creature that fits the familiar criteria."
+    },
+    {
+      "secret_id": "bank-v1-animal-018",
+      "secret": "Antelope",
+      "category": "animal",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A common, instantly recognizable ungulate, fitting the familiar target profile."
+    },
+    {
+      "secret_id": "bank-v1-animal-019",
+      "secret": "Crocodile",
+      "category": "animal",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A common, recognizable reptile that fits the familiar animal category."
+    },
+    {
+      "secret_id": "bank-v1-animal-020",
+      "secret": "Kitten",
+      "category": "animal",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common, instantly recognizable young animal."
+    },
+    {
+      "secret_id": "bank-v1-animal-021",
+      "secret": "Gorilla",
+      "category": "animal",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "A well-known primate that is instantly recognizable to most people."
+    },
+    {
+      "secret_id": "bank-v1-food-000",
+      "secret": "Cheese",
+      "category": "food",
+      "difficulty": 0.25,
+      "measured_guess_rate": 0.75,
+      "notes": "Cheese is a very common, instantly recognizable food item."
+    },
+    {
+      "secret_id": "bank-v1-food-001",
+      "secret": "Milk",
+      "category": "food",
+      "difficulty": 0.25,
+      "measured_guess_rate": 0.75,
+      "notes": "Milk is a very common, instantly recognizable dairy product."
+    },
+    {
+      "secret_id": "bank-v1-food-002",
+      "secret": "Chicken",
+      "category": "food",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "A very common, instantly recognizable protein source."
+    },
+    {
+      "secret_id": "bank-v1-food-003",
+      "secret": "Rice",
+      "category": "food",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "Rice is a very common, instantly recognizable staple food, fitting the familiar target."
+    },
+    {
+      "secret_id": "bank-v1-food-004",
+      "secret": "Broccoli",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "It is a very common, recognizable vegetable, fitting the familiar target."
+    },
+    {
+      "secret_id": "bank-v1-food-005",
+      "secret": "Orange",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "Orange is a very common, instantly recognizable citrus fruit, fitting the familiar target."
+    },
+    {
+      "secret_id": "bank-v1-food-006",
+      "secret": "Water",
+      "category": "food",
+      "difficulty": 0.5,
+      "measured_guess_rate": 0.5,
+      "notes": "Water is a fundamental, common substance that fits the 'familiar' target for a food category."
+    },
+    {
+      "secret_id": "bank-v1-food-007",
+      "secret": "Coffee",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common, instantly recognizable beverage that fits the familiar target."
+    },
+    {
+      "secret_id": "bank-v1-food-008",
+      "secret": "Egg",
+      "category": "food",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A very common, instantly recognizable food item."
+    },
+    {
+      "secret_id": "bank-v1-food-009",
+      "secret": "Chocolate",
+      "category": "food",
+      "difficulty": 0.25,
+      "measured_guess_rate": 0.75,
+      "notes": "A very common and instantly recognizable food item."
+    },
+    {
+      "secret_id": "bank-v1-food-010",
+      "secret": "Pasta",
+      "category": "food",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "Pasta is a very common, instantly recognizable food item, fitting the target for high guessability."
+    },
+    {
+      "secret_id": "bank-v1-food-011",
+      "secret": "Butter",
+      "category": "food",
+      "difficulty": 0.5,
+      "measured_guess_rate": 0.5,
+      "notes": "Butter is a very common, instantly recognizable food item, fitting the target for a 90% success rate."
+    },
+    {
+      "secret_id": "bank-v1-food-012",
+      "secret": "Milkshake",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, instantly recognizable dessert/drink combination."
+    },
+    {
+      "secret_id": "bank-v1-food-013",
+      "secret": "Steak",
+      "category": "food",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A very common, instantly recognizable protein source."
+    },
+    {
+      "secret_id": "bank-v1-food-014",
+      "secret": "Grape",
+      "category": "food",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A very common, instantly recognizable fruit, fitting the familiar target."
+    },
+    {
+      "secret_id": "bank-v1-household-000",
+      "secret": "Toaster",
+      "category": "household object",
+      "difficulty": 0.125,
+      "measured_guess_rate": 0.875,
+      "notes": "A very common, instantly recognizable household appliance."
+    },
+    {
+      "secret_id": "bank-v1-household-001",
+      "secret": "Sponge",
+      "category": "household object",
+      "difficulty": 0.5,
+      "measured_guess_rate": 0.5,
+      "notes": "Very common and instantly recognizable household item."
+    },
+    {
+      "secret_id": "bank-v1-household-002",
+      "secret": "Vacuum cleaner",
+      "category": "household object",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A very common household object that most people would immediately recognize."
+    },
+    {
+      "secret_id": "bank-v1-household-003",
+      "secret": "Coffee maker",
+      "category": "household object",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A very common household appliance that most people would recognize immediately."
+    },
+    {
+      "secret_id": "bank-v1-household-004",
+      "secret": "Blender",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common kitchen appliance, easily recognizable, fitting the familiar target."
+    },
+    {
+      "secret_id": "bank-v1-household-005",
+      "secret": "Toilet",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common, instantly recognizable fixture in a household."
+    },
+    {
+      "secret_id": "bank-v1-household-006",
+      "secret": "Sofa",
+      "category": "household object",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A very common, instantly recognizable piece of furniture."
+    },
+    {
+      "secret_id": "bank-v1-household-007",
+      "secret": "Trash can",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common, instantly recognizable household object."
+    },
+    {
+      "secret_id": "bank-v1-household-008",
+      "secret": "Toothbrush",
+      "category": "household object",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "A very common, instantly recognizable personal hygiene item."
+    },
+    {
+      "secret_id": "bank-v1-household-009",
+      "secret": "Washing machine",
+      "category": "household object",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A common, recognizable appliance that fits the 'household object' category."
+    },
+    {
+      "secret_id": "bank-v1-household-010",
+      "secret": "Rug",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A rug is a common, instantly recognizable household object that fits the familiar target."
+    },
+    {
+      "secret_id": "bank-v1-household-011",
+      "secret": "Curtains",
+      "category": "household object",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "Curtains are a common household item, familiar enough for an 80% success rate."
+    },
+    {
+      "secret_id": "bank-v1-household-012",
+      "secret": "Mirror",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common, instantly recognizable household object."
+    },
+    {
+      "secret_id": "bank-v1-household-013",
+      "secret": "Remote control",
+      "category": "household object",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A very common, instantly recognizable household object."
+    },
+    {
+      "secret_id": "bank-v1-household-014",
+      "secret": "Towel",
+      "category": "household object",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A very common household item, easily recognizable."
+    },
+    {
+      "secret_id": "bank-v1-household-015",
+      "secret": "Spatula",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common cooking utensil, instantly recognizable within household objects."
+    },
+    {
+      "secret_id": "bank-v1-household-016",
+      "secret": "Cutting board",
+      "category": "household object",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A very common, single household object that fits the familiar target profile."
+    },
+    {
+      "secret_id": "bank-v1-household-017",
+      "secret": "Mop",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, instantly recognizable cleaning tool, fitting the familiar target."
+    },
+    {
+      "secret_id": "bank-v1-household-018",
+      "secret": "Hair dryer",
+      "category": "household object",
+      "difficulty": 0.5,
+      "measured_guess_rate": 0.5,
+      "notes": "A common, instantly recognizable household appliance."
+    },
+    {
+      "secret_id": "bank-v1-household-019",
+      "secret": "Pillow",
+      "category": "household object",
+      "difficulty": 0.5,
+      "measured_guess_rate": 0.5,
+      "notes": "Very common and instantly recognizable household object."
+    },
+    {
+      "secret_id": "bank-v1-household-020",
+      "secret": "Frying pan",
+      "category": "household object",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "A very common cooking utensil that fits the familiar household object profile."
+    },
+    {
+      "secret_id": "bank-v1-household-021",
+      "secret": "Toothbrush holder",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, specific household object that fits the familiar category well."
+    },
+    {
+      "secret_id": "bank-v1-household-022",
+      "secret": "Toaster oven",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, instantly recognizable small kitchen appliance."
+    },
+    {
+      "secret_id": "bank-v1-household-023",
+      "secret": "Drinking glass",
+      "category": "household object",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A very common, instantly recognizable item in a household setting."
+    }
+  ]
+}
