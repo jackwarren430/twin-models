@@ -96,12 +96,17 @@ def main() -> None:
               f"min {min(vals_u):.3f}  max {max(vals_u):.3f}")
         print(f"  v1..v7 secret source measured 0.125 — "
               f"{(sum(vals_u)/len(vals_u))/0.125:.1f}x")
-        # `train win` is the confounded series: each iteration draws a fresh
-        # set of secrets, so it largely measures WHICH secrets came up. `paired`
-        # subtracts each secret's own calibrated rate before averaging, which
-        # controls for that. Observed in this run's first 5 iterations: raw win
-        # climbed 0.29 -> 0.47 while paired stayed flat at ~-0.07, i.e. the
-        # entire apparent rise was the draw. Read `paired`, not `train win`.
+        # `train win` is confounded by WHICH secrets came up. `paired`
+        # subtracts each secret's own calibrated rate, which fixes that — but
+        # introduces a second confound, so do NOT compare paired values across
+        # windows. The bank was selected on a noisy K=8 measurement, so a
+        # secret's delta regresses toward the mean in proportion to its
+        # calibrated rate (measured slope on this run: -0.276). A window that
+        # happens to draw high-calibrated secrets shows a negative paired
+        # delta with no policy change at all, and vice versa. Observed here:
+        # paired appeared to shift +0.107 between iters 0-4 and 5-8 purely
+        # because expected rates fell 0.428 -> 0.355 across those windows.
+        # The WITHIN-SECRET panel below is the confound-free comparison.
         cal_r = ({s["secret"]: s["measured_guess_rate"]
                   for s in json.loads(args.bank.read_text())["secrets"]}
                  if args.bank.exists() else {})
@@ -120,6 +125,38 @@ def main() -> None:
             pd = f"{sum(d)/len(d):+.3f}" if d else "-"
             print(f"  {f'{i}-{i+len(ch)-1}':>12} {u:>8.3f} {g:>10.3f} {pd:>8} "
                   f"{f:>8.3f}")
+
+    # ---- within-secret change (the confound-free training signal) ---------
+    if len(iters) >= 4:
+        half = len(iters) // 2
+        early: dict[str, list[float]] = defaultdict(list)
+        late: dict[str, list[float]] = defaultdict(list)
+        for i, r in enumerate(iters):
+            tgt = early if i < half else late
+            for s in r.get("secrets", []):
+                if s.get("guess_rate") is not None:
+                    tgt[s["secret"]].append(s["guess_rate"])
+        both = sorted(set(early) & set(late))
+        print(f"\nWITHIN-SECRET CHANGE  (iters 0-{half-1} vs {half}-{len(iters)-1})")
+        if not both:
+            print("  no secret played in both halves yet")
+        else:
+            d = [sum(late[k]) / len(late[k]) - sum(early[k]) / len(early[k])
+                 for k in both]
+            m = sum(d) / len(d)
+            sd = math.sqrt(sum((x - m) ** 2 for x in d) / max(1, len(d) - 1))
+            se = sd / math.sqrt(len(d))
+            print(f"  {len(both)} secrets in both halves   "
+                  f"mean change {m:+.3f} +-{1.96*se:.3f} (95%)")
+            print("  Same secrets on both sides, so neither the draw nor "
+                  "regression to the mean applies.")
+            movers = sorted(
+                ((k, sum(early[k])/len(early[k]), sum(late[k])/len(late[k]))
+                 for k in both), key=lambda t: t[2] - t[1])
+            if len(movers) >= 2:
+                lo, hi = movers[0], movers[-1]
+                print(f"  worst {lo[0]} {lo[1]:.2f}->{lo[2]:.2f}   "
+                      f"best {hi[0]} {hi[1]:.2f}->{hi[2]:.2f}")
 
     # ---- bank drift -------------------------------------------------------
     if iters and args.bank.exists():
