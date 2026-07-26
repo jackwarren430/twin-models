@@ -844,3 +844,90 @@ reintroducing animals/food.
 Artifacts: `tq-runs/q-v7-solveronly-flat90-terminal.{jsonl,rewards.jsonl,console.log}`
 + transcript tree; checkpoints `checkpoints/twentyq-v7-solveronly/adapter_{A,B}_step{10,20}.safetensors`
 (resume with `--resume-step 20`).
+
+## exp-v8-diagnostics — what the solver was actually blocked on (2026-07-26)
+
+No training. Four frozen-model probes on `data/twentyq-validation-v2.json`
+(24 secrets, K=8 sampled episodes, gemma-4-E2B, no adapters) run to find out why
+v5/v6/v7 all produced flat solvers. Harness: `scripts/probe_twentyq_headroom.py`,
+analysis `scripts/analyze_headroom_probe.py`, raw
+`tq-runs/probe-headroom-v1.json` (pre-parser-fix) and `-v2-*.json` (post).
+
+### The finding
+
+    arm (pre-fix parser)      win   early    fmt  distinctQ  usable_grp
+    baseline               0.104   0.099  0.255      0.934       0.125
+    dedup                  0.161   0.099  0.198      0.987       0.292
+    oracle (Qwen3-8B)      0.068   0.062  0.146      0.935       0.208
+
+    arm (fixed parser)        win   early    fmt  distinctQ  usable_grp
+    baseline               0.115   0.089  0.005      0.928       0.250
+    dedup                  0.146   0.115  0.016      0.975       0.167
+
+`usable_group_rate` is the fraction of secrets whose K episodes contain both a
+win and a loss. A solver GRPO group IS one secret's K episodes, so an all-win or
+all-loss group has identically zero advantages and trains nothing. At 0.125,
+**seven eighths of every iteration's compute produced no gradient.**
+
+Per-secret win probability is bimodal — cow 8/8, penguin 7/8, then 0/8 for
+twenty of twenty-four. The variance GRPO needs lives BETWEEN secrets, where the
+per-secret baseline cannot reach it, and not WITHIN one, where it can.
+
+This subsumes the earlier explanations. v5's "credit starvation" (49/57 all-loss
+groups) is this. It is not a reward-design problem: `terminal`, `ensemble` and
+`per_turn` all multiply an advantage that is already zero.
+
+### `usable_group_rate` is not monotonic in win rate
+
+The single most important operational consequence, and it was a surprise:
+
+    parser fix only      win 0.115   usable_grp 0.250
+    parser fix + dedup   win 0.146   usable_grp 0.167
+
+Dedup pushed penguin and cow to 8/8 — out of the usable band. **Improving the
+solver moves secrets out of the band.** A frontier bank is a moving target that
+decays as the policy improves, which is the real argument that creator
+calibration is not polish but the mechanism keeping solver training alive.
+
+### Negative results
+
+- **A stronger oracle does not help.** Qwen3-8B as answerer: win 0.104 -> 0.068,
+  episodes running to full budget 0.641 -> 0.786. A stricter oracle starves the
+  guesser of information rather than misleading it. It did raise usable_grp
+  (0.125 -> 0.208) by pulling extremes toward the middle, but dedup beats it on
+  both axes and costs no second model.
+- **The oracle is not lying.** Literal self-contradiction rate across all 3,312
+  v7 episodes / 57,901 answered questions: **1.39%**. The hypothesis came from
+  one giraffe transcript ("hoofed mammal" YES / "hoofed ungulate" NO) and did
+  not generalize.
+- **Fixing the parser barely moves win rate.** Recovering 88.3% of v7's 632
+  format failures took the format-kill rate 0.255 -> 0.005 and doubled
+  usable_grp, but win rate only 0.104 -> 0.115. Those episodes were mostly
+  doomed anyway. Worth having for reward hygiene (they were drawing spurious
+  `-w_format`), not as a win-rate lever. This corrects an earlier claim in this
+  session that parse loss was the largest lever available.
+- **The "parrot lock" is a greedy-decoding artifact.** Prominent in greedy
+  validation transcripts; ~6.6% of turns under the sampled decoding training
+  uses.
+
+### Caveats on the metric itself
+
+- Answerer and guesser are the same base model, and validation uses that same
+  base answerer, so part of "win rate" is *my twin answers the way I predict*
+  rather than 21-questions skill. Inherent to self-play, but the number is not
+  pure ability.
+- `early_win_rate` is ~0.10 and barely moves: the policy has essentially no
+  "guess now" decision, and almost every win is the forced final guess.
+  `w_efficiency` is the gradient meant to fix that; it is the secondary metric
+  to watch in v8.
+- v1..v7 validation (24 greedy episodes, ±13 points) could not have resolved
+  these effects. See DESIGN §9.4 — "no transfer to validation" was never
+  established by that data, so nothing here should be read as *explaining* v6.
+
+### Actions taken
+
+DESIGN §9. Parser recovers markup/quote/bare-entity turns; `question_retries`
++ local `w_repeat`; `secret_source: bank` with deck dealing and category
+balance; `validation_episodes` + Wilson CIs; flat-mode difficulty steer now
+tracks its own target; validation ensemble call guarded. 401 tests pass.
+Next: build the calibrated bank, then run `configs/twentyq-v8-bank-solver.yaml`.
