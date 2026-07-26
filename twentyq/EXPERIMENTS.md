@@ -1090,3 +1090,72 @@ is now first-class iteration telemetry, since the run must not be altered on
 telemetry and the metric moves independently of the win rate. 280 tests pass.
 
 Next: build the calibrated bank, then run `configs/twentyq-v8-bank-solver.yaml`.
+
+## exp-v8 — in-flight findings (run live, 2026-07-26)
+
+Reported at iteration 18 of 60. The run is untouched; these are read-only.
+
+### The wall is down, and the solver learns
+
+`usable_group_rate` measured **0.938** across iterations (v1..v7 secret source:
+0.125). Within-secret training win rate rose **+0.118 ±0.048** over 49 secrets
+played in both halves of the run — same secrets on both sides, so neither the
+draw nor regression to the mean applies. v5/v6/v7 produced nothing comparable.
+The §9.1 diagnosis is therefore confirmed rather than merely assumed.
+
+### Validation is flat, and three explanations were tested
+
+    step        A (frozen)              B (solver)
+       0    0.141 [0.098,0.197]    0.141 [0.098,0.197]
+       5    0.109 [0.073,0.161]    0.141 [0.098,0.197]
+      10    0.120 [0.081,0.173]    0.172 [0.125,0.232]
+      15    0.130 [0.090,0.185]    0.141 [0.098,0.197]
+
+B's spread (0.031) equals the frozen control's (0.031). The step-10 rise did
+not survive to step 15.
+
+- *Instance memorization* — **ruled out**. Regressing each secret-play's delta
+  on iteration + exposures-to-that-secret + calibrated rate gives exposures
+  −0.082 ±0.085 (n.s.) against iteration +0.021 ±0.012 (t=+3.5). A matched
+  within-iteration contrast (same training time, secrets on 1st vs 2nd
+  exposure) gives −0.117 ±0.121. Neither shows a positive exposure effect, so
+  improvement is not secret-specific.
+- *Distribution shift* — plausible, untested. The bank is familiar entities
+  (Lion, Dog, Cheese) because generation targets were pushed to the easy end;
+  validation-v2 is deliberately obscure (pangolin, rambutan, couscous,
+  shoehorn, trivet). "Guess common things" would raise bank rate without
+  touching validation.
+- *The instrument cannot see it* — **confirmed, and this is the big one.**
+
+### validation-v2 is underpowered by COMPOSITION, not sample size
+
+Adapter B's per-secret wins/8 across all four checkpoints: **15 of 24 secrets
+are 0/8 at every checkpoint** (platypus, pangolin, kangaroo, hedgehog, tapir,
+pizza, hummus, rambutan, popcorn, couscous, persimmon, stapler, smoke detector,
+shoehorn, corkscrew), and cow is pinned at 8/8. The entire dynamic range lives
+in ~7 secrets.
+
+**This is the group-variance wall applied to the measuring instrument.** A
+secret that is unwinnable at every checkpoint contributes no information about
+whether the policy improved, exactly as an all-loss GRPO group contributes no
+gradient. Raising `validation_episodes` from 1 to 8 fixed the sample size and
+could not fix this, because the limit is which secrets are in the set.
+
+Caveat against over-claiming: validation's *reachable* subset (television,
+penguin, banana, bread, refrigerator, scissors) is also roughly flat, so
+resolution alone does not explain the null. The defensible statement is that
+training improved and validation-v2 largely cannot resolve whether it
+transferred.
+
+Action: `validation-v3`, built like the bank (play candidates, keep those in a
+resolvable band), held out and fixed in advance; then re-score the saved v8
+checkpoints against it. NOT swapped mid-run — v8 finishes on the instrument it
+started with, for the pre-registered criterion and v1..v7 comparability.
+
+### Bank decay is starting
+
+40% of recently-played secrets (22 of 55) now sit at a band edge — 11 at/above
+0.875 (Tiger, Shark, Dog, Monkey, Chocolate, Toaster, ...), 11 at/below 0.125.
+`usable_group_rate` has not yet moved, because at K=16 a secret at p=0.875
+still yields a mixed group 88% of the time. It is a leading indicator, not yet
+a cost.
