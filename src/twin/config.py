@@ -162,6 +162,33 @@ class TwentyQConfig:
     # current iteration's earlier picks are always excluded separately, so 0
     # disables only the cross-iteration rolling window.
     recent_secret_window: int = 128
+    # How the creator's per-rank difficulty is dictated (DESIGN §7.2).
+    #   "gradient" (v1..v6): rank i is dictated difficulty i/(N-1) and the
+    #     target guess rate from the rewards.target_hi -> target_lo ramp, so
+    #     one iteration asks for a whole easy->hard ladder.
+    #   "flat": EVERY rank is dictated the same target guess rate
+    #     (``flat_target_rate``) and the same difficulty (1 - the rate), so
+    #     the iteration asks for a uniformly-pitched bank instead of a ladder.
+    # The calibration reward follows the mode automatically — it always scores
+    # each secret's realized guess rate against the target its own rollout was
+    # PROMPTED with, so flat mode only makes those targets identical. The
+    # per-secret GRPO group, its baseline, the exclusion list, and the reward
+    # formula are unchanged. rewards.target_hi/target_lo are ignored in flat
+    # mode (the logged target_by_rank always shows what was actually used).
+    difficulty_mode: str = "gradient"
+    flat_target_rate: float = 0.5
+    # Frozen roles (DESIGN §7.3). A frozen role still plays — it generates,
+    # it is scored, it appears in the logs — but takes NO GRPO update, and the
+    # work that exists only to feed that update is skipped: trajectory
+    # construction, the base-reference KL pass, the policy pass, and (solver
+    # only) the frozen-ensemble dense scoring, which is the expensive one.
+    # Freezing is BY ROLE, not by adapter name: whichever adapter plays the
+    # frozen role this iteration is not updated, so with rotation ON both
+    # adapters still train (each while it plays the unfrozen role). Pair a
+    # freeze with roles.swap_interval = 0 unless that is what you mean; the
+    # launch script warns when it is not.
+    freeze_creator: bool = False
+    freeze_solver: bool = False
     # Credit granularity (DESIGN §2.3). "broadcast": every turn of episode k
     # carries the episode advantage (v1). "per_turn": reward-to-go from judge
     # closeness deltas + terminal reward (Sprint Q7 ablation; needs a judge

@@ -21,17 +21,24 @@ import re
 #   - gemma-4 channels: <|channel>thought ... <channel|>   (open id 100, close 101)
 # Matching is by PRESENCE in the text — no model identity is threaded through the
 # pure-text parsers — so one extractor path handles either family; add a pair
-# here (regex-escaped) to teach it a new model's thinking tokens. `|` in a token
-# must be escaped (\|) or the alternation swallows it.
-_THINK_PAIRS = [
-    (r"<think>", r"</think>"),
-    (r"<\|channel>", r"<channel\|>"),
+# here to teach it a new model's thinking tokens.
+#
+# These are LITERAL strings, escaped for regex use below (they used to be
+# hand-escaped, which made `|` a standing footgun) — because they are also
+# consumed verbatim: THINK_OPEN_MARKERS is what the backend bans at the logits
+# level when thinking is disabled, so this list is the single definition of
+# "thinking" for both extraction and suppression (DESIGN §8).
+THINK_SPANS = [
+    ("<think>", "</think>"),
+    ("<|channel>", "<channel|>"),
 ]
+THINK_OPEN_MARKERS = [open_marker for open_marker, _ in THINK_SPANS]
 _THINK_RE = re.compile(
-    "|".join(rf"{o}.*?{c}" for o, c in _THINK_PAIRS), re.DOTALL | re.IGNORECASE
+    "|".join(rf"{re.escape(o)}.*?{re.escape(c)}" for o, c in THINK_SPANS),
+    re.DOTALL | re.IGNORECASE,
 )
 _THINK_OPEN_RE = re.compile(
-    "|".join(o for o, _ in _THINK_PAIRS), re.IGNORECASE
+    "|".join(re.escape(o) for o in THINK_OPEN_MARKERS), re.IGNORECASE
 )
 
 
@@ -59,3 +66,49 @@ def think_share(text: str) -> float:
     m = _THINK_OPEN_RE.search(stripped)
     unclosed = len(stripped) - m.start() if m else 0
     return min(1.0, (closed + unclosed) / len(text))
+
+
+# gemma-4 opens its reasoning span as ``<|channel>thought\n...`` — the word is
+# the CHANNEL NAME, not the first line of reasoning, and rendering it verbatim
+# puts a stray "thought" at the top of every transcript block. Dropped only
+# when the first line is exactly a known label, so a real reasoning line that
+# merely begins with the word survives.
+_CHANNEL_LABELS = {"thought", "thinking", "analysis"}
+
+
+def _drop_channel_label(body: str) -> str:
+    head, sep, rest = body.lstrip("\n").partition("\n")
+    if sep and head.strip().lower() in _CHANNEL_LABELS:
+        return rest
+    return body
+
+
+def think_text(text: str) -> str:
+    """The reasoning CONTENT of ``text``, markers stripped, spans joined by a
+    blank line — the complement of :func:`strip_think`, for transcripts that
+    show a model's thoughts separately from its answer (DESIGN §8).
+
+    An unclosed trailing span (truncated reasoning) is included to its end,
+    matching :func:`think_share`'s accounting: a truncation spiral must be
+    visible in the transcript, not silently dropped for lacking a close tag.
+    Returns "" when the model did not think — callers use that to decide
+    whether to render a thoughts block at all."""
+    text = text or ""
+    if not text:
+        return ""
+    spans: list[str] = []
+    for match in _THINK_RE.finditer(text):
+        body = match.group(0)
+        for open_marker, close_marker in THINK_SPANS:
+            if body[:len(open_marker)].lower() == open_marker.lower():
+                body = body[len(open_marker):]
+                if body[-len(close_marker):].lower() == close_marker.lower():
+                    body = body[:-len(close_marker)]
+                break
+        spans.append(_drop_channel_label(body).strip())
+    # Unclosed remainder: whatever follows the last surviving open marker.
+    stripped = _THINK_RE.sub("", text)
+    open_match = _THINK_OPEN_RE.search(stripped)
+    if open_match:
+        spans.append(stripped[open_match.end():].strip())
+    return "\n\n".join(s for s in spans if s)

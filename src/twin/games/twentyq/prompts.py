@@ -52,7 +52,18 @@ def creator_secret_user(
     target_rate: float,
     previous: list[str] | None = None,
     recent: list[str] | None = None,
+    *,
+    difficulty_mode: str = "gradient",
 ) -> str:
+    """``difficulty_mode`` selects the dictation block (DESIGN §7.4).
+
+    "gradient" states this rank's own point on the 0-1 difficulty scale — the
+    prompt that builds an easy->hard ladder across the round. "flat" states
+    that every secret this round shares one target rate, so the rank number
+    orders the round (and anchors the exclusion list) without implying a ramp.
+    Everything else — the round framing, the exclusion block, the JSON
+    contract line — is identical in both modes.
+    """
     exclusions = list(recent or []) + list(previous or [])
     exclusion_block = ""
     if exclusions:
@@ -67,12 +78,27 @@ def creator_secret_user(
             "item above (such as a plural, alternate spelling, or qualified "
             "version).\n"
         )
+    if difficulty_mode == "flat":
+        dictation = (
+            f"Every secret this round has the SAME target: the guesser should "
+            f"succeed on about {int(round(target_rate * 100))}% of games. Pick "
+            f"something pitched at exactly that level — not so obvious it is "
+            f"named in a few questions, not so obscure it is rarely identified "
+            f"within 20."
+        )
+    elif difficulty_mode == "gradient":
+        dictation = (
+            f"Difficulty for this secret: {difficulty:.2f} on a 0-1 scale "
+            f"(0 = something anyone names in a few questions; 1 = something "
+            f"rarely identified within 20). Target: the guesser should succeed "
+            f"on about {int(round(target_rate * 100))}% of games at this secret."
+        )
+    else:
+        raise ValueError(f"unknown difficulty_mode: {difficulty_mode!r} "
+                         "(expected gradient | flat)")
     return f"""Pick secret {rank + 1} of {n_secrets} for this round. Category: {category}.
 
-Difficulty for this secret: {difficulty:.2f} on a 0-1 scale (0 = something anyone \
-names in a few questions; 1 = something rarely identified within 20). Target: the \
-guesser should succeed on about {int(round(target_rate * 100))}% of games at this \
-secret.
+{dictation}
 {exclusion_block}
 Reply with exactly one JSON object:
 {{"secret": "<the entity>", "category": "{category}", "difficulty": {difficulty:.2f}, "notes": "<one line: why this fits the target>"}}"""

@@ -144,6 +144,7 @@ class BaseTrainer:
                 temp=self.cfg.gen.oracle_temp,
                 top_p=self.cfg.gen.top_p,
                 max_rounds=tcfg.judge_tool_rounds,
+                suppress_thinking=not think,
             )
         self._tr("judge(base+cas)", f"Q: {question}\n\nA: {result.text}",
                  n_tool_calls=result.n_tool_calls)
@@ -157,14 +158,20 @@ class BaseTrainer:
         tight thinking budget truncates mid-trace into a zero-output turn
         (q-shakeout-01: guesser think-share 1.0, every turn a format fail).
         ``banned_strings`` masks those phrases (and surface variants) to -inf
-        at decode time — the twentyq masked repeat-resample."""
+        at decode time — the twentyq masked repeat-resample.
+
+        The resolved thinking decision is applied TWICE, and this is the only
+        place either half is decided: to the chat template (which invites
+        reasoning) and to the decoder (which, when thinking is off, bans the
+        reasoning-open markers so the model cannot start a trace whatever its
+        template does — DESIGN §8)."""
         self.adapters.activate(adapter)
         think = (self.cfg.model.enable_thinking if enable_thinking is None
                  else enable_thinking)
         prompt = self.base.render(user, system=system, enable_thinking=think)
         return self.base.generate(
             prompt, max_tokens=max_tokens, temp=temp, top_p=self.cfg.gen.top_p,
-            banned_strings=banned_strings,
+            banned_strings=banned_strings, suppress_thinking=not think,
         )
 
     def _generate_batch(self, adapter, system, users, *, max_tokens, temp,
@@ -187,6 +194,7 @@ class BaseTrainer:
             temp=temp,
             top_p=self.cfg.gen.top_p,
             completion_batch_size=max(1, int(completion_batch_size)),
+            suppress_thinking=not think,
         )
 
     # ----- inline-tool generation (legacy ReAct or Qwen3 native) ----------

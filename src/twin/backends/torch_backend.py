@@ -48,6 +48,7 @@ except ImportError as e:  # pragma: no cover - exercised only on a torch-less ho
 
 from twin.models.types import GenResult, ReactResult, assemble_react
 from twin.rl.core import Trajectory  # noqa: F401  (re-exported for parity/tests)
+from twin.think import THINK_OPEN_MARKERS
 
 
 def banned_phrase_variants(phrase: str) -> list[str]:
@@ -120,15 +121,23 @@ class BannedStringsProcessor:
     tokenization — closing the alternate-segmentation leak that pure
     ``bad_words_ids`` sequences have (observed live: 3/15 masked retries
     emitted the exact banned secret through a rerouted BPE split). Matching is
-    casefolded; plural forms come in via :func:`banned_phrase_variants`."""
+    casefolded; plural forms come in via :func:`banned_phrase_variants`.
 
-    def __init__(self, tokenizer, phrases: list[str], prompt_len: int):
+    ``expand_variants=False`` bans the phrases EXACTLY as given, skipping the
+    case/plural/leading-space expansion. That expansion exists for creator
+    secrets (natural-language nouns); for literal control tokens like
+    ``<|channel>`` it would only manufacture spellings that can never occur.
+    """
+
+    def __init__(self, tokenizer, phrases: list[str], prompt_len: int,
+                 *, expand_variants: bool = True):
         self.tokenizer = tokenizer
         self.prompt_len = int(prompt_len)
         self.phrases = sorted({
             variant.strip().casefold()
             for phrase in phrases
-            for variant in banned_phrase_variants(phrase)
+            for variant in (banned_phrase_variants(phrase) if expand_variants
+                            else [phrase])
             if variant.strip()
         })
         self._max_chars = max((len(p) for p in self.phrases), default=0)
@@ -317,11 +326,12 @@ class TorchTwinBase:
         top_p: float = 0.95, top_k: int | None = None,
         min_p: float | None = None, seed: int | None = None,
         banned_strings: list[str] | None = None,
+        suppress_thinking: bool = False,
     ) -> GenResult:
         return self.generate_batch(
             [prompt], max_tokens=max_tokens, temp=temp, top_p=top_p,
             top_k=top_k, min_p=min_p, seed=seed, completion_batch_size=1,
-            banned_strings=banned_strings,
+            banned_strings=banned_strings, suppress_thinking=suppress_thinking,
         )[0]
 
     @torch.no_grad()
@@ -331,6 +341,7 @@ class TorchTwinBase:
         min_p: float | None = None, seed: int | None = None,
         completion_batch_size: int = 32,
         banned_strings: list[str] | None = None,
+        suppress_thinking: bool = False,
     ) -> list[GenResult]:
         """Batched decode under the active adapter. ``completion_batch_size``
         caps concurrent sequences (KV-cache bound). Semantics match
@@ -342,7 +353,14 @@ class TorchTwinBase:
         decoded completion contain a banned phrase — under any BPE
         segmentation — is masked to -inf, so the decoder takes the
         next-most-likely non-banned continuation and sampling draws from the
-        renormalized masked distribution."""
+        renormalized masked distribution.
+
+        ``suppress_thinking`` bans the reasoning-span OPEN markers
+        (``twin.think.THINK_OPEN_MARKERS``) the same way, so the model cannot
+        begin a thinking trace at all. This is the enforcement half of the
+        thinking flag: a chat template's ``enable_thinking=False`` only
+        declines to INVITE reasoning, and gemma-4-E2B opens a
+        ``<|channel>thought`` span anyway (DESIGN §8)."""
         if seed is not None:
             torch.manual_seed(seed)
         do_sample = temp > 0
@@ -366,11 +384,19 @@ class TorchTwinBase:
             )
             input_ids = enc["input_ids"].to(self.device)
             attn = enc["attention_mask"].to(self.device)
-            processors = None
+            # Two processors rather than one merged phrase list: the creator's
+            # secret bans want surface-variant expansion, the thinking markers
+            # are literal control tokens that must not be expanded.
+            active = []
             if banned_strings:
-                processors = LogitsProcessorList([BannedStringsProcessor(
+                active.append(BannedStringsProcessor(
                     self.tokenizer, banned_strings,
-                    prompt_len=input_ids.shape[1])])
+                    prompt_len=input_ids.shape[1]))
+            if suppress_thinking:
+                active.append(BannedStringsProcessor(
+                    self.tokenizer, list(THINK_OPEN_MARKERS),
+                    prompt_len=input_ids.shape[1], expand_variants=False))
+            processors = LogitsProcessorList(active) if active else None
             gen = self.model.generate(
                 input_ids=input_ids, attention_mask=attn,
                 max_new_tokens=max_tokens, do_sample=do_sample,
@@ -390,7 +416,8 @@ class TorchTwinBase:
     # ----- inline ReAct generation (tool use mid-rollout) ------------------
     @torch.no_grad()
     def _gen_segment(self, seq_ids: list[int], budget: int, temp: float,
-                     top_p: float, stop: str):
+                     top_p: float, stop: str, *,
+                     suppress_thinking: bool = False):
         """Sample one segment from ``seq_ids`` (full token context), stopping
         after ``stop`` appears, on EOS, or at ``budget`` tokens. Returns
         ``(tokens, text, hit_stop, hit_eos)`` — the mlx ``_gen_segment`` contract."""
@@ -398,12 +425,17 @@ class TorchTwinBase:
         plen = seq.shape[1]
         do_sample = temp > 0
         crit = StoppingCriteriaList([_StopOnString(self.tokenizer, plen, stop)]) if stop else None
+        # Per-segment: the ban only has to prevent a marker being emitted, and
+        # each segment starts a fresh completion window.
+        processors = LogitsProcessorList([BannedStringsProcessor(
+            self.tokenizer, list(THINK_OPEN_MARKERS), prompt_len=plen,
+            expand_variants=False)]) if suppress_thinking else None
         gen = self.model.generate(
             input_ids=seq, max_new_tokens=budget, do_sample=do_sample,
             temperature=(temp if do_sample else None),
             top_p=(top_p if do_sample else None),
             pad_token_id=self._pad, eos_token_id=(list(self._eos) or None),
-            stopping_criteria=crit,
+            stopping_criteria=crit, logits_processor=processors,
         )
         new = [int(x) for x in gen[0, plen:].tolist()]
         if new and new[-1] in self._eos:
@@ -417,10 +449,13 @@ class TorchTwinBase:
         self, prompt: str, *, tool_runner, max_tokens: int = 1024,
         temp: float = 0.7, top_p: float = 0.95, max_rounds: int = 4,
         stop: str = "</tool>", seed: int | None = None,
+        suppress_thinking: bool = False,
     ) -> ReactResult:
         """Inline tool use under the active adapter — same contract and masking
         as ``twin.models.TwinBase.generate_react`` (injected obs tokens carry
-        mask 0 so GRPO ignores them)."""
+        mask 0 so GRPO ignores them). ``suppress_thinking`` applies the same
+        marker ban as :meth:`generate_batch` to every sampled segment, so the
+        judge honours ``twentyq.judge_thinking`` too (DESIGN §8)."""
         if seed is not None:
             torch.manual_seed(seed)
         prompt_tokens = self._encode(prompt)
@@ -433,7 +468,8 @@ class TorchTwinBase:
         while rounds < max_rounds and remaining > 0:
             rounds += 1
             seg_tokens, seg_text, hit_stop, hit_eos = self._gen_segment(
-                seq, remaining, temp, top_p, stop
+                seq, remaining, temp, top_p, stop,
+                suppress_thinking=suppress_thinking,
             )
             segments.append((seg_tokens, True))
             pieces.append(seg_text)

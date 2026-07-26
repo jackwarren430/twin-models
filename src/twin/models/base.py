@@ -15,6 +15,7 @@ the desired adapter via ``Adapters`` before calling generate()/logprobs().
 """
 
 import os
+import warnings
 from typing import Callable, Optional
 
 import mlx.core as mx
@@ -27,6 +28,28 @@ from mlx_lm.sample_utils import make_sampler
 from twin.models.types import GenResult, ReactResult, assemble_react
 
 __all__ = ["TwinBase", "GenResult", "ReactResult", "assemble_react"]
+
+
+# Decode-level thinking suppression is torch-only: MLX generation goes through
+# ``make_sampler``, which has no logits-processor hook, so the marker ban that
+# ENFORCES ``enable_thinking=False`` cannot be installed here. The chat
+# template flag still applies (it declines to invite reasoning), so this is a
+# degradation, not a silent no-op — warned once per process rather than raised,
+# because thinking is off by default and raising would break every MLX run
+# (DESIGN §8).
+_WARNED_NO_SUPPRESS = False
+
+
+def _warn_thinking_unsuppressed() -> None:
+    global _WARNED_NO_SUPPRESS
+    if not _WARNED_NO_SUPPRESS:
+        _WARNED_NO_SUPPRESS = True
+        warnings.warn(
+            "suppress_thinking is not enforceable on the MLX backend: the "
+            "chat-template flag is applied but the model may still emit a "
+            "reasoning span. Run on the torch backend for a hard guarantee.",
+            RuntimeWarning, stacklevel=3,
+        )
 
 
 class TwinBase:
@@ -101,6 +124,7 @@ class TwinBase:
         top_p: float = 0.95,
         seed: int | None = None,
         banned_strings: list[str] | None = None,
+        suppress_thinking: bool = False,
     ) -> GenResult:
         """Sample a completion from the model with the *currently active*
         adapter. Returns text plus the prompt/completion token ids.
@@ -113,6 +137,8 @@ class TwinBase:
         ``banned_strings`` (logits-level phrase masking, twentyq repeat
         handling) is torch-backend-only for now: implementing it here needs a
         banned-sequence-aware sampler wrapper around ``make_sampler``."""
+        if suppress_thinking:
+            _warn_thinking_unsuppressed()
         if banned_strings:
             raise NotImplementedError(
                 "banned_strings masking is only implemented on the torch "
@@ -147,6 +173,7 @@ class TwinBase:
         top_p: float = 0.95,
         seed: int | None = None,
         completion_batch_size: int = 32,
+        suppress_thinking: bool = False,
     ) -> list[GenResult]:
         """Sample completions for ``prompts`` in ONE continuous-batching pass
         under the *currently active* adapter (Sprint 8: batched solver
@@ -164,6 +191,8 @@ class TwinBase:
         ``completion_batch_size`` caps concurrent decode sequences: KV cache
         is ~150KB/token for Qwen3-8B, so B sequences at a 4096 budget
         worst-case ~0.6GB each — keep B modest on 32GB."""
+        if suppress_thinking:
+            _warn_thinking_unsuppressed()
         if seed is not None:
             mx.random.seed(seed)
         sampler = make_sampler(temp=temp, top_p=top_p)
@@ -238,6 +267,7 @@ class TwinBase:
         max_rounds: int = 4,
         stop: str = "</tool>",
         seed: int | None = None,
+        suppress_thinking: bool = False,
     ) -> ReactResult:
         """Generate with inline tool use under the *currently active* adapter.
 
@@ -247,6 +277,8 @@ class TwinBase:
         are recorded with mask 0 so GRPO ignores them. ``max_tokens`` bounds the
         *model-generated* tokens across all rounds; injected obs tokens are free.
         The whole exchange is one logical completion scored as one trajectory."""
+        if suppress_thinking:
+            _warn_thinking_unsuppressed()
         if seed is not None:
             mx.random.seed(seed)
         sampler = make_sampler(temp=temp, top_p=top_p)

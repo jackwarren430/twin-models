@@ -644,3 +644,119 @@ def test_fixed_validation_evaluates_both_adapters_without_grpo(tmp_path):
     assert rec["reward_signals"]["terminal_mean"] > 1.0
     assert rec["reward_signals"]["dense_immediate_mean"] == pytest.approx(0.1)
     assert t.captured["grpo"] == {}
+
+
+# ----- frozen roles + flat difficulty (DESIGN §7) ------------------------------
+
+def _ensemble_cfg(**twentyq):
+    """Ensemble credit, so a frozen solver has an expensive scorer to skip."""
+    base = {"n_secrets": 2, "episodes_per_secret": 2, "max_turns": 2,
+            "categories": ["animal"], "credit": "ensemble", "w_ensemble": 0.1}
+    base.update(twentyq)
+    return _config(twentyq=base)
+
+
+def _ensemble_trainer(cfg, **kw):
+    t = _make_trainer(cfg, list(CREATOR_OK), list(GUESSER_OK), **kw)
+    t.captured["ensemble_calls"] = 0
+
+    def fake_potentials(episodes, secret):
+        t.captured["ensemble_calls"] += 1
+        return [[-2.0] * (ep.turns_used + 1) for ep in episodes]
+
+    t._ensemble_potentials_many = fake_potentials
+    return t
+
+
+def test_frozen_creator_skips_its_update_but_keeps_its_telemetry():
+    frozen = _ensemble_trainer(_ensemble_cfg(freeze_creator=True)).run_iteration(0)
+    trained = _ensemble_trainer(_ensemble_cfg()).run_iteration(0)
+
+    # The creator role (adapter A at iteration 0) took no GRPO step...
+    assert frozen["creator_update"] == {
+        "n_traj": 0, "n_tokens": 0, "loss": 0.0, "pg": 0.0, "kl": 0.0,
+        "grad_norm": 0.0, "frozen": True}
+    assert frozen["frozen"] == {"creator": True, "solver": False}
+    # ...while every measurement it feeds is byte-identical to the trained run.
+    for key in ("creator_reward_mean", "r_gradient", "creator_suite_reward",
+                "guess_rates_by_rank", "target_by_rank", "validity_rate"):
+        assert frozen[key] == trained[key], key
+    # The solver is untouched by the creator's freeze.
+    assert frozen["solver_update"]["n_traj"] == trained["solver_update"]["n_traj"] > 0
+
+
+def test_frozen_creator_does_not_call_grpo_for_the_creator_adapter():
+    t = _ensemble_trainer(_ensemble_cfg(freeze_creator=True))
+    rec = t.run_iteration(0)
+    assert rec["creator"] == "A" and rec["solver"] == "B"
+    assert set(t.captured["grpo"]) == {"B"}          # A never reached _grpo
+
+
+def test_frozen_solver_skips_ensemble_scoring_and_its_update():
+    t = _ensemble_trainer(_ensemble_cfg(freeze_solver=True))
+    rec = t.run_iteration(0)
+
+    assert t.captured["ensemble_calls"] == 0          # the expensive part
+    assert set(t.captured["grpo"]) == {"A"}           # creator still trains
+    assert rec["solver_update"]["frozen"] is True
+    assert rec["n_solver_trajs"] == 0
+    assert rec["frozen"] == {"creator": False, "solver": True}
+    # Episodes still ran and are still scored — the creator's reward needs them.
+    assert rec["episodes"]["total"] == 4 and rec["episodes"]["guessed"] == 2
+    assert rec["reward_signals"]["n_episodes"] == 4
+    assert rec["reward_signals"]["dense_immediate_total"] == 0.0
+    assert rec["reward_signals"]["terminal_mean"] == pytest.approx(
+        _ensemble_trainer(_ensemble_cfg()).run_iteration(0)
+        ["reward_signals"]["terminal_mean"])
+
+
+def test_both_frozen_trains_nothing_but_still_plays():
+    t = _ensemble_trainer(_ensemble_cfg(freeze_creator=True, freeze_solver=True))
+    rec = t.run_iteration(0)
+    assert t.captured["grpo"] == {}
+    assert t.captured["ensemble_calls"] == 0
+    assert rec["episodes"]["total"] == 4
+    assert rec["guess_rates_by_rank"] == [1.0, 0.0]
+
+
+def test_flat_mode_dictates_one_target_to_every_rank():
+    cfg = _ensemble_cfg(difficulty_mode="flat", flat_target_rate=0.5)
+    t = _ensemble_trainer(cfg)
+    rec = t.run_iteration(0)
+
+    assert rec["difficulty_mode"] == "flat" and rec["flat_target_rate"] == 0.5
+    assert rec["target_by_rank"] == [0.5, 0.5]
+    # Prompts: one shared target, no per-rank difficulty scale, round framing
+    # and the exclusion machinery untouched.
+    for i, user in enumerate(t.captured["creator_users"]):
+        assert f"Pick secret {i + 1} of 2" in user
+        assert "Every secret this round has the SAME target" in user
+        assert "succeed on about 50% of games" in user
+        assert "on a 0-1 scale" not in user
+    # Reward follows the mode: rates [1.0, 0.0] vs flat target 0.5.
+    assert rec["r_gradient"] == pytest.approx(math.exp(-4 * 0.25), abs=1e-4)
+
+
+def test_flat_mode_keeps_the_validity_term_despite_zero_difficulty_spread():
+    """All ranks share one dictated difficulty, which would trip the suite's
+    anti-collapse spread check and silently zero w_valid on every secret."""
+    cfg = _ensemble_cfg(difficulty_mode="flat", flat_target_rate=0.5)
+    rec = _ensemble_trainer(cfg).run_iteration(0)
+    # Per-secret reward = w_grad*exp(-4*(p-0.5)^2) + w_cons*1 + w_valid*1.
+    expected = [1.0 * math.exp(-4 * 0.25) + 0.5 + 0.1] * 2
+    assert rec["creator_reward_mean"] == pytest.approx(
+        sum(expected) / len(expected), abs=1e-4)
+
+
+def test_gradient_mode_prompt_is_unchanged():
+    t = _ensemble_trainer(_ensemble_cfg())
+    t.run_iteration(0)
+    for user in t.captured["creator_users"]:
+        assert "on a 0-1 scale" in user
+        assert "Every secret this round" not in user
+
+
+def test_unknown_difficulty_mode_raises():
+    t = _ensemble_trainer(_ensemble_cfg(difficulty_mode="ramp"))
+    with pytest.raises(ValueError, match="difficulty_mode"):
+        t.run_iteration(0)

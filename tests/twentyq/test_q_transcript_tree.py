@@ -220,3 +220,35 @@ def test_validation_tree_contains_per_turn_rewards(tmp_path):
     assert "validation_ensemble" in txt
     assert "**reward**" in txt
     assert "dense=0.900" in txt
+
+
+# ----- answerer thoughts (DESIGN §8) ------------------------------------------
+
+def _thinking_member():
+    """A member whose answerer reasoned before answering."""
+    m = _member_ok()
+    ep = m["episodes"][0]["ep"]
+    ep.turns[0].answer_raw = (
+        "<|channel>thought\nA dog is a mammal, so yes.\n<channel|>ANSWER: YES")
+    return m
+
+
+def test_answerer_thoughts_render_below_prompt_and_output(tmp_path):
+    root = _write(tmp_path / "run.transcript", members=[_thinking_member()])
+    txt = (root / "iter_00" / "creator_0__dog" / "episode_0__win_t2.md").read_text()
+    assert "answerer thoughts" in txt
+    assert "A dog is a mammal, so yes." in txt
+    # Ordering: USER prompt, then output, then the thoughts dropdown.
+    assert (txt.index("answerer USER prompt")
+            < txt.index("**answerer output**")
+            < txt.index("answerer thoughts"))
+    # It is a collapsible block, like the prompts.
+    thoughts_at = txt.index("answerer thoughts")
+    assert txt.rfind("<details>", 0, thoughts_at) > txt.index("**answerer output**")
+
+
+def test_no_thoughts_block_when_the_answerer_did_not_think(tmp_path):
+    root = _write(tmp_path / "run.transcript")
+    txt = (root / "iter_00" / "creator_0__dog" / "episode_0__win_t2.md").read_text()
+    assert "**answerer output**" in txt
+    assert "answerer thoughts" not in txt

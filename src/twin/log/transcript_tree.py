@@ -35,6 +35,8 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from twin.think import think_text
+
 
 def _slug(text: str, *, maxlen: int = 40) -> str:
     """Filesystem-safe lowercase slug: alnum runs joined by underscores."""
@@ -346,6 +348,13 @@ class TwentyQTranscriptTree:
                     L += self._details("answerer USER prompt", pr["answerer_user"])
                 L += [f"**answerer output** → `ANSWER: {t.answer}`", "",
                       "```", (t.answer_raw or "").strip(), "```", ""]
+                # The reasoning trace, pulled out of the raw completion above so
+                # it is readable on its own (DESIGN §8). Absent — not empty —
+                # when the model did not think, which is the expected state
+                # whenever answerer_thinking is off and suppression is enforced.
+                thoughts = think_text(t.answer_raw)
+                if thoughts:
+                    L += self._details("answerer thoughts", thoughts)
             elif t.answer is not None:
                 L += [f"**answer** → `{t.answer}`  _(engine referee — "
                       f"ground-truth reply to a wrong guess, no model call)_", ""]

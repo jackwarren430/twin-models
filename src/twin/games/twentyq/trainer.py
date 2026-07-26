@@ -86,6 +86,17 @@ def _mean(xs: list[float]) -> float:
     return sum(xs) / len(xs) if xs else 0.0
 
 
+def _frozen_update() -> dict:
+    """The update metrics of a role that took no GRPO step this iteration.
+
+    Same keys a real ``_grpo`` result carries (so every downstream reader —
+    logs, analysis scripts, the transcript tree — keeps working unchanged),
+    plus an explicit ``frozen`` marker so a skipped step is never confused
+    with a step that ran and happened to produce a zero loss."""
+    return {"n_traj": 0, "n_tokens": 0, "loss": 0.0, "pg": 0.0,
+            "kl": 0.0, "grad_norm": 0.0, "frozen": True}
+
+
 def _solver_adv_map(trajs) -> dict[int, dict[int, float]]:
     """Group solver turn-trajectories back into ``{ep_in_secret: {turn: adv}}``
     for the transcript tree (per-turn credit shows each turn's advantage)."""
@@ -570,12 +581,37 @@ class TwentyQTrainer(BaseTrainer):
         category = self.rng.choice(qcfg.categories)
         n = qcfg.n_secrets
         k = qcfg.episodes_per_secret
-        targets = ProblemSuite.target_curve(
-            n, cfg.rewards.target_hi, cfg.rewards.target_lo)
+        # Difficulty dictation (DESIGN §7.4). Gradient: the historical easy->hard
+        # ramp across ranks. Flat: one target rate for every rank, so the round
+        # asks for a uniformly-pitched bank. The targets computed here are the
+        # SAME vector the creator is prompted with and later scored against —
+        # "prompt targets == reward targets" holds in both modes.
+        if qcfg.difficulty_mode not in ("gradient", "flat"):
+            raise ValueError(
+                f"unknown twentyq.difficulty_mode: {qcfg.difficulty_mode!r} "
+                "(expected gradient | flat)")
+        flat = qcfg.difficulty_mode == "flat"
+        flat_rate = float(qcfg.flat_target_rate)
+        if flat:
+            targets = [flat_rate] * n
+        else:
+            targets = ProblemSuite.target_curve(
+                n, cfg.rewards.target_hi, cfg.rewards.target_lo)
+        # A frozen role plays and is scored, but takes no GRPO step — and the
+        # work that exists only to feed that step is skipped (§7.3).
+        freeze_creator = bool(qcfg.freeze_creator)
+        freeze_solver = bool(qcfg.freeze_solver)
 
+        frozen_note = "".join([
+            " | creator FROZEN" if freeze_creator else "",
+            " | solver FROZEN" if freeze_solver else "",
+        ])
         self._tr_section(
             f"iter {iteration} | twentyq category={category} | "
-            f"creator={assign.creator} guesser={assign.solver}"
+            f"creator={assign.creator} guesser={assign.solver} | "
+            f"difficulty={qcfg.difficulty_mode}"
+            + (f"@{flat_rate:.2f}" if flat else "")
+            + frozen_note
         )
 
         # --- creator: N secret rollouts, dictated difficulty ----------------
@@ -644,11 +680,16 @@ class TwentyQTrainer(BaseTrainer):
             current_secrets.append(secret.secret)
 
         for i in range(n):
-            difficulty = round(i / (n - 1), 2) if n > 1 else 0.5
+            # Flat mode dictates ONE difficulty to every rank (the complement of
+            # the shared target rate), so the rank number orders the round
+            # without implying a ramp.
+            difficulty = (round(1.0 - flat_rate, 2) if flat
+                          else (round(i / (n - 1), 2) if n > 1 else 0.5))
             user = creator_secret_user(
                 category, i, n, difficulty, targets[i],
                 previous=current_secrets or None,
                 recent=recent_category_secrets or None,
+                difficulty_mode=qcfg.difficulty_mode,
             )
             if cfg.train.log_prompts:
                 self._tr(f"prompt creator[{i}]", user)
@@ -821,7 +862,23 @@ class TwentyQTrainer(BaseTrainer):
                     })
 
             if kept_eps:
-                if qcfg.credit == "ensemble":
+                if freeze_solver:
+                    # Frozen solver: no update, so no returns, no advantages,
+                    # no trajectories — and, critically, no ensemble scoring.
+                    # The dense potentials exist only to build solver returns,
+                    # so a frozen solver skips ~K*(T+1) scored histories per
+                    # secret across every ensemble member (and never loads the
+                    # ensemble at all). Episodes still ran — the creator's
+                    # calibration reward is measured from their guess rates —
+                    # and the terminal component trace is still built (pure
+                    # arithmetic, zero potentials) so reward telemetry keeps
+                    # exactly the shape every log reader expects.
+                    traces = [ensemble_reward_trace(
+                        [0.0] * (ep.turns_used + 1), rew.total,
+                        gamma=qcfg.gamma, scale=0.0)
+                        for ep, rew in zip(kept_eps, kept_rewards)]
+                    adv_map = {}
+                elif qcfg.credit == "ensemble":
                     # Dense per-turn shaping from the frozen ensemble: score the
                     # secret's log-prob at every history prefix, turn it into
                     # r_t = w_ensemble·(γ·Φ_{t+1} − Φ_t) reward-to-go, and add the
@@ -908,7 +965,7 @@ class TwentyQTrainer(BaseTrainer):
                     if tree is not None:
                         sec_entries[j]["step_rewards"] = [asdict(s) for s in trace]
                         sec_entries[j]["adv_by_turn"] = adv_map.get(j, {})
-                        if qcfg.credit == "broadcast":
+                        if qcfg.credit == "broadcast" and not freeze_solver:
                             sec_entries[j]["adv_broadcast"] = badv[j]
                 rates[si] = guess_rate([e.guessed for e in kept_eps])
                 scored[si] = True
@@ -929,8 +986,14 @@ class TwentyQTrainer(BaseTrainer):
         if secrets:
             suite = secrets_as_suite(secrets, category=category)
             target_by_secret = [targets[rank] for rank in playable_ranks]
+            # Flat mode dictates one difficulty to every rank, which trips the
+            # suite's anti-collapse spread check (>= 0.3 between easiest and
+            # hardest) — a check written for a RAMPED suite and meaningless for
+            # a deliberately flat bank. Left alone it silently zeroes the
+            # w_valid term on every secret in flat mode (DESIGN §7.5).
+            suite_valid = suite.is_valid(min_spread=0.0 if flat else 0.3)
             secret_rewards = self.engine.creator_problem_rewards(
-                suite, rates, consistent,
+                suite, rates, consistent, valid=suite_valid,
                 scored_mask=scored, target_by_problem=target_by_secret,
             )
             # Suite-level view for the log (same quantities the self-play
@@ -938,7 +1001,7 @@ class TwentyQTrainer(BaseTrainer):
             # Repeat-voided ranks are absent from the suite, so they scale
             # r_gradient down exactly like parse drops.
             creward = self.engine.creator_reward(
-                suite, rates, consistent,
+                suite, rates, consistent, valid=suite_valid,
                 scored_mask=scored, expected_n=n,
                 target_by_problem=target_by_secret,
             )
@@ -953,25 +1016,37 @@ class TwentyQTrainer(BaseTrainer):
             else gate_total
             for r in rollouts
         ]
-        for roll, reward in zip(rollouts, roll_rewards):
-            creator_trajs.append(Trajectory(
-                roll["prompt_tokens"], roll["completion_tokens"], reward=reward,
-                meta={"parsed": roll["parsed"], "rank": roll["rank"],
-                      "repeat": roll["repeat"], "retry": roll["retry"]},
-            ))
-        # Creator GRPO group = this iteration's secret rollouts (the N ranks
-        # plus any masked retries — a retry is one more same-policy rollout).
-        for t, a in zip(creator_trajs, group_advantages(
-                [t.reward for t in creator_trajs], mode=cfg.train.adv_mode)):
-            t.advantage = a
+        # Rewards are computed either way (pure arithmetic over already-measured
+        # guess rates — no model call), so a frozen creator keeps its full
+        # calibration telemetry; only the trajectories it would have trained on
+        # are skipped.
+        if not freeze_creator:
+            for roll, reward in zip(rollouts, roll_rewards):
+                creator_trajs.append(Trajectory(
+                    roll["prompt_tokens"], roll["completion_tokens"], reward=reward,
+                    meta={"parsed": roll["parsed"], "rank": roll["rank"],
+                          "repeat": roll["repeat"], "retry": roll["retry"]},
+                ))
+            # Creator GRPO group = this iteration's secret rollouts (the N ranks
+            # plus any masked retries — a retry is one more same-policy rollout).
+            for t, a in zip(creator_trajs, group_advantages(
+                    [t.reward for t in creator_trajs], mode=cfg.train.adv_mode)):
+                t.advantage = a
 
         # --- updates + record -------------------------------------------------
-        solver_metrics = self._grpo(assign.solver, solver_trajs)
-        creator_metrics = self._grpo(assign.creator, creator_trajs)
+        solver_metrics = (_frozen_update() if freeze_solver
+                          else self._grpo(assign.solver, solver_trajs))
+        creator_metrics = (_frozen_update() if freeze_creator
+                           else self._grpo(assign.creator, creator_trajs))
         self._tr_section(
             f"iter {iteration} updates | "
-            f"solver loss={solver_metrics['loss']:.4f} kl={solver_metrics['kl']:.4f} | "
-            f"creator loss={creator_metrics['loss']:.4f} kl={creator_metrics['kl']:.4f}"
+            + ("solver FROZEN (no update)" if freeze_solver else
+               f"solver loss={solver_metrics['loss']:.4f} "
+               f"kl={solver_metrics['kl']:.4f}")
+            + " | "
+            + ("creator FROZEN (no update)" if freeze_creator else
+               f"creator loss={creator_metrics['loss']:.4f} "
+               f"kl={creator_metrics['kl']:.4f}")
         )
 
         # Parsed outputs enter history regardless of validity or repeat status
@@ -996,7 +1071,12 @@ class TwentyQTrainer(BaseTrainer):
             "n_swaps": assign.n_swaps,
             "generation_batch_size": qcfg.generation_batch_size,
             "ensemble_batch_size": qcfg.ensemble_batch_size,
-            "creator_reward_mean": round(_mean([t.reward for t in creator_trajs]), 4),
+            "difficulty_mode": qcfg.difficulty_mode,
+            "flat_target_rate": flat_rate if flat else None,
+            "frozen": {"creator": freeze_creator, "solver": freeze_solver},
+            # Measured over the per-rollout rewards, not the trajectories, so a
+            # frozen creator (which builds none) still reports its real mean.
+            "creator_reward_mean": round(_mean(roll_rewards), 4),
             "solver_reward_mean": round(_mean([t.reward for t in solver_trajs]), 4),
             "parse_ok_rate": round(
                 sum(1 for r in rollouts if not r["retry"] and r["parsed"])
@@ -1062,7 +1142,10 @@ class TwentyQTrainer(BaseTrainer):
             members = []
             for idx, roll in enumerate(rollouts):
                 rank = roll["rank"]
-                ctraj = creator_trajs[idx]
+                # A frozen creator builds no trajectories, so there is no
+                # advantage to report — the reward it WOULD have trained on is
+                # still shown (it is the calibration measurement).
+                ctraj = creator_trajs[idx] if creator_trajs else None
                 if not roll["parsed"]:
                     member = {"rank": rank, "status": "parse_fail", "secret": None,
                               "difficulty": None, "valid": None,
@@ -1093,8 +1176,9 @@ class TwentyQTrainer(BaseTrainer):
                     "system": CREATOR_SYSTEM, "user": roll.get("_user"),
                     "completion": roll.get("_completion"),
                     "parse_error": roll.get("error"),
-                    "creator_reward": ctraj.reward,
-                    "creator_advantage": ctraj.advantage,
+                    "creator_reward": roll_rewards[idx],
+                    "creator_advantage": (ctraj.advantage if ctraj is not None
+                                          else None),
                 })
                 members.append(member)
             tree.write_iteration(

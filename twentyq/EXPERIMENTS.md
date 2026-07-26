@@ -692,3 +692,155 @@ Stationary validation (12 secrets, greedy, base answerer), B = solver:
    nothing enforces it against the creator's own sampling. v2 keeps the entry
    (series continuity); treat its cell with suspicion, and a creator-side
    exclusion of validation entries is a cheap v7 fix.
+
+---
+
+## exp-v7-solveronly — frozen creator + flat-rate bank (STOPPED 2026-07-25)
+
+Diagnostic, not a matrix arm: v6's three confounds removed at once
+(`freeze_creator: true`, `difficulty_mode: flat`, `credit: terminal`), everything
+else held at v6 values. Config `configs/twentyq-v7-solver-only.yaml`, run
+`q-v7-solveronly-flat90-terminal`. From a cold start the frozen creator's LoRA is
+zero-init, so the opponent was the frozen base model throughout — a stationary
+secret generator AND a stationary oracle.
+
+Launched at `flat_target_rate: 0.5`, scrapped after validation step 0 (user
+decision), relaunched at **0.9**. Stopped by the user at iteration 21/60.
+
+    21 iterations, 7.95 h wall, 21.7 min/iter, mem 43.2-48.4 GB
+    parse_ok 1.000 every iteration; zero errors, zero restarts
+    training episodes won 119/3024 (3.9%); format_ended 615/3024 (20.3%)
+    193 distinct secrets; repeat rate mean 0.281, max 0.70, 5 rounds >= 0.60
+
+Stationary validation (v2, 24 secrets, greedy, base answerer), B = solver:
+
+    step               0        10       20
+    A wins/24          3         3        3      <- frozen control, byte-identical
+    B wins/24          3         3        3
+    B turns_on_succ  18.00    17.33    16.33
+    B terminal_mean  0.1339   0.1349   0.1364
+
+Pooled by category (the run's strongest result):
+
+    household object   6 rounds   113/944  = 0.1197   mean_repeat 0.200
+    food              10 rounds     4/1424 = 0.0028   mean_repeat 0.210
+    animal             5 rounds     2/656  = 0.0030   mean_repeat 0.520
+
+**Findings:**
+
+1. **NULL on the stated criterion; a real secondary signal.** §7.7 said read
+   success only as a rise in B's validation guess rate. It did not move (3/24 at
+   all three steps). But adapter A — frozen, never updated — reproduced *byte-
+   identically* at every checkpoint (same secrets, same 20.62 turns, same 18.00
+   on success), making it an exact control, and against it B moved monotonically
+   in three places: turns-on-success 18.00 -> 16.33, mean turns 20.62 -> 20.42,
+   terminal_mean 0.1339 -> 0.1364. The solver learned to win the SAME games
+   faster, not to win more. Thin (3 wins) but monotonic against a perfect
+   control. **Keep the frozen-adapter control in future designs** — it is what
+   made a small effect legible.
+2. **Category effect dominates everything, 40x.** household 0.1197 vs food
+   0.0028 vs animal 0.0030, on 3,024 episodes. Same prompt, same target: the
+   model's obscurity ladder is shallow for household objects and near-vertical
+   for animals/food. Any v7-lineage conclusion drawn without a per-category
+   split is unsafe.
+3. **The flat target INVERTS its own intent at extremes.** `prompts.py:81-87`
+   states the percentage then immediately adds a hardcoded aim-for-the-middle
+   clause ("not so obvious it is named in a few questions") that does not scale
+   with `target_rate`. At 0.90 the two directly contradict, and the creator
+   obeys the imperative over the number — in its own notes: *"known but not
+   universally recognized **like a tiger or elephant**"*, *"isn't immediately
+   obvious"*. It is explicitly rejecting the cow/penguin-class secrets
+   (0.979/0.896 per DESIGN §7.6) that would deliver 90%. Compounding it,
+   `prompts.py:104` bakes `"difficulty": 0.10` into the response template while
+   the prose says 90%; the model's echo flip-flops between the two. Raising the
+   target made the bank HARDER. This is v6 finding #4 (obscurity is
+   reward-optimal) reappearing through a different mechanism.
+4. **Frozen creator x string-level ban manufactures non-words.** The creator
+   mode-collapses onto a favourite; the §6.5b ban blocks the literal string; the
+   model emits a phonetic near-miss rather than a new concept:
+   Okapi -> `Okoupee`/`Okoupes`/`Okoupy`/`Okoupi`, Spatula -> `Spatuloid`,
+   Fenugreek -> `Fennugel`, Sunchoke -> `Sunchyon`. 8 of 193 distinct secrets
+   were corruptions or category errors (`Cardiogram` declared as food).
+   The v6 arms race (finding #3) is the precedent — `Sunchyon` PLAYED there too
+   — but v6 recovered ("from iter 37, diverse slates with zero voids") because
+   its creator was TRAINING. **A frozen creator cannot self-correct, so the
+   collapse is permanent.** This interaction is not anticipated in DESIGN §7.3,
+   which treats freezing as purely skipping updates.
+5. **`fail_open` converts judge failures into valid secrets — and the failures
+   correlate with the corruptions.** 21/206 validity calls (10.2%) produced no
+   parseable `VERDICT:`, so `judge.py:112` passed them. Two modes: role-playing
+   the guesser (`Axolotl -> "1. Is it a mammal?"` — the known flakiness
+   `fail_open` was built for) and, on unrecognised words, free-associating a
+   real one (`Okoupi -> "maraca"`, `Sunchoke -> "maritime"`, `Cardoon ->
+   "maroon"`, `Spatuloid -> "marbles"`). The fail-open rationale is inverted
+   here: it fails open exactly where the secret is invalid.
+6. **Corrupted secrets play 16 episodes against an incoherent oracle.** With no
+   referent the answerer self-contradicts inside one game —
+   *"Okoupee is a type of antelope"* then *"'Okoupee' is a fictional creature"*
+   — and leaks the secret (*"(The secret is Okoupee, an animal.)"*). This is
+   label noise in the training signal, not a hard game.
+   Evidence: `q-v7-solveronly-flat90-terminal.transcript.txt:90035-90731`.
+7. **The i.i.d. category sampler fabricates trends.** `trainer.py:581` is
+   `rng.choice(categories)` with no balancing. This run drew food 8x in
+   iterations 0-9 and household 5x in 10-20, producing an apparent
+   0.020 -> 0.058 first-half/second-half "improvement" that is **pure mix
+   artifact**. Recorded because it looks like learning in the log and is not.
+8. **Rank-0 exhaustion (benign).** Household rank 0 went 0.88 -> 0.81 -> 0.00 ->
+   0.00 as obvious items entered the 128-secret window. Winnable secrets
+   relocate to other ranks and round means held 0.02-0.22, so total winnability
+   is preserved — consistent with §7.4's claim that rank no longer implies a
+   ramp. Round-to-round `guess%` variance on a 10-secret bank is large enough
+   (household spanned 0.02-0.22) that **no trend should be read from it**;
+   judge on validation and pooled aggregates only.
+9. **`credit: terminal` does NOT free the ensemble footprint.** `trainer.py:461`
+   (validation path) calls `_ensemble_potentials()` with no
+   `credit == "ensemble"` guard, unlike the guarded training path at
+   `trainer.py:881`. All 4 models load and score every history prefix, then get
+   multiplied by `w_ensemble=0.0`. Numerically inert (validation `dense=+0.000`)
+   but costs load time and validation compute. The claim to the contrary in the
+   v7 config header has been corrected in place.
+
+**Recommended fixes (priority order):**
+
+*Tier 1 — data integrity; without these a rerun trains on garbage*
+
+- Stop retry emitting non-words: validate the masked-retry output and DROP the
+  secret on failure, or set `repeat_handling: void` (skip the resample entirely).
+- `secret_validity: fail_closed`, ideally with retry-once-then-reject on the
+  judge call so genuine role-play flakiness is still recovered.
+- Fix the judge prompt: it still reads *"Think briefly, then end with exactly
+  one line: VERDICT:"* while `judge_thinking: false` bans reasoning at the
+  decoder — the contradiction DESIGN §8.3 identified and resolved only on the
+  decoder side. Note the evidence says unfamiliarity, not the thinking ban, is
+  the primary trigger for finding #5, so treat this as removing a known
+  contradiction rather than as the fix.
+
+*Tier 2 — required for the experiment to mean anything*
+
+- Make the flat dictation scale with `target_rate` (high target -> "common,
+  immediately recognizable"; low -> "obscure"; middle language only near 0.5),
+  and drop or correct the hardcoded `difficulty` in the response template.
+- Until that lands, **0.50 is the safer target** — the middle-clause is
+  accidentally correct there, which is why the original config specified it.
+- Balance the category draw (round-robin or stratified) and always report
+  per-category.
+
+*Tier 3*
+
+- Guard `trainer.py:461` on `credit == "ensemble"` to reclaim the 4-model
+  footprint.
+- Shorten `recent_secret_window` (128 -> ~32) for frozen-creator runs
+  specifically: a fixed repertoire plus a long window guarantees the collisions
+  that feed finding #4.
+- Enforce creator-side exclusion of validation entries (v6 finding #6, still
+  unfixed — `pangolin` and `penguin` recurred as training secrets here).
+
+**Design note.** v7 removed three confounds at once and introduced a fourth
+(frozen creator x repeat ban -> corrupted data). Suggested next step: rerun
+**household-only**, the one category where the machinery demonstrably works, to
+get a clean read on whether the solver improves at WINNING at all before
+reintroducing animals/food.
+
+Artifacts: `tq-runs/q-v7-solveronly-flat90-terminal.{jsonl,rewards.jsonl,console.log}`
++ transcript tree; checkpoints `checkpoints/twentyq-v7-solveronly/adapter_{A,B}_step{10,20}.safetensors`
+(resume with `--resume-step 20`).

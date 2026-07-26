@@ -1,0 +1,181 @@
+# 21-questions v7 — SOLVER-ONLY against a stationary, uniformly-pitched bank.
+#
+# The question this run exists to answer: can gemma-4-E2B improve at 21
+# questions AT ALL when the distribution it trains on stops moving and stops
+# being mostly unwinnable? v6 (q-fullv6-ctrl-ensemble, 60 iters) trained the
+# solver in-distribution (first-10 win rate 0.040 -> last-10 0.089) with no
+# measurable transfer to the stationary validation set (2,0,2,1,3,2,2 wins
+# across steps 0..60), while the dense ensemble proxy rose steadily
+# (0.575 -> 0.616). Three things were confounded in that result: a co-adapting
+# creator, a difficulty ramp that spends most ranks on unwinnable games, and a
+# dense proxy whose fixed point (ensemble legibility) is not winning.
+#
+# This config removes all three at once, deliberately — it is a diagnostic, not
+# an arm of the v6 matrix:
+#   1. freeze_creator      the creator/answerer takes no GRPO step. From a cold
+#                          start its LoRA is zero-init (identity), so the
+#                          opponent IS the frozen base model for the whole run:
+#                          a stationary secret generator and a stationary
+#                          oracle. Nothing the solver does can move it.
+#   2. difficulty_mode     flat @ 0.90 — every rank is asked for a secret the
+#      + flat_target_rate  guesser wins about nine times in ten (dictated
+#                          difficulty 1-0.90 = 0.10), instead of the 0.9 -> 0.1
+#                          ramp whose hard ranks are unwinnable for this base
+#                          model. This is deliberately the EASY end: the run's
+#                          binding constraint is GRPO group variance under
+#                          terminal credit, where wins are the scarce outcome,
+#                          so the bank is pitched to manufacture them.
+#                          Caveat, recorded so it is not rediscovered: 0.90
+#                          sits at the TOP of the measured reachable range, not
+#                          interior to it. The base-sampler probe put only cow
+#                          (0.979) and penguin (0.896) at or above 0.90, with
+#                          12 of 24 validation secrets at exactly 0.000
+#                          (television 0.458, bread 0.333, banana 0.271 are the
+#                          frontier band a 0.50 target selects instead). So the
+#                          creator's calibration gradient is effectively
+#                          ONE-SIDED ("as easy as possible") — the hazard
+#                          §7.6 names. That is moot here ONLY because
+#                          freeze_creator makes creator reward measurement-only
+#                          and never an update; the operative effect of the
+#                          rate in this run is on the PROMPT the frozen base
+#                          model sees. Revisit the rate before running this
+#                          config with an unfrozen creator.
+#                          See DESIGN §7.6 and tq-runs/probe-base-sampling-v1.json.
+#   3. credit: terminal    no ensemble. The solver is trained on the sparse
+#                          outcome alone, so an improvement here is an
+#                          improvement at WINNING, not at legibility. This is
+#                          the credit scheme that starved in v5 (3.4% win rate,
+#                          49/57 all-loss GRPO groups) — the flat-0.90 bank is
+#                          precisely the fix for that starvation, and whether it
+#                          restores group variance is the thing to watch. Note
+#                          an easy bank can starve GRPO from the OTHER side too:
+#                          an all-WIN group has exactly as little advantage
+#                          variance as an all-loss one. Watch
+#                          guess_rates_by_rank for saturation at 1.0, not just
+#                          at 0.0.
+#
+# Read the run as a success only if the VALIDATION guess rate for adapter B
+# rises. Training win rate rising alone reproduces v6 and means nothing.
+#
+# Everything else is held at v6 values (N=10, K=16, T=21, lr, kl_beta,
+# adv_mode, microbatch) so the two runs stay comparable. Two known caveats,
+# both inherited and both unchanged on purpose:
+#   - Sampling still inherits top_k=64 from the model's generation_config
+#     (DESIGN §6.9); there is no config surface for it yet, so pinning it here
+#     would be a silent divergence from v6.
+#   - Validation uses the v2 set (24 secrets). It is a strict superset of v1
+#     with ids preserved, so the v1 subset stays directly comparable to the v6
+#     series while the extra 12 secrets tighten the estimate.
+#
+# Launch:
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-v7-solver-only.yaml \
+#   --run-name q-v7-solveronly-flat90-terminal \
+#   --checkpoints-dir checkpoints/twentyq-v7-solveronly
+#
+# Sanity arm (only if the flat bank turns out to be reachable but the solver
+# still flatlines): same config with --difficulty-mode gradient, which isolates
+# the bank from the credit scheme.
+
+compute:
+  backend: torch
+  device: cuda
+  dtype: bfloat16
+  attn_impl: sdpa
+  tf32: true
+  matmul_precision: high
+  compile: false
+  grad_checkpointing: false
+
+model:
+  path: ~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/snapshots/9dbdf8a839e4e9e0eb56ed80cc8886661d3817cf
+  enable_thinking: false
+
+lora:
+  num_layers: 16
+  rank: 64
+  alpha: 128.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+
+twentyq:
+  n_secrets: 10
+  episodes_per_secret: 16
+  max_turns: 21
+  categories: ["animal", "food", "household object"]
+  recent_secret_window: 128
+  repeat_handling: retry
+  repeat_gate_reward: 0.0
+
+  # --- the three diagnostic levers (DESIGN §7) ---
+  freeze_creator: true
+  freeze_solver: false
+  difficulty_mode: flat
+  flat_target_rate: 0.9
+  credit: terminal
+
+  # No ensemble members are listed, so credit=terminal never uses the scorer for
+  # REWARD (w_ensemble: 0.0 -> dense contributes exactly 0.000).
+  # It does NOT free the ~4-model footprint, contrary to an earlier note here:
+  # trainer.py:461, in the VALIDATION path, calls _ensemble_potentials()
+  # unconditionally — no credit=="ensemble" guard, unlike the training path at
+  # trainer.py:881. So validation still loads the default 4-model roster onto
+  # cuda and scores every history prefix, then multiplies it by w_ensemble=0.0.
+  # Measured, not inferred: the scrapped flat-0.50 launch logged
+  # "[ensemble] 4 models resident on cuda" and validation dense=+0.000 at
+  # peak_mem_gb=43.21. Numerically inert, so it is left alone here rather than
+  # patched mid-experiment; it costs load time + validation compute only.
+  gamma: 1.0
+  w_ensemble: 0.0
+
+  w_guess: 1.0
+  w_efficiency: 0.5
+  w_close: 0
+  w_format: 0.5
+  secret_validity: fail_open
+
+  creator_thinking: false
+  guesser_thinking: false
+  answerer_thinking: false
+  judge_thinking: false
+  secret_max_tokens: 512
+  question_max_tokens: 512
+  answer_max_tokens: 512
+  generation_batch_size: 16
+  ensemble_batch_size: 4
+
+  validation_every: 10
+  validation_secret_set: data/twentyq-validation-v2.json
+  validation_max_turns: 21
+  reward_log: true
+
+# Ignored in flat difficulty_mode (kept so a --difficulty-mode gradient
+# override reproduces the v6 band exactly).
+rewards:
+  target_hi: 0.9
+  target_lo: 0.1
+
+# No rotation: freezing is by ROLE, so a swap would hand the frozen role to the
+# other adapter and both would end up training. Must stay 0 for this run.
+roles:
+  swap_interval: 0
+  warmup_iterations: 0
+  injection_rate: 0.0
+
+train:
+  iters: 60
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  adv_mode: mean
+  grpo_microbatch: 1
+  logit_chunk: 0
+  checkpoint_every: 10
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints/twentyq
+  runs: tq-runs

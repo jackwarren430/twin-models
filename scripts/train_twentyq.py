@@ -61,6 +61,24 @@ def main() -> None:
                          "measurement only; void = repeat rollouts get no episodes "
                          "and the repeat-gate reward; retry = void + one masked "
                          "resample with excluded secrets banned at the logits level)")
+    # Frozen roles + difficulty dictation (DESIGN §7). Both freeze flags accept
+    # an explicit --no- form so a config default can be turned off per-arm.
+    ap.add_argument("--freeze-creator", action=argparse.BooleanOptionalAction,
+                    default=None,
+                    help="override twentyq.freeze_creator: the creator role "
+                         "plays and is scored but takes no GRPO update")
+    ap.add_argument("--freeze-solver", action=argparse.BooleanOptionalAction,
+                    default=None,
+                    help="override twentyq.freeze_solver: the solver role plays "
+                         "and is scored but takes no GRPO update (also skips "
+                         "the ensemble's dense scoring entirely)")
+    ap.add_argument("--difficulty-mode", choices=["gradient", "flat"],
+                    default=None,
+                    help="override twentyq.difficulty_mode (gradient = the "
+                         "easy->hard ramp across ranks; flat = one target "
+                         "guess rate for every rank)")
+    ap.add_argument("--flat-target-rate", type=float, default=None,
+                    help="override twentyq.flat_target_rate (flat mode only)")
     ap.add_argument("--checkpoints-dir", default=None,
                     help="override paths.checkpoints (keep arms from clobbering)")
     args = ap.parse_args()
@@ -76,8 +94,29 @@ def main() -> None:
         cfg.twentyq.secret_validity = args.secret_validity
     if args.repeat_handling is not None:
         cfg.twentyq.repeat_handling = args.repeat_handling
+    if args.freeze_creator is not None:
+        cfg.twentyq.freeze_creator = args.freeze_creator
+    if args.freeze_solver is not None:
+        cfg.twentyq.freeze_solver = args.freeze_solver
+    if args.difficulty_mode is not None:
+        cfg.twentyq.difficulty_mode = args.difficulty_mode
+    if args.flat_target_rate is not None:
+        cfg.twentyq.flat_target_rate = args.flat_target_rate
     if args.checkpoints_dir is not None:
         cfg.paths.checkpoints = args.checkpoints_dir
+    if cfg.twentyq.freeze_creator and cfg.twentyq.freeze_solver:
+        print("WARNING: both roles frozen — this run plays and measures games "
+              "but trains nothing.")
+    elif ((cfg.twentyq.freeze_creator or cfg.twentyq.freeze_solver)
+            and cfg.roles.swap_interval):
+        # Freezing is by ROLE: under rotation the frozen role changes hands at
+        # every swap, so BOTH adapters still train (each while it plays the
+        # unfrozen role) — almost never what a freeze is meant to express.
+        frozen = "creator" if cfg.twentyq.freeze_creator else "solver"
+        print(f"WARNING: freeze_{frozen}=true with roles.swap_interval="
+              f"{cfg.roles.swap_interval}: freezing is BY ROLE, so both "
+              "adapters will still be updated (each while it plays the "
+              "unfrozen role). Use --swap-interval 0 to freeze one adapter.")
     run_name = args.run_name or ("q-" + time.strftime("%Y%m%d-%H%M%S"))
     log_path = Path(cfg.paths.runs) / f"{run_name}.jsonl"
     resume_log = Path(args.resume_log) if args.resume_log else log_path
@@ -116,6 +155,10 @@ def main() -> None:
                                          "generation_batch_size": cfg.twentyq.generation_batch_size,
                                          "ensemble_batch_size": cfg.twentyq.ensemble_batch_size,
                                          "swap_interval": cfg.roles.swap_interval,
+                                         "difficulty_mode": cfg.twentyq.difficulty_mode,
+                                         "flat_target_rate": cfg.twentyq.flat_target_rate,
+                                         "freeze_creator": cfg.twentyq.freeze_creator,
+                                         "freeze_solver": cfg.twentyq.freeze_solver,
                                          "resume_step": start_iter})
     reward_logger = None
     reward_log_path = None
@@ -156,6 +199,10 @@ def main() -> None:
             "ensemble_batch_size": cfg.twentyq.ensemble_batch_size,
             "validation_every": cfg.twentyq.validation_every,
             "validation_secret_set": cfg.twentyq.validation_secret_set,
+            "difficulty_mode": cfg.twentyq.difficulty_mode,
+            "flat_target_rate": cfg.twentyq.flat_target_rate,
+            "freeze_creator": cfg.twentyq.freeze_creator,
+            "freeze_solver": cfg.twentyq.freeze_solver,
             "resume_step": start_iter})
         print(f"Transcript tree: {tree_root}/")
     trainer = TwentyQTrainer(base, adapters, cfg, logger=logger,
@@ -175,7 +222,16 @@ def main() -> None:
     print(
         "TwentyQ batching: "
         f"generation={cfg.twentyq.generation_batch_size}, "
-        f"ensemble={cfg.twentyq.ensemble_batch_size}\n"
+        f"ensemble={cfg.twentyq.ensemble_batch_size}"
+    )
+    difficulty = cfg.twentyq.difficulty_mode
+    if difficulty == "flat":
+        difficulty += f" @ {cfg.twentyq.flat_target_rate:.2f} target guess rate"
+    print(
+        f"TwentyQ updates: "
+        f"creator={'FROZEN' if cfg.twentyq.freeze_creator else 'training'}, "
+        f"solver={'FROZEN' if cfg.twentyq.freeze_solver else 'training'} | "
+        f"difficulty={difficulty}\n"
     )
 
     def log_reward_signals(record, *, validation: bool = False):

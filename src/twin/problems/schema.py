@@ -111,9 +111,16 @@ class ProblemSuite:
         return list(np.linspace(hi, lo, n))
 
     # ----- validation ------------------------------------------------------
-    def validate(self, *, min_n: int = 2, max_n: int = 20) -> list[str]:
+    def validate(self, *, min_n: int = 2, max_n: int = 20,
+                 min_spread: float = 0.3) -> list[str]:
         """Return a list of issues (empty == valid). Used by the parse gate and
-        the creator's validity-shaping reward."""
+        the creator's validity-shaping reward.
+
+        ``min_spread`` is the anti-collapse requirement on dictated difficulty
+        (hardest - easiest). It presumes a RAMPED suite; a deliberately flat
+        bank (twentyq.difficulty_mode="flat", where every rank is dictated the
+        same difficulty by construction) must pass ``min_spread=0.0`` or every
+        one of its problems silently loses the validity term (DESIGN §7.5)."""
         issues: list[str] = []
         n = len(self.problems)
         if n < min_n:
@@ -126,16 +133,18 @@ class ProblemSuite:
             if not p.statement.strip():
                 issues.append(f"problem {i} has empty statement")
         # Want a genuine spread, not all-easy / all-hard (anti-collapse).
-        if n >= 2:
+        if n >= 2 and min_spread > 0:
             diffs = [p.difficulty for p in self.problems]
-            if max(diffs) - min(diffs) < 0.3:
+            if max(diffs) - min(diffs) < min_spread:
                 issues.append(
-                    f"difficulty spread too small: {max(diffs) - min(diffs):.2f} < 0.30"
+                    f"difficulty spread too small: {max(diffs) - min(diffs):.2f} "
+                    f"< {min_spread:.2f}"
                 )
         return issues
 
-    def is_valid(self, *, min_n: int = 2, max_n: int = 20) -> bool:
-        return not self.validate(min_n=min_n, max_n=max_n)
+    def is_valid(self, *, min_n: int = 2, max_n: int = 20,
+                 min_spread: float = 0.3) -> bool:
+        return not self.validate(min_n=min_n, max_n=max_n, min_spread=min_spread)
 
     # ----- serialization ---------------------------------------------------
     def to_dict(self) -> dict[str, Any]:

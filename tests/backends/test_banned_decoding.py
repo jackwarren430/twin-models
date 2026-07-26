@@ -5,6 +5,7 @@
 
 import torch
 
+from twin.think import THINK_OPEN_MARKERS
 from twin.backends.torch_backend import (
     BannedStringsProcessor,
     TorchTwinBase,
@@ -172,3 +173,52 @@ def test_generate_and_batch_default_to_no_ban():
     b.generate("hi", temp=0.7)
     b.generate_batch(["hi", "yo"], temp=0.7)
     assert all(c["logits_processor"] is None for c in b.model.calls)
+
+
+# ----- thinking suppression (DESIGN §8) ---------------------------------------
+
+def test_suppress_thinking_bans_markers_exactly_without_variant_expansion():
+    tok = _CharTok()
+    proc = BannedStringsProcessor(tok, ["<think>"], prompt_len=0,
+                                  expand_variants=False)
+    # Literal control tokens only: no plural, no leading-space, no Title-case
+    # spellings that could never occur.
+    assert proc.phrases == ["<think>"]
+    # It still bans at the string level: after "<think", '>' completes it.
+    ids = torch.tensor([[ord(c) for c in "<think"]])
+    scores = proc(ids, _scores(tok))
+    assert scores[0, ord(">")] == float("-inf")
+    assert scores[0, ord("k")] == 0.0
+
+
+def test_expand_variants_default_still_expands():
+    proc = BannedStringsProcessor(_CharTok(), ["Okapi"], prompt_len=0)
+    assert "okapi" in proc.phrases and "okapis" in proc.phrases
+
+
+def test_generate_batch_installs_a_thinking_processor():
+    b = _stub_base()
+    b.generate_batch(["hi"], temp=0.7, suppress_thinking=True)
+    procs = b.model.calls[0]["logits_processor"]
+    assert procs is not None and len(procs) == 1
+    # Every open marker the codebase knows about, unexpanded.
+    assert set(procs[0].phrases) == {m.casefold() for m in THINK_OPEN_MARKERS}
+
+
+def test_thinking_and_secret_bans_are_separate_processors():
+    """The secret ban wants surface variants; the marker ban must not have
+    them — so they cannot share one processor."""
+    b = _stub_base()
+    b.generate_batch(["hi"], temp=0.7, banned_strings=["Okapi"],
+                     suppress_thinking=True)
+    procs = b.model.calls[0]["logits_processor"]
+    assert len(procs) == 2
+    secret, thinking = procs[0], procs[1]
+    assert "okapis" in secret.phrases                      # expanded
+    assert set(thinking.phrases) == {m.casefold() for m in THINK_OPEN_MARKERS}
+
+
+def test_generate_defaults_to_thinking_unsuppressed():
+    b = _stub_base()
+    b.generate("hi", temp=0.7)
+    assert b.model.calls[0]["logits_processor"] is None

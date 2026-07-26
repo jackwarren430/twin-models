@@ -1068,3 +1068,275 @@ by_category}' tq-runs/probe-base-sampling-v1.json`. The snapshot's shipped
 sampler: `cat ~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/
 snapshots/9dbdf8a.../generation_config.json`. Closeout context:
 EXPERIMENTS.md "exp-fullv6 RESULTS" findings 5–6 (commit 506ade1).
+
+---
+
+## 7. Frozen roles and flat-rate difficulty (2026-07-25)
+
+Three config levers added so a run can hold parts of the self-play system
+still and ask a narrower question than "does the whole loop work". Motivated
+by the v6 closeout: the solver improved in-distribution (first-10 win rate
+0.040 → last-10 0.089) with no measurable transfer to stationary validation
+(2,0,2,1,3,2,2 wins at steps 0..60) while the dense ensemble proxy rose
+monotonically (0.575 → 0.616) — a result with at least three live
+explanations (co-adapting creator, a ramp that spends most ranks on
+unwinnable games, a proxy whose fixed point is not winning) that the v6
+design cannot separate.
+
+### 7.1 Config surface
+
+| key | default | meaning |
+|---|---|---|
+| `twentyq.freeze_creator` | `false` | creator role plays and is scored, takes no GRPO step |
+| `twentyq.freeze_solver` | `false` | solver role plays and is scored, takes no GRPO step |
+| `twentyq.difficulty_mode` | `"gradient"` | `gradient` \| `flat` — how per-rank difficulty/target is dictated |
+| `twentyq.flat_target_rate` | `0.5` | flat mode only: the one target guess rate every rank is given |
+
+CLI overrides on `scripts/train_twentyq.py`: `--freeze-creator/--no-freeze-creator`,
+`--freeze-solver/--no-freeze-solver`, `--difficulty-mode`, `--flat-target-rate`.
+All four land in the run-log meta, the transcript-tree meta, and every
+iteration record (`difficulty_mode`, `flat_target_rate`, `frozen: {creator,
+solver}`), so a log identifies its own regime without the config beside it.
+
+### 7.2 Defaults are exactly the v6 behaviour
+
+`difficulty_mode="gradient"` reproduces the historical prompt **byte for
+byte** (verified across 108 category × N × rank × target × exclusion
+combinations against `HEAD:src/twin/games/twentyq/prompts.py`), and both
+freeze flags default off. No existing config changes behaviour.
+
+### 7.3 What freezing skips — and what it does not
+
+A frozen role still generates, is still scored, and still appears in the
+logs. What is skipped is only the work that exists to feed its update:
+
+| | frozen creator | frozen solver |
+|---|---|---|
+| generation | runs | runs |
+| reward computation | runs (pure arithmetic) | runs (pure arithmetic) |
+| trajectory construction | skipped | skipped |
+| base-reference KL pass + policy pass | skipped | skipped |
+| **frozen-ensemble dense scoring** | unaffected | **skipped entirely** |
+
+The asymmetry is the point. Freezing the creator saves ~10 short rollouts of
+GRPO out of an iteration dominated by ~160 episodes of generation and ~3000
+solver turn-trajectories at `grpo_microbatch=1` — its value is
+**experimental** (a stationary opponent *and* a stationary answerer, since
+the creator adapter is also the oracle), not compute. Freezing the solver is
+the real compute lever: the dense potentials exist only to build solver
+returns, so a frozen solver skips K·(T+1) scored histories per secret across
+every ensemble member and never loads the ensemble at all.
+
+Episodes still run under a frozen solver because the creator's calibration
+reward is measured *from* their guess rates. The terminal component trace is
+still built (zero potentials, pure arithmetic) so `reward_signals` keeps the
+shape every log reader expects; `dense_*` fields read 0.
+
+`creator_reward_mean` is now measured over the per-rollout rewards rather
+than the trajectories, so a frozen creator reports its real calibration mean
+instead of 0. Skipped updates log `{"n_traj": 0, ..., "frozen": true}` — a
+skipped step is never confusable with a step that ran to a zero loss.
+
+**Freezing is by ROLE, not by adapter name.** Whichever adapter plays the
+frozen role that iteration is not updated, so under rotation both adapters
+still train (each while it plays the unfrozen role) — almost never what a
+freeze is meant to express. The launch script warns when a freeze flag is
+combined with `roles.swap_interval > 0`, and warns separately when both roles
+are frozen (a play-and-measure run that trains nothing — a legitimate mode).
+
+### 7.4 Flat-rate difficulty
+
+Gradient mode dictates rank *i* difficulty `i/(N−1)` and a target guess rate
+from the `rewards.target_hi → target_lo` ramp. Flat mode dictates the same
+target (`flat_target_rate`) and the same difficulty (`1 − rate`) to every
+rank, so an iteration asks for a uniformly-pitched *bank* instead of a
+ladder.
+
+The reward needs no new machinery. `creator_problem_rewards` already scores
+each secret against the target its own rollout was **prompted** with
+(`target_by_problem`, the "prompt targets == reward targets" invariant from
+§6.1), so flat mode only makes that vector constant:
+`R_i = w_grad·exp(−β·(p_i − t)²) + w_cons·consistent_i + w_valid·valid`. The
+per-secret GRPO group, its mean baseline, the exclusion list, the repeat
+gate, and the parse/validity gates are all untouched. Advantage variance
+survives — with one shared target the group ranks secrets by *how close to
+t* they landed, which is a cleaner comparison than the ramp's (each rank
+judged against a different target).
+
+Round framing and the exclusion block are unchanged in flat mode, so the
+creator still sees its recent and current-round picks and repeat handling
+behaves identically. The rank number now orders the round without implying a
+ramp.
+
+### 7.5 The difficulty-spread trap (found during implementation, fixed)
+
+`ProblemSuite.validate()` carries an anti-collapse rule: a suite whose
+hardest and easiest dictated difficulty differ by < 0.3 is INVALID. Flat mode
+dictates one difficulty to every rank by construction, so every flat suite
+would have failed it — silently zeroing the `w_valid` term on every secret
+(a constant shift, so advantages under `adv_mode=mean` are unaffected, but
+reward *levels* would have looked like a regression against v6 for a reason
+found nowhere in the diff).
+
+Fix: `validate`/`is_valid` take `min_spread` (default `0.3`, unchanged), and
+the trainer passes `min_spread=0.0` in flat mode and the explicit result to
+both `creator_problem_rewards(valid=...)` and `creator_reward(valid=...)`.
+Gradient mode is unaffected. Regression-tested by
+`test_flat_mode_keeps_the_validity_term_despite_zero_difficulty_spread`.
+
+### 7.6 Is a flat 50% target reachable? (raw data)
+
+A flat target above the solver's ceiling would turn calibration into a
+one-sided "as easy as possible" gradient. It is not: base-model per-secret
+win rates, 48 episodes each (pooled over the 6 sampler arms of the §6.9
+probe, `tq-runs/probe-base-sampling-v1.json`):
+
+| secret | label | win rate | best arm |
+|---|---|---|---|
+| cow | 0.15 | **0.979** | 1.000 |
+| penguin | 0.35 | **0.896** | 1.000 |
+| television | 0.15 | 0.458 | 0.625 |
+| bread | 0.15 | 0.333 | 0.500 |
+| banana | 0.15 | 0.271 | 0.625 |
+| refrigerator | 0.15 | 0.062 | 0.250 |
+| giraffe | 0.15 | 0.042 | 0.125 |
+| scissors, pizza, hummus | — | 0.021 | 0.125 |
+| the other 15 | — | 0.000 | 0.000 |
+
+0.50 is comfortably interior, so the calibration gradient is two-sided.
+Two real caveats: (a) the achievable distribution is **bimodal** — 12 of 24
+secrets sit at exactly 0.000 and two above 0.89, with only
+television/bread/banana in between — so a flat 0.50 target selects precisely
+for that narrow frontier band, which is the desired curriculum but a coarse
+(flat-with-cliffs) learning signal for the creator; (b) at K=16 a true-0.50
+secret is measured with SE ±0.125, and `exp(−4(p−t)²)` pays ~0.94 for pure
+sampling noise, so flat-mode creator credit is noisy at the target. Neither
+matters while the creator is frozen. Note also that the §6.9 finding stands:
+the authored difficulty labels do not track winnability (cow 0.15 → 0.979 vs
+giraffe 0.15 → 0.042), so this table, not the label, is the reachability
+reference.
+
+**Reproduce:** the per-secret table is a pooled regroup of the probe's raw
+rows — `jq '[.settings[].episodes[]] | group_by(.secret) | map({secret:
+.[0].secret, n: length, wins: map(select(.guessed)) | length})'
+tq-runs/probe-base-sampling-v1.json`.
+
+### 7.7 First run using this: `configs/twentyq-v7-solver-only.yaml`
+
+Solver-only, no rotation, flat @ 0.50, `credit: terminal` (no ensemble) —
+the three v6 confounds removed at once, deliberately, as a diagnostic rather
+than a matrix arm. From a cold start the frozen creator's LoRA is zero-init,
+so the opponent *is* the frozen base model for the whole run. Everything
+else is held at v6 values (N=10, K=16, T=21, lr, kl_beta, adv_mode,
+microbatch); validation moves to the v2 24-secret set, a strict superset of
+v1 with ids preserved, so the v1 subset stays comparable to the v6 series.
+Sampling still inherits `top_k=64` (§6.9) — there is no config surface for
+it, and pinning it here would silently diverge from v6.
+
+**Read it as a success only if adapter B's VALIDATION guess rate rises.** A
+rising training win rate alone reproduces v6 and means nothing. `credit:
+terminal` is also the scheme that starved in v5 (3.4% win rate, 49/57
+all-loss GRPO groups); whether the flat-0.50 bank restores group outcome
+variance is the second thing to watch, visible directly as
+`guess_rates_by_rank` sitting off 0.0/1.0.
+
+**Verify the implementation:** `.venv/bin/python -m pytest tests/twentyq -q`
+(covers frozen-role skips, ensemble-skip under a frozen solver, flat targets
+and prompts, the validity-spread fix, and gradient-mode prompt invariance).
+
+---
+
+## 8. Thinking control: config-consistent, decode-enforced (2026-07-25)
+
+`enable_thinking` was a *request*, not a guarantee. A chat template's
+`enable_thinking=False` only declines to INVITE reasoning — nothing stops the
+model opening a reasoning span anyway, and gemma-4-E2B sometimes did. The
+flag is now enforced in two halves, resolved in one place
+(`BaseTrainer._generate` / `_generate_batch` / `_judge`):
+
+1. **template** — `render(..., enable_thinking=think)`, as before. In gemma-4's
+   template this injects `<|think|>` at the top of the system turn; in Qwen3's
+   it switches the `<think>` convention.
+2. **decoder** — when thinking is off, `suppress_thinking=True` bans the
+   reasoning-open markers (`twin.think.THINK_OPEN_MARKERS`) at the logits
+   level via `BannedStringsProcessor`, the same string-level mechanism the
+   §6.5b repeat gate uses. The model *cannot* begin a trace under any BPE
+   segmentation.
+
+`twin.think.THINK_SPANS` is now the single definition of "thinking": the same
+literal markers drive `strip_think`, `think_share`, `think_text`, and the
+decode-level ban, so suppression and telemetry cannot drift apart. Adding a
+model family = adding one `(open, close)` pair.
+
+### 8.1 What is and is not guaranteed
+
+**Guaranteed:** no marker-delimited reasoning span (`<think>…</think>`,
+`<|channel>…<channel|>`) when thinking is off. **Not guaranteed:** that the
+model never deliberates in *plain prose* before its contract line — banning
+control tokens cannot forbid ordinary text, and shouldn't. Prose rambling is
+a prompt/contract problem (§6.8), not a thinking-flag problem.
+
+The ON direction is weaker by nature: you can invite reasoning, you cannot
+compel it. The template flag is the model's designed switch; the probe below
+verifies it actually fires rather than assuming it.
+
+**Backends:** enforcement is torch-only. MLX generation goes through
+`make_sampler`, which has no logits-processor hook, so `suppress_thinking`
+there warns once per process (`RuntimeWarning`) and applies the template flag
+alone. It warns rather than raises because thinking is off by default and
+raising would break every MLX run. The Spark runs torch, so twentyq gets the
+hard guarantee.
+
+### 8.2 Measured on the real model (Spark, gemma-4-E2B)
+
+`scripts/probe_thinking_suppression.py`, 8 samples/arm, raw results in
+`tq-runs/probe-thinking-suppression.json`:
+
+| role | arm | markers | think_share | completion tokens |
+|---|---|---|---|---|
+| answerer | off (suppressed) | 0/8 | 0.000 | 4 |
+| answerer | on | 8/8 | 0.970 | 96 |
+| answerer | historical (v1..v6) | 0/8 | 0.000 | 4 |
+| guesser | off (suppressed) | 0/8 | 0.000 | 9 |
+| guesser | on | 8/8 | 0.968 | 279 |
+| guesser | historical (v1..v6) | 0/8 | 0.000 | 9 |
+
+Both directions hold: OFF is clean, ON thinks. Note the cost of thinking when
+it IS wanted — a guesser turn goes 9 → 279 tokens, so `question_max_tokens`
+would have to grow before `guesser_thinking: true` is survivable (the
+q-shakeout-01 truncation spiral).
+
+### 8.3 How often did this actually bite? (honest answer: rarely)
+
+The `historical` arm is identical to the suppressed one, so on twentyq's
+prompt paths the base model does **not** think unbidden at meaningful rates —
+this change is a guarantee, not a rescue, and it does not move the v6
+baseline. The live rate over the whole 60-iteration v6 run
+(`tq-runs/q-fullv6-ctrl-ensemble.transcript.txt`, 482,060 lines):
+
+- `guesser_think_share` / `creator_think_share` logged **0.000** every
+  iteration (max 0.001).
+- **10** `<|channel>` occurrences total. **7 were the JUDGE** — whose prompt
+  literally says *"Think briefly, then end with exactly one line: VERDICT:"*,
+  i.e. the prompt invited exactly what `judge_thinking: false` forbade. That
+  contradiction is now resolved in favour of the config.
+- **2 were guesser turns, and both became `[format_fail]`** — out of 1,283
+  format fails, so ~0.2% of them. A real but minor cause, now removed.
+
+Verify: `grep -c '<|channel>' tq-runs/q-fullv6-ctrl-ensemble.transcript.txt`,
+and `grep -B3 '<|channel>'` for the role context.
+
+### 8.4 Transcript: an "answerer thoughts" block
+
+The episode file renders, in order: `answerer SYSTEM prompt` (collapsed),
+`answerer USER prompt` (collapsed), `**answerer output**` with the raw
+completion, then a collapsed **`answerer thoughts`** block holding the
+reasoning content extracted by `twin.think.think_text`. The block is *absent*,
+not empty, when the model did not think — so its presence is itself the
+signal. An unclosed span (a truncation spiral) is shown to its end rather than
+dropped for lacking a close tag, and gemma's `thought` channel label is
+stripped so the block starts at real reasoning.
+
+**Verify:** `.venv/bin/python -m pytest tests/test_think_control.py
+tests/backends/test_banned_decoding.py tests/twentyq/test_q_transcript_tree.py -q`
+and, on the Spark, `.venv/bin/python -u scripts/probe_thinking_suppression.py`.
