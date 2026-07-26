@@ -23,7 +23,10 @@ for spec in \
   "unsloth/Llama-3.2-3B-Instruct|llama32"
 do
   model="${spec%%|*}"; tag="${spec##*|}"
-  run --arms baseline dedup --model "$model" \
+  # Challengers need only `dedup` — the config a run would actually use.
+  # Ranking them on `baseline` too would spend an hour restating that the old
+  # parser mangled their output, which is no longer a property of the system.
+  run --arms dedup --model "$model" \
       --output "tq-runs/probe-headroom-v2-${tag}.json"
 done
 

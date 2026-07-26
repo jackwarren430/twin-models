@@ -1340,3 +1340,127 @@ stripped so the block starts at real reasoning.
 **Verify:** `.venv/bin/python -m pytest tests/test_think_control.py
 tests/backends/test_banned_decoding.py tests/twentyq/test_q_transcript_tree.py -q`
 and, on the Spark, `.venv/bin/python -u scripts/probe_thinking_suppression.py`.
+
+## 9. Turn waste, parse loss, and the group-variance wall (2026-07-26)
+
+Sections 6-8 tuned the reward, the difficulty schedule, and the decode policy.
+This section records what an audit of the v7 run's *transcripts* — rather than
+its metrics — found underneath all of that, and the four changes it forced.
+
+### 9.1 The wall: a GRPO group that cannot vary
+
+A solver GRPO group is the K episodes played on ONE secret (`rewards.
+per_turn_secret_trajectories`, baselined per turn index). Its advantages are
+identically zero when the group is all-win or all-loss. Measured on the v7 base
+model over validation-v2 at K=8 (`scripts/probe_twentyq_headroom.py`):
+
+    usable_group_rate  0.125       3 of 24 secrets had both a win and a loss
+    per-secret wins    cow 8/8, penguin 7/8, television 4/8, bread 1/8,
+                       0/8 for the other twenty
+
+Per-secret win probability is **bimodal**. The variance GRPO needs therefore
+lives *between* secrets, where the per-secret baseline cannot reach it, and not
+*within* one, where it can. Seven eighths of every iteration's compute produced
+no gradient at all.
+
+This subsumes several earlier explanations. v5's "credit starvation" (49/57
+all-loss groups) is this. v6's and v7's flat validation is consistent with this.
+It is not a reward-design problem, and no credit scheme fixes it: `terminal`,
+`ensemble` and `per_turn` all multiply an advantage that is already zero.
+
+§7 proposed difficulty calibration as the fix, and it cannot be, for two
+reasons. The creator is asked to hit a target guess rate for an opponent whose
+competence it cannot observe; and it cannot *learn* calibration while the solver
+it calibrates against is itself untrained. The dependency is circular.
+
+**Resolution — `secret_source: bank`.** Cut the circle on the solver's side
+first, since that is priority one. `scripts/build_twentyq_bank.py` generates
+creator candidates, dedups them with the repeat-gate matcher, vets them
+fail-closed, then *plays* K episodes per candidate and keeps only those whose
+measured win rate lands in a band. At p ∈ [0.125, 0.875] with K=16, ~88% of
+groups carry signal instead of 12%.
+
+The creator adapter still answers, so the twin structure is intact — only
+authorship moves. This is scaffolding with an explicit exit condition: the
+bank's `measured_guess_rate` is exactly the supervision target the creator has
+to learn to hit, and the rates drift as the solver improves, so they must be
+re-measured. Handing authorship back is §10's job.
+
+### 9.2 Parse loss: a fifth of all episodes were deleted, not lost
+
+Sampled v7 episodes ended in `format` 20-25% of the time — an instant `-w_format`
+and a dead episode. Re-parsing all 632 recorded format-failed completions shows
+88.3% carried well-formed intent that the line-anchored contract regexes could
+not see:
+
+    <h3>QUESTION: Is the food animal-based?</h3>      200   markup-wrapped
+    "Is it a nut?"                                    159   quoted question
+    Key lime pie / Taco / Truffle                     238   bare guess
+    Closure: GUESS: clear broth                         -   not line-initial
+
+`parse_guesser_turn` now strips presentation markup (HTML, markdown, LaTeX,
+braces, edge quotes) *before* the contract regexes, accepts non-line-initial
+contract words and U+FF1F, and as a final rung reads a lone short entity as a
+GUESS. That last rung is the *safe* error: a wrong guess costs one turn and play
+continues, whereas a format failure ends the episode. 74 of 632 still fail,
+correctly (prose, empty completions, meta-commentary).
+
+Note this interacts with §9.1: a format failure is always a loss, so parse loss
+was actively pushing groups toward all-loss.
+
+### 9.3 Turn waste: the lock, and why discounting is the wrong fix
+
+Greedy v7 validation transcripts show the guesser locking:
+
+    giraffe  turns 16-19  "Is the animal a hoofed ungulate?" x4   lost
+    penguin  turns 10-19  "Is the animal a parrot?"          x10  WON on turn 20
+
+Two independent mechanisms, deliberately separable:
+
+- `question_retries` (engine): resample a turn whose content-word key
+  duplicates an earlier question or guess in the same episode. Changes the DATA.
+- `w_repeat` (reward): a **local, non-propagating** penalty on a turn that
+  repeated anyway. Changes the GRADIENT.
+
+`w_repeat` is needed because retries are a scaffold, and validation deliberately
+never uses them — measuring under retries would score the scaffold rather than
+the policy.
+
+The locality matters. Under `terminal` credit at γ=1 every turn of a winning
+episode receives the same return, so GRPO reinforced those ten parrot turns
+exactly as hard as the informative ones. Discounting is **not** the fix: the
+lock occupies the LATE turns and the informative questions the early ones, so
+γ<1 moves credit *toward* the repeats. Hence a term that lands on the offending
+turn and nowhere else — winning is a shared property of an episode, but asking a
+question the transcript already answered is a defect of exactly one turn.
+
+Caveat on scope: the lock is prominent under GREEDY decoding. Under the sampled
+decoding training actually uses, measured repeat rate is ~6.6% of turns, and
+§9.2 is the larger effect. Both are fixed; only §9.2 should be expected to move
+the headline number much.
+
+### 9.4 The instrument could not have seen the effect
+
+Validation was 24 GREEDY episodes — one per secret. That metric moves in steps
+of 1/24 = 4.2%, and a 24-flip binomial near p=0.125 has a 95% Wilson interval of
+roughly ±13 points. The v6 series (2,0,2,1,3,2,2 wins across steps 0..60) was
+discussed as a trend, and every point of it is inside every other point's
+interval. **"No transfer to validation" was never established by that data.**
+
+`validation_episodes: K` now samples K games per secret (greedy would replay one
+game K times) through the batched engine, and `guess_rate_ci95` is reported at
+every level. At K=8, n=192 per adapter and the interval is ~±4.5 points.
+
+This is why no result in §§9.1-9.3 should be read as explaining v6's outcome:
+v6's outcome was not measured tightly enough to need explaining.
+
+### 9.5 Confound removed: per-iteration category sampling
+
+v7 drew ONE category per iteration i.i.d. while per-category win rates differ by
+40x (household 0.120, food 0.003, animal 0.003 pooled). The per-iteration
+win-rate series therefore mostly measured which category came up; three separate
+"trends" read off it during that run were sampling artifacts, and each had to be
+retracted. Bank mode draws category-balanced within an iteration
+(`bank_balance_categories`), and the episode loop now uses each SECRET's
+category rather than the iteration's. Per-secret summaries record it, so the
+confound is conditionable-on even where it still exists.
