@@ -56,6 +56,7 @@ from twin.games.twentyq.prompts import (
     answerer_user,
     creator_secret_user,
     guesser_user,
+    secret_json_for_conditioning,
 )
 from twin.games.twentyq.rewards import (
     StepReward,
@@ -454,6 +455,45 @@ class TwentyQTrainer(BaseTrainer):
                 hist.append((q, t.answer))
         return out
 
+    # ----- frontier bank ----------------------------------------------------
+    def _draw_bank_secrets(self, n: int) -> list[Secret]:
+        """Draw ``n`` secrets from the pre-measured frontier bank.
+
+        Sampling is WITHOUT replacement within an iteration (two GRPO groups on
+        the same secret would share an oracle and correlate) and, by default,
+        spread evenly across categories. That second part is not cosmetic: v7
+        drew ONE category per iteration i.i.d., and since per-category win rates
+        differ by 40x (household 0.120 vs food 0.003) the resulting series of
+        per-iteration win rates was dominated by which category came up. Three
+        separate "trends" read off it during that run turned out to be sampling
+        artifacts. Balancing removes the confound at the source.
+        """
+        qcfg = self.cfg.twentyq
+        bank = getattr(self, "_bank", None)
+        if bank is None:
+            _meta, bank = load_validation_secret_set(qcfg.bank_path)
+            if not bank:
+                raise ValueError(f"empty secret bank: {qcfg.bank_path}")
+            self._bank = bank
+        if not qcfg.bank_balance_categories:
+            return self.rng.sample(bank, min(n, len(bank)))
+        by_category: dict[str, list[Secret]] = {}
+        for secret in bank:
+            by_category.setdefault(secret.category, []).append(secret)
+        drawn: list[Secret] = []
+        # Round-robin the categories so a short draw still spans them.
+        order = sorted(by_category)
+        self.rng.shuffle(order)
+        pools = {c: self.rng.sample(by_category[c], len(by_category[c]))
+                 for c in order}
+        while len(drawn) < n and any(pools[c] for c in order):
+            for c in order:
+                if len(drawn) >= n:
+                    break
+                if pools[c]:
+                    drawn.append(pools[c].pop())
+        return drawn
+
     # ----- stationary evaluation -------------------------------------------
     def _validation_episodes(self, adapter: str, secret, max_turns: int):
         """The K validation games for one secret under one adapter.
@@ -756,7 +796,37 @@ class TwentyQTrainer(BaseTrainer):
             secrets.append(secret)
             current_secrets.append(secret.secret)
 
-        for i in range(n):
+        bank_mode = qcfg.secret_source == "bank"
+        if qcfg.secret_source not in ("creator", "bank"):
+            raise ValueError(
+                f"unknown twentyq.secret_source: {qcfg.secret_source!r} "
+                "(expected creator | bank)")
+        if bank_mode and not freeze_creator:
+            # Bank mode produces no creator rollout, so there are no creator
+            # trajectories and nothing for its GRPO step to consume. Failing
+            # loudly beats silently training the creator on an empty group.
+            raise ValueError(
+                "twentyq.secret_source='bank' requires freeze_creator=true: "
+                "the creator authors no secret, so it has no GRPO group")
+
+        if bank_mode:
+            for secret in self._draw_bank_secrets(n):
+                keep_playable({
+                    "rank": len(secrets), "difficulty": secret.difficulty,
+                    "prompt_tokens": None, "completion_tokens": None,
+                    "parsed": True, "playable": False, "repeat": False,
+                    "retry": False, "_user": "(bank)",
+                    "_completion": secret_json_for_conditioning(
+                        secret.secret, secret.category, secret.difficulty),
+                    "secret": secret.secret, "source": "bank",
+                }, secret)
+                sampled_secrets.append(secret.secret)
+                exact_repeats.append(False)
+                normalized_repeats.append(False)
+            targets = [1.0 - s.difficulty for s in secrets]
+
+        # Ranks to generate: empty in bank mode, where secrets came from disk.
+        for i in ([] if bank_mode else range(n)):
             # Flat mode dictates ONE difficulty to every rank (the complement of
             # the shared target rate), so the rank number orders the round
             # without implying a ramp.
@@ -851,7 +921,12 @@ class TwentyQTrainer(BaseTrainer):
                 secret, self._grade, mode=qcfg.secret_validity).correct
             self._tr(f"secret[{si}] '{secret.secret}' valid={valid}")
             summary = {
-                "secret": secret.secret, "difficulty": secret.difficulty,
+                "secret": secret.secret,
+                # Per-secret, because a bank iteration spans categories and the
+                # v7 postmortem's biggest confound was a per-category win-rate
+                # spread that nothing in the record let you condition on.
+                "category": secret.category,
+                "difficulty": secret.difficulty,
                 "target": round(float(targets[playable_ranks[si]]), 3),
                 "valid": bool(valid), "episodes": [],
             }
@@ -864,13 +939,18 @@ class TwentyQTrainer(BaseTrainer):
                 secret_summaries.append(summary)
                 continue
 
+            # The SECRET's category, not the iteration's. Identical in creator
+            # mode (every rank shares the drawn category) but load-bearing in
+            # bank mode, where one iteration deliberately spans categories so a
+            # 40x per-category win-rate spread cannot masquerade as a trend.
+            secret_category = secret.category
             answerer_fn = self._make_answerer(assign.creator, secret)
-            guesser_fn = self._make_guesser(assign.solver, category)
+            guesser_fn = self._make_guesser(assign.solver, secret_category)
             kept_eps, kept_rewards = [], []
             sec_entries: list[dict] = []   # transcript-tree episode entries
             if qcfg.generation_batch_size > 1:
                 episodes = run_episodes_batched(
-                    self._make_guesser_batch(assign.solver, category),
+                    self._make_guesser_batch(assign.solver, secret_category),
                     self._make_answerer_batch(assign.creator, secret),
                     secret,
                     n_episodes=k,
@@ -944,7 +1024,7 @@ class TwentyQTrainer(BaseTrainer):
                     sec_entries.append({
                         "ep": ep, "reward": rew.total, "reward_obj": rew, "phi": phi,
                         "prompts": self._episode_prompts(
-                            ep, secret, category, qcfg.max_turns),
+                            ep, secret, secret_category, qcfg.max_turns),
                     })
 
             if kept_eps:

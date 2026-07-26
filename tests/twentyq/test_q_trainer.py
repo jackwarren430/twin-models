@@ -822,3 +822,119 @@ def test_wilson_ci_brackets_rate_and_never_leaves_unit_interval():
     assert _wilson_ci(0, 24)[0] == 0.0
     assert _wilson_ci(24, 24)[1] == 1.0
     assert _wilson_ci(0, 0) == (0.0, 0.0)
+
+
+# ----- frontier bank as the secret source --------------------------------------
+
+def _bank_file(tmp_path, entries):
+    p = tmp_path / "bank.json"
+    p.write_text(json.dumps({
+        "name": "test-bank", "version": 1,
+        "secrets": [
+            {"secret_id": f"bank-{i:02d}", "secret": s, "category": c,
+             "difficulty": d, "measured_guess_rate": round(1 - d, 3)}
+            for i, (s, c, d) in enumerate(entries)
+        ],
+    }))
+    return p
+
+
+def _bank_cfg(tmp_path, entries, **twentyq):
+    base = {"n_secrets": 2, "episodes_per_secret": 2, "max_turns": 2,
+            "categories": ["animal", "food"], "credit": "terminal",
+            "w_ensemble": 0.0, "secret_source": "bank",
+            "freeze_creator": True,
+            "bank_path": str(_bank_file(tmp_path, entries))}
+    base.update(twentyq)
+    return _config(twentyq=base)
+
+
+BANK_ENTRIES = [("dog", "animal", 0.4), ("cat", "animal", 0.6),
+                ("pizza", "food", 0.3), ("bread", "food", 0.7)]
+
+
+def test_bank_mode_plays_bank_secrets_and_calls_no_creator(tmp_path):
+    cfg = _bank_cfg(tmp_path, BANK_ENTRIES)
+    # Empty creator script: any creator rollout would IndexError on pop.
+    t = _make_trainer(cfg, [], ["GUESS: dog"] * 40)
+    rec = t.run_iteration(0)
+
+    assert rec["episodes"]["total"] == 4          # 2 secrets x 2 episodes
+    played = {s["secret"] for s in rec["secrets"]}
+    assert played <= {e[0] for e in BANK_ENTRIES}
+    assert len(played) == 2                       # without replacement
+    assert t.captured["creator_users"] == []      # creator never prompted
+
+
+def test_bank_mode_targets_come_from_measured_difficulty(tmp_path):
+    cfg = _bank_cfg(tmp_path, BANK_ENTRIES)
+    t = _make_trainer(cfg, [], ["GUESS: dog"] * 40)
+    rec = t.run_iteration(0)
+    # target == 1 - difficulty, i.e. the MEASURED win rate, not a dictated ramp.
+    for summary, target in zip(rec["secrets"], rec["target_by_rank"]):
+        expected = {e[0]: round(1 - e[2], 3) for e in BANK_ENTRIES}
+        assert target == pytest.approx(expected[summary["secret"]], abs=1e-6)
+
+
+def test_bank_mode_balances_categories_within_an_iteration(tmp_path):
+    cfg = _bank_cfg(tmp_path, BANK_ENTRIES, n_secrets=2)
+    cats = []
+    for seed in range(8):
+        t = _make_trainer(cfg, [], ["GUESS: dog"] * 40)
+        t.rng = random.Random(seed)
+        rec = t.run_iteration(0)
+        cats.append(tuple(sorted(s["category"] for s in rec["secrets"])))
+    # Every iteration draws one animal and one food, never two of a kind.
+    assert set(cats) == {("animal", "food")}
+
+
+def test_bank_mode_unbalanced_draw_is_opt_out(tmp_path):
+    cfg = _bank_cfg(tmp_path, BANK_ENTRIES, bank_balance_categories=False)
+    seen = set()
+    for seed in range(12):
+        t = _make_trainer(cfg, [], ["GUESS: dog"] * 40)
+        t.rng = random.Random(seed)
+        rec = t.run_iteration(0)
+        seen.add(tuple(sorted(s["category"] for s in rec["secrets"])))
+    # Unbalanced sampling can produce same-category pairs; balanced cannot.
+    assert any(c[0] == c[1] for c in seen)
+
+
+def test_bank_mode_uses_each_secrets_own_category_in_the_guesser_prompt(tmp_path):
+    cfg = _bank_cfg(tmp_path, BANK_ENTRIES, generation_batch_size=1)
+    t = _make_trainer(cfg, [], ["GUESS: dog"] * 40)
+    seen_categories = []
+    original = t._make_guesser
+
+    def spy(adapter, category, **kw):
+        seen_categories.append(category)
+        return original(adapter, category, **kw)
+
+    t._make_guesser = spy
+    rec = t.run_iteration(0)
+    played = {s["secret"]: s["category"] for s in rec["secrets"]}
+    assert sorted(seen_categories) == sorted(played.values())
+    assert len(set(seen_categories)) == 2     # both categories in ONE iteration
+
+
+def test_bank_mode_requires_a_frozen_creator(tmp_path):
+    cfg = _bank_cfg(tmp_path, BANK_ENTRIES, freeze_creator=False)
+    t = _make_trainer(cfg, [], ["GUESS: dog"] * 40)
+    with pytest.raises(ValueError, match="requires freeze_creator"):
+        t.run_iteration(0)
+
+
+def test_unknown_secret_source_is_rejected(tmp_path):
+    cfg = _bank_cfg(tmp_path, BANK_ENTRIES, secret_source="wishful")
+    t = _make_trainer(cfg, [], ["GUESS: dog"] * 40)
+    with pytest.raises(ValueError, match="unknown twentyq.secret_source"):
+        t.run_iteration(0)
+
+
+def test_creator_mode_is_unchanged_by_the_bank_addition():
+    """The v1..v7 path must be byte-identical when secret_source defaults."""
+    t = _make_trainer(_config(), CREATOR_OK, GUESSER_OK)
+    rec = t.run_iteration(0)
+    assert rec["guess_rates_by_rank"] == [1.0, 0.0]
+    assert rec["target_by_rank"] == [0.9, 0.1]
+    assert len(t.captured["creator_users"]) == 2

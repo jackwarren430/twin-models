@@ -219,6 +219,27 @@ class TwentyQConfig:
     # the penalty changes the gradient, and the ablation needs them separable.
     question_retries: int = 0
     w_repeat: float = 0.0
+    # --- where an iteration's secrets come from --------------------------
+    #   "creator" (v1..v7): N creator rollouts, dictated difficulty.
+    #   "bank": draw N from a pre-measured frontier bank (build_twentyq_bank.py)
+    #     and skip creator generation entirely. The creator adapter still plays
+    #     the ANSWERER, so the twin-model structure is intact — only secret
+    #     AUTHORSHIP moves.
+    # Rationale: a GRPO group is one secret's K episodes, so it trains nothing
+    # unless that secret is won sometimes and lost sometimes. Measured on the
+    # v7 base model, only 3 of 24 secrets qualified (usable_group_rate 0.125),
+    # because per-secret win probability is bimodal. A calibrated bank is the
+    # only lever that fixes this without waiting for the creator to learn
+    # calibration first — which is circular, since the creator cannot learn it
+    # while the solver it is calibrating against is itself untrained.
+    # This is scaffolding with an explicit exit: the creator has to take secret
+    # authorship back over, and the bank's measured rates are its target.
+    secret_source: str = "creator"
+    bank_path: str = "data/twentyq-bank-v1.json"
+    # Draw bank secrets so each iteration's N spans the categories evenly
+    # instead of i.i.d. (v7 sampled category i.i.d. per ITERATION, which made
+    # a 40x per-category win-rate spread masquerade as a training trend).
+    bank_balance_categories: bool = True
     # Ensemble-reward knobs (credit="ensemble" only). Empty models list = the
     # whole ENSEMBLE_MODELS registry. w_ensemble scales the per-turn shaping
     # delta (the terminal reward is never scaled); 1.0 = the bare spec formula.
