@@ -112,6 +112,7 @@ def signature_of(args, cfg) -> dict:
         "judge_model": str(args.judge_model),
         "categories": list(qcfg.categories),
         "rollouts_per_category": args.rollouts_per_category,
+        "exclusion_cap": args.exclusion_cap,
         "targets": [float(t) for t in args.targets],
         "episodes_per_candidate": args.episodes_per_candidate,
         "max_turns": qcfg.max_turns,
@@ -127,7 +128,19 @@ def generate_candidates(base, cfg, args) -> tuple[list[Secret], int]:
     candidates: list[Secret] = []
     n_parse_fail = 0
     for category in qcfg.categories:
+        # DISTINCT names seen in this category, not the last N raw draws.
+        # The trainer's rolling window is sized for a live run, where repeats
+        # are the signal being measured. Here repeats are pure waste, and the
+        # window actively causes them: at 250 draws against a 128-draw window,
+        # everything from the first half scrolls out and gets re-proposed.
+        # Measured on the v1 build — 250 raw draws per category yielded 39
+        # distinct animals, 23 foods, 56 household objects (9-22%), and
+        # generation diversity, not calibration yield, is what bounds bank
+        # size. Excluding distinct names costs nothing: the list is bounded by
+        # the distinct count itself, which is exactly the number that is too
+        # small.
         seen_names: list[str] = []
+        seen_keys: set[str] = set()
         for i in range(args.rollouts_per_category):
             # Sweep the dictated target, but only over its EASY end. The band
             # is selected by measurement afterwards, so the generator's job is
@@ -151,7 +164,7 @@ def generate_candidates(base, cfg, args) -> tuple[list[Secret], int]:
                 category, rank=i % max(1, qcfg.n_secrets),
                 n_secrets=qcfg.n_secrets,
                 difficulty=round(1.0 - target_rate, 2), target_rate=target_rate,
-                recent=seen_names[-qcfg.recent_secret_window:],
+                recent=seen_names[-args.exclusion_cap:],
                 difficulty_mode="flat",
             )
             prompt = base.render(user, system=CREATOR_SYSTEM,
@@ -168,7 +181,16 @@ def generate_candidates(base, cfg, args) -> tuple[list[Secret], int]:
                 continue
             secret.category = category
             candidates.append(secret)
-            seen_names.append(secret.secret)
+            # normalize_guess collapses case/whitespace/punctuation but NOT
+            # plurals, deliberately: "Glass" and "Glasses" are different
+            # household objects, and over-collapsing here would silently
+            # exclude legitimate candidates. Near-miss variants that survive
+            # this are still caught downstream by dedup(), which uses the
+            # edit-distance-1 repeat_matches.
+            key = normalize_guess(secret.secret)
+            if key and key not in seen_keys:
+                seen_keys.add(key)
+                seen_names.append(secret.secret)
         print(f"  {category}: {len(candidates)} raw so far "
               f"({n_parse_fail} parse fails)", flush=True)
     return candidates, n_parse_fail
@@ -267,6 +289,10 @@ def main() -> None:
     ap.add_argument("--holdout", type=Path,
                     default=ROOT / "data/twentyq-validation-v2.json",
                     help="secrets that must NOT enter the bank")
+    ap.add_argument("--exclusion-cap", type=int, default=250,
+                    help="max DISTINCT prior names listed as exclusions in the "
+                         "creator prompt (bounds prompt growth; the v1 build "
+                         "never exceeded 56 per category)")
     ap.add_argument("--max-candidates", type=int, default=0,
                     help="cap candidates entering calibration (0 = all)")
     ap.add_argument("--seed", type=int, default=20260726)

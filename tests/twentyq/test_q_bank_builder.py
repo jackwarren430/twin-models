@@ -25,6 +25,7 @@ _spec.loader.exec_module(btb)
 def _args(**over):
     base = dict(judge_model="Qwen/Qwen3-8B", rollouts_per_category=170,
                 targets=[0.95, 0.9, 0.8], episodes_per_candidate=8,
+                exclusion_cap=250,
                 holdout=Path("data/twentyq-validation-v2.json"), seed=1)
     base.update(over)
     return SimpleNamespace(**base)
@@ -49,6 +50,8 @@ def test_signature_tracks_everything_that_moves_the_measured_rate():
     assert btb.signature_of(_args(judge_model="other/model"), _cfg()) != ref
     assert btb.signature_of(_args(rollouts_per_category=10), _cfg()) != ref
     assert btb.signature_of(_args(targets=[0.5]), _cfg()) != ref
+    # Changes which candidates get generated, so it changes the population.
+    assert btb.signature_of(_args(exclusion_cap=10), _cfg()) != ref
     # A different player model or turn budget makes the win rates describe a
     # different game entirely — the case that must never silently merge.
     assert btb.signature_of(_args(), _cfg(max_turns=10)) != ref
@@ -107,6 +110,49 @@ def test_band_endpoints_are_inclusive():
                 {"secret": "b", "measured_guess_rate": 0.875},
                 {"secret": "c", "measured_guess_rate": 0.124}]
     assert _select(measured, 0.125, 0.875) == ["a", "b"]
+
+
+# ----- generation exclusions ----------------------------------------------
+def _accumulate(draws: list[str]) -> list[str]:
+    """The builder's exclusion accumulator: distinct names, first-seen order."""
+    from twin.games.twentyq.schema import normalize_guess
+    seen: list[str] = []
+    keys: set[str] = set()
+    for d in draws:
+        k = normalize_guess(d)
+        if k and k not in keys:
+            keys.add(k)
+            seen.append(d)
+    return seen
+
+
+def test_exclusions_accumulate_distinct_names_not_raw_draws():
+    """Generation excludes DISTINCT prior names, not the last N raw draws.
+
+    The trainer's rolling window is sized for a live run where repeats are the
+    signal; during a bank build they are pure waste, and a raw-draw window
+    causes them — at 250 draws against a 128-draw window the first half scrolls
+    out and gets re-proposed. Measured on the v1 build: 250 draws per category
+    yielded 39 / 23 / 56 distinct secrets, and diversity (not calibration
+    yield) is what bounds bank size."""
+    draws = ["Lion", "lion", " LION ", "Tiger", "Lion", "Bear", "tiger"]
+    assert _accumulate(draws) == ["Lion", "Tiger", "Bear"]
+
+
+def test_exclusions_do_not_collapse_plurals():
+    """normalize_guess deliberately does not depluralize: 'Glass' and
+    'Glasses' are different household objects, so collapsing them here would
+    exclude a legitimate candidate. Near-misses that slip through are caught
+    downstream by dedup()'s edit-distance-1 matcher."""
+    assert _accumulate(["Glass", "Glasses"]) == ["Glass", "Glasses"]
+    assert [s.secret for s in btb.dedup(
+        [Secret(secret="Lion", category="animal", difficulty=0.5),
+         Secret(secret="Lions", category="animal", difficulty=0.5)],
+        reserved=[])] == ["Lion"]
+
+
+def test_exclusions_skip_unnameable_draws():
+    assert _accumulate(["   ", "Lion", "!!!"]) == ["Lion"]
 
 
 # ----- dedup ---------------------------------------------------------------
