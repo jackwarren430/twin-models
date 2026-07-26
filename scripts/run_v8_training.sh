@@ -47,6 +47,18 @@ if [ "$N" -lt "$MIN_BANK" ]; then
   exit 1
 fi
 
+HOLDOUT=$(.venv/bin/python - "$CONFIG" <<'PY'
+import sys; sys.path.insert(0, "src")
+from twin.config import Config
+print(Config.from_yaml(sys.argv[1]).twentyq.validation_secret_set)
+PY
+)
+if ! .venv/bin/python scripts/check_bank_disjoint.py "$BANK" --holdout "$HOLDOUT"; then
+  echo "REFUSING: bank overlaps the validation set — the result would be" >&2
+  echo "  uninterpretable. Rebuild the bank." >&2
+  exit 1
+fi
+
 for other in q-probe-batch2 q-bank-build; do
   if systemctl --user is-active --quiet "$other"; then
     echo "REFUSING: $other is still running — two resident models on a shared" >&2
