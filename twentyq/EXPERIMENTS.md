@@ -1004,6 +1004,74 @@ Decision: **gemma-4-E2B**, unchanged from v1..v7. Also the model the LoRA
 text-decoder pinning is already tuned for (it is multimodal; the towers must
 not be adapted).
 
+### The v8 frontier bank (built 2026-07-26)
+
+    750 creator rollouts  (0 parse failures)
+    -> 118 unique         (15.7% distinct; dedup + validation holdout)
+    -> 118 judge-vetted   (100% pass — see the caveat below)
+    -> 61 in band         (51.7% yield, [0.125, 0.875] at K=8)
+
+Balanced: animal 22, food 15, household object 24. Spread over the whole band
+(wins/8 → 1:17 2:12 3:8 4:6 5:9 6:6 7:3), mean measured rate 0.391, no
+duplicates, verified disjoint from validation-v2.
+
+**What it buys — the entire premise of v8.** Expected `usable_group_rate` at
+K=16 on this bank is **0.95**, against **0.125** measured on the v1..v7 secret
+source: 7.6x more GRPO groups carrying a non-zero gradient per iteration. That
+number is posterior-corrected — each secret's rate is only known to K=8, so the
+estimate integrates `1 - E[p^16] - E[(1-p)^16]` over Beta(w+1, 8-w+1) rather
+than trusting the point estimate. The correction is small (0.958 → 0.946)
+because at K=16 the band is wide enough that K=8 noise barely matters.
+
+Yield was 51.7% against the 9.2% floor measured on v7 output — the flat-mode
+prompt fix plus dropping the 0.7/0.5 generation targets. Qualitatively visible:
+at a dictated 0.9 v7 produced *saffron, truffle, black garlic, salsify,
+habanero pepper, axolotl*; the fixed prompt produces *Lion, Elephant, Dog*.
+
+**Two revisions to earlier beliefs:**
+
+- Generation diversity, not yield, is the binding constraint on bank size. 750
+  rollouts gave only 118 distinct secrets (15.7%), because targets at the easy
+  end draw from a small vocabulary of instantly-recognizable entities. Yield
+  per candidate is no longer the thing to optimise; candidate *count* is.
+- **The "40x per-category win-rate spread" (household 0.120, food 0.003) was
+  largely an artifact of what the creator picked, not of the categories.** On
+  familiar-target output the per-category in-band rates are 56%/65%/60% and the
+  mean rates 0.46/0.43/0.31. Food was not intrinsically hard; v7's food secrets
+  were saffron and salsify.
+
+### The validity judge is PARTIAL — do not cite the vet rate as evidence
+
+The build vetted 118/118 VALID with zero rejections, which is exactly what a
+rubber stamp looks like. Driving the same judge (Qwen3-8B, same prompt, same
+terse-retry fallback, `fail_closed`) over deliberate negatives:
+
+    REJECTED correctly   Okoupee, Flimberwocky, happiness, mammals
+    FALSE ACCEPTS (4/8)  water (as food), "a dog or a cat", Pikachu,
+                         Xenoturbella churro
+    false rejects        0/6
+
+So it catches non-words, abstractions and multi-entity *classes*, and misses
+category mismatches, multi-entity *answers*, fictional-only entities and
+invented obscure names. Consequences:
+
+- The bank's quality guarantee is the **measured band**, not the judge. Two of
+  the four miss-classes are caught by measurement anyway (obscure and
+  multi-entity secrets score 0/8 and fall out); category mismatches and
+  fictional entities are not.
+- Hand-inspecting all 61 entries found exactly that: `Water` sits in the food
+  category — the case the creator system prompt names as invalid and the judge
+  false-accepted — alongside `Milk`/`Coffee`/`Milkshake`, an ambiguous
+  `Chicken`, `Dinosaur` (a clade), and the confusable pairs
+  `Toaster`/`Toaster oven` and `Toothbrush`/`Toothbrush holder`.
+- Kept as built rather than hand-curated. Every one of these is measurably
+  winnable-but-not-always, which is the actual selection criterion; `Water`
+  scored 4/8. Curating on taste after measurement would make the bank
+  unreproducible. Recorded here so the run stays interpretable.
+- **This blocks a naive priority-two design.** A creator rewarded for producing
+  "valid" secrets cannot be refereed by this judge alone — it would pass
+  `a dog or a cat` and `Pikachu`.
+
 ### Actions taken
 
 DESIGN §9. Parser recovers markup/quote/bare-entity turns; `question_retries`
