@@ -117,7 +117,7 @@ def signature_of(args, cfg) -> dict:
         "episodes_per_candidate": args.episodes_per_candidate,
         "max_turns": qcfg.max_turns,
         "question_retries": qcfg.question_retries,
-        "holdout": str(args.holdout),
+        "holdout": [str(h) for h in args.holdout],
         "seed": args.seed,
     }
 
@@ -286,9 +286,13 @@ def main() -> None:
                          "trained with — the measured rates describe one "
                          "policy and mean nothing for another.")
     ap.add_argument("--judge-model", default="Qwen/Qwen3-8B")
-    ap.add_argument("--holdout", type=Path,
-                    default=ROOT / "data/twentyq-validation-v2.json",
-                    help="secrets that must NOT enter the bank")
+    ap.add_argument("--holdout", nargs="+", type=Path,
+                    default=[ROOT / "data/twentyq-validation-v2.json"],
+                    help="one or more secret sets that must NOT enter the "
+                         "output. Any file with a 'secrets' list works, "
+                         "including a previously built bank — which is how a "
+                         "calibrated VALIDATION set is built: hold out both "
+                         "the old validation set and the training bank.")
     ap.add_argument("--exclusion-cap", type=int, default=250,
                     help="max DISTINCT prior names listed as exclusions in the "
                          "creator prompt (bounds prompt growth; the v1 build "
@@ -327,9 +331,15 @@ def main() -> None:
                   f"different conditions (pass --report NEW_PATH to keep both, "
                   f"or --no-resume to overwrite)", flush=True)
 
-    holdout_meta, holdout = load_validation_secret_set(args.holdout)
-    reserved = [s.secret for s in holdout]
-    print(f"holding out {len(reserved)} validation secrets", flush=True)
+    holdout_names: list[str] = []
+    reserved: list[str] = []
+    for path in args.holdout:
+        meta, secrets = load_validation_secret_set(path)
+        holdout_names.append(str(meta.get("name", Path(path).stem)))
+        reserved.extend(s.secret for s in secrets)
+        print(f"holding out {len(secrets)} secrets from "
+              f"{meta.get('name', path)}", flush=True)
+    holdout_label = " + ".join(holdout_names)
 
     backend = get_backend(cfg.compute.backend)
     print(f"loading player model: {cfg.model.path}", flush=True)
@@ -470,7 +480,7 @@ def main() -> None:
             f"real episodes each with the base model; kept only where the "
             f"measured win rate is in [{lo}, {hi}] so every GRPO group has "
             f"both a win and a loss to compare. Disjoint from "
-            f"{holdout_meta.get('name', args.holdout.name)}. "
+            f"{holdout_label}. "
             f"Rates measured at max_turns={max_turns}, "
             f"question_retries={qcfg.question_retries}; they drift as the "
             f"solver improves and must be re-measured."),

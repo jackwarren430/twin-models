@@ -45,8 +45,9 @@ def collisions(bank_secrets: list[str], reserved: list[str]) -> list[tuple[str, 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("bank", type=Path)
-    ap.add_argument("--holdout", type=Path,
-                    default=ROOT / "data/twentyq-validation-v2.json")
+    ap.add_argument("--holdout", nargs="+", type=Path,
+                    default=[ROOT / "data/twentyq-validation-v2.json"],
+                    help="one or more sets the bank must not overlap")
     args = ap.parse_args()
 
     try:
@@ -55,19 +56,24 @@ def main() -> int:
         print(f"UNREADABLE: {args.bank}: {e}", file=sys.stderr)
         return 1
 
-    meta, holdout = load_validation_secret_set(args.holdout)
-    reserved = [s.secret for s in holdout]
+    reserved: list[str] = []
+    names: list[str] = []
+    for path in args.holdout:
+        meta, holdout = load_validation_secret_set(path)
+        reserved.extend(s.secret for s in holdout)
+        names.append(str(meta.get("name", path.stem)))
+    label = " + ".join(names)
     hits = collisions([b["secret"] for b in bank], reserved)
 
     if hits:
         print(f"CONTAMINATED: {len(hits)} of {len(bank)} bank secrets collide "
-              f"with {meta.get('name', args.holdout.name)}", file=sys.stderr)
+              f"with {label}", file=sys.stderr)
         for name, r in hits[:10]:
             print(f"  {name!r} matches held-out {r!r}", file=sys.stderr)
         return 1
 
     print(f"disjointness OK: {len(bank)} bank secrets, none matching "
-          f"{len(reserved)} held out in {meta.get('name', args.holdout.name)}")
+          f"{len(reserved)} held out in {label}")
     return 0
 
 

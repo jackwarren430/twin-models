@@ -26,7 +26,7 @@ def _args(**over):
     base = dict(judge_model="Qwen/Qwen3-8B", rollouts_per_category=170,
                 targets=[0.95, 0.9, 0.8], episodes_per_candidate=8,
                 exclusion_cap=250,
-                holdout=Path("data/twentyq-validation-v2.json"), seed=1)
+                holdout=[Path("data/twentyq-validation-v2.json")], seed=1)
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -52,6 +52,10 @@ def test_signature_tracks_everything_that_moves_the_measured_rate():
     assert btb.signature_of(_args(targets=[0.5]), _cfg()) != ref
     # Changes which candidates get generated, so it changes the population.
     assert btb.signature_of(_args(exclusion_cap=10), _cfg()) != ref
+    # Holding out an extra set changes which candidates can survive dedup.
+    assert btb.signature_of(
+        _args(holdout=[Path("data/twentyq-validation-v2.json"),
+                       Path("data/twentyq-bank-v1.json")]), _cfg()) != ref
     # A different player model or turn budget makes the win rates describe a
     # different game entirely — the case that must never silently merge.
     assert btb.signature_of(_args(), _cfg(max_turns=10)) != ref
