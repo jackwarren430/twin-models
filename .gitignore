@@ -21,3 +21,8 @@ tq-runs/
 
 # OS
 .DS_Store
+
+# Byproduct of run_bank_build.sh's smoke pass. The REAL bank
+# (data/twentyq-bank-v1.json) is a training input and is committed; this one is
+# a toy-scale throwaway rewritten on every build.
+data/twentyq-bank-smoke.json
