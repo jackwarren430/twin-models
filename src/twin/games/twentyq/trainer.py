@@ -1297,6 +1297,19 @@ class TwentyQTrainer(BaseTrainer):
                 sum(1 for s in secret_summaries if s["valid"]) / max(1, len(secret_summaries)), 3),
             "guess_rate_mean": round(_mean([r for r, s in zip(rates, scored) if s]), 4),
             "guess_rates_by_rank": [round(r, 3) for r in rates],
+            # THE binding constraint on solver learning (DESIGN §9). A solver
+            # GRPO group is one secret's K episodes, so an all-win or all-loss
+            # group has identically zero advantages and contributes nothing to
+            # the update. This is the fraction of scored secrets that actually
+            # produced a gradient. It is first-class telemetry rather than a
+            # post-hoc reconstruction because it is not monotonic in win rate:
+            # as the solver improves, secrets leave the band from the TOP, so a
+            # static bank decays and a rising guess_rate_mean can coexist with
+            # a collapsing fraction of usable groups. Watching only the win
+            # rate would hide that.
+            "usable_group_rate": round(
+                sum(1 for r, s in zip(rates, scored) if s and 0.0 < r < 1.0)
+                / max(1, sum(1 for s in scored if s)), 4),
             "target_by_rank": [round(float(t), 3) for t in targets],
             "r_gradient": round(r_gradient, 4),
             "creator_suite_reward": (round(creator_total, 4)

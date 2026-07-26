@@ -960,6 +960,48 @@ def test_creator_mode_still_voids_invalid_secrets(tmp_path):
     assert [q for q in t.captured["judge"] if "vetting a secret" in q]
 
 
+def _one_secret_cfg(tmp_path):
+    """One bank secret, two episodes, two turns — so the group composition is
+    fully determined by the guesser script rather than by the deck's RNG."""
+    return _bank_cfg(tmp_path, [("dog", "animal", 0.5)], n_secrets=1,
+                     episodes_per_secret=2, max_turns=2,
+                     bank_balance_categories=False)
+
+
+def test_usable_group_rate_counts_groups_that_produce_a_gradient(tmp_path):
+    """A solver GRPO group is one secret's K episodes, so a group needs BOTH a
+    win and a loss to have non-zero advantages. One win, one loss -> usable."""
+    cfg = _one_secret_cfg(tmp_path)
+    # turn 0 is requested for both episodes at once: first wins and ends,
+    # second misses and survives to spend turn 1.
+    t = _make_trainer(cfg, [], ["GUESS: dog", "GUESS: zebra", "GUESS: zebra"])
+    rec = t.run_iteration(0)
+
+    assert rec["guess_rates_by_rank"] == [0.5]
+    assert rec["usable_group_rate"] == 1.0
+
+
+def test_usable_group_rate_is_zero_when_every_episode_wins(tmp_path):
+    """The trap this metric exists to catch: an all-win group is a PERFECT
+    guess rate that trains nothing, so a rising win rate can coexist with a
+    collapsing gradient supply as secrets leave the band from the top."""
+    cfg = _one_secret_cfg(tmp_path)
+    t = _make_trainer(cfg, [], ["GUESS: dog"] * 8)
+    rec = t.run_iteration(0)
+
+    assert rec["guess_rates_by_rank"] == [1.0]
+    assert rec["usable_group_rate"] == 0.0
+
+
+def test_usable_group_rate_is_zero_when_every_episode_loses(tmp_path):
+    cfg = _one_secret_cfg(tmp_path)
+    t = _make_trainer(cfg, [], ["GUESS: zebra"] * 8)
+    rec = t.run_iteration(0)
+
+    assert rec["guess_rates_by_rank"] == [0.0]
+    assert rec["usable_group_rate"] == 0.0
+
+
 def test_unknown_secret_source_is_rejected(tmp_path):
     cfg = _bank_cfg(tmp_path, BANK_ENTRIES, secret_source="wishful")
     t = _make_trainer(cfg, [], ["GUESS: dog"] * 40)
