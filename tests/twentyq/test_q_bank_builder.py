@@ -159,6 +159,44 @@ def test_exclusions_skip_unnameable_draws():
     assert _accumulate(["   ", "Lion", "!!!"]) == ["Lion"]
 
 
+# ----- written rows --------------------------------------------------------
+def _measured(*pairs):
+    return [{"secret": s, "category": c, "notes": "", "measured_guess_rate": r}
+            for s, c, r in pairs]
+
+
+def test_ids_are_prefixed_with_the_set_they_belong_to():
+    """The same builder produces training banks AND evaluation sets. Stamping a
+    validation secret with a "bank-" id would record, in the file's own
+    provenance, the exact contamination the v8 result depends on not having."""
+    rows = btb.build_secret_rows(
+        _measured(("okapi", "animal", 0.5), ("couscous", "food", 0.25)),
+        "twentyq-validation-v3")
+    assert [r["secret_id"] for r in rows] == [
+        "twentyq-validation-v3-animal-000", "twentyq-validation-v3-food-000"]
+
+
+def test_ids_are_unique_across_a_multi_word_category():
+    """load_validation_secret_set raises on duplicate ids, so a per-category
+    counter that collided would make the built set unloadable. 'household
+    object' keeps only its first word, which must not collide with another
+    category sharing that word."""
+    rows = btb.build_secret_rows(
+        _measured(("Toaster", "household object", 0.5),
+                  ("Kettle", "household object", 0.375),
+                  ("Lion", "animal", 0.75)),
+        "bank")
+    ids = [r["secret_id"] for r in rows]
+    assert ids == ["bank-household-000", "bank-household-001", "bank-animal-000"]
+    assert len(set(ids)) == len(ids)
+
+
+def test_difficulty_is_the_measured_complement_not_the_creator_claim():
+    rows = btb.build_secret_rows(_measured(("okapi", "animal", 0.375)), "b")
+    assert rows[0]["difficulty"] == 0.625
+    assert rows[0]["measured_guess_rate"] == 0.375
+
+
 # ----- dedup ---------------------------------------------------------------
 def test_dedup_drops_holdout_collisions_and_near_duplicates():
     cands = [Secret(secret="okapi", category="animal", difficulty=0.5),

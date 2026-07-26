@@ -100,6 +100,34 @@ def dedup(candidates: list[Secret], reserved: list[str]) -> list[Secret]:
     return kept
 
 
+def build_secret_rows(in_band: list[dict], set_name: str) -> list[dict]:
+    """The written secret rows, in measurement order.
+
+    Ids carry the set they belong to. This procedure builds evaluation sets as
+    well as training banks, and a validation set stamped "bank-v1-animal-000"
+    would assert in its own provenance the opposite of the disjointness the
+    headline result depends on. Ids must also be unique — the validation loader
+    rejects a set with duplicates — which is why the counter is per category
+    rather than a shared running index.
+    """
+    by_cat: dict[str, int] = defaultdict(int)
+    rows = []
+    for m in in_band:
+        cat = m["category"]
+        by_cat[cat] += 1
+        rows.append({
+            "secret_id": f"{set_name}-{cat.split()[0]}-{by_cat[cat] - 1:03d}",
+            "secret": m["secret"],
+            "category": cat,
+            # Difficulty is now MEASURED, not dictated: 1 - the observed win
+            # rate. This is the field the creator has to learn to predict.
+            "difficulty": round(1.0 - m["measured_guess_rate"], 3),
+            "measured_guess_rate": m["measured_guess_rate"],
+            "notes": m["notes"],
+        })
+    return rows
+
+
 def signature_of(args, cfg) -> dict:
     """Everything that would change the measured numbers.
 
@@ -305,9 +333,12 @@ def main() -> None:
                     help="reuse a matching --report checkpoint and measure "
                          "only the candidates still missing from it")
     ap.add_argument("--output", type=Path,
-                    default=ROOT / "data/twentyq-bank-v1.json")
+                    default=ROOT / "data/twentyq-bank-v1.json",
+                    help="the stem also names the set and prefixes its ids")
     ap.add_argument("--report", type=Path,
                     default=ROOT / "tq-runs/bank-v1-calibration.json")
+    ap.add_argument("--set-version", type=int, default=1,
+                    help="'version' field of the written set")
     args = ap.parse_args()
 
     cfg = Config.from_yaml(args.config)
@@ -455,32 +486,26 @@ def main() -> None:
     # the band is deliberately excluded from the signature so it can be retuned
     # without remeasuring anything.
     in_band = [m for m in measured if lo <= m["measured_guess_rate"] <= hi]
+    set_name = args.output.stem
+    secrets_out = build_secret_rows(in_band, set_name)
     by_cat: dict[str, int] = defaultdict(int)
-    secrets_out = []
-    for m in in_band:
-        by_cat[m["category"]] += 1
-        secrets_out.append({
-            "secret_id": f"bank-v1-{m['category'].split()[0]}-"
-                         f"{by_cat[m['category']] - 1:03d}",
-            "secret": m["secret"],
-            "category": m["category"],
-            # Difficulty is now MEASURED, not dictated: 1 - the observed win
-            # rate. This is the field the creator has to learn to predict.
-            "difficulty": round(1.0 - m["measured_guess_rate"], 3),
-            "measured_guess_rate": m["measured_guess_rate"],
-            "notes": m["notes"],
-        })
+    for row in secrets_out:
+        by_cat[row["category"]] += 1
 
     args.output.write_text(json.dumps({
-        "name": args.output.stem,
-        "version": 1,
+        "name": set_name,
+        "version": args.set_version,
         "description": (
-            f"Frontier bank: creator-generated candidates, judge-vetted "
-            f"fail-closed, then CALIBRATED by playing {args.episodes_per_candidate} "
+            f"Band-selected secret set: creator-generated candidates, "
+            f"judge-vetted fail-closed, then CALIBRATED by playing "
+            f"{args.episodes_per_candidate} "
             f"real episodes each with the base model; kept only where the "
-            f"measured win rate is in [{lo}, {hi}] so every GRPO group has "
-            f"both a win and a loss to compare. Disjoint from "
-            f"{holdout_label}. "
+            f"measured win rate is in [{lo}, {hi}], i.e. the base policy both "
+            f"wins and loses each secret. As a training bank that gives every "
+            f"GRPO group a win and a loss to compare; as an evaluation set it "
+            f"is what gives the metric dynamic range, since a secret no "
+            f"checkpoint ever wins cannot register that a checkpoint improved. "
+            f"Disjoint from {holdout_label}. "
             f"Rates measured at max_turns={max_turns}, "
             f"question_retries={qcfg.question_retries}; they drift as the "
             f"solver improves and must be re-measured."),
