@@ -1,0 +1,229 @@
+# 21-questions v9 — solver on a RE-MATCHED frontier bank (bank-v2).
+#
+# PROVISIONAL until v8 finishes and its checkpoints are replayed against
+# validation-v3. The design decisions below are robust to either replay
+# outcome; the numbers quoted from v8 are as of iteration 25 of 60.
+#
+# What v8 established, and what it could not.
+#
+# Established. The group-variance wall was real and a measured frontier bank
+# removes it: usable_group_rate 0.125 -> 0.896 mean, and within-secret training
+# win rate rose +0.148 +-0.048 (95%) over 59 secrets played in both halves of
+# the run — same secrets on both sides, so neither the category draw nor
+# regression to the mean applies. Instance memorisation is ruled out by two
+# independent exposure tests (DESIGN §9.7). The solver learns.
+#
+# Not established. Whether that transfers. The pre-registered validation
+# criterion came back inside the frozen control's own spread (B-A across steps
+# 0..20: +0.000, +0.031, +0.052, +0.010, -0.005; control spread 0.042). But
+# validation-v2 could not have answered the question either way: 15 of its 24
+# secrets are 0/8 for the trained adapter at EVERY checkpoint and cow is pinned
+# at 8/8, so its dynamic range is about seven secrets. That is the same
+# zero-variance argument as the wall itself, applied to the instrument.
+#
+# So v9 changes exactly two things, and both are about making the run readable.
+#
+#   1. bank_path: data/twentyq-bank-v2.json — the frontier RE-MATCHED to the
+#      trained policy. This is the point of the run. A frontier bank is defined
+#      relative to one solver, and v8 drifted all 61 bank-v1 entries +0.074
+#      mean within 24 iterations, with usable_group_rate in the last window
+#      already down to 0.750 from 0.938. bank-v2 is calibrated by playing the
+#      v8-final adapter B, not the base model (build_twentyq_bank.py --adapter),
+#      so it is a frontier for the policy that will actually train on it.
+#
+#      This is the direct test of the DECAY HYPOTHESIS: do solver gains
+#      continue once the frontier is re-matched, or was v8 a one-off harvest
+#      from a bank that has now been learned? The answer decides whether the
+#      creator (priority two) is polish or is load-bearing — a static bank that
+#      must be rebuilt by hand every run is precisely the job the creator
+#      exists to automate.
+#
+#   2. validation_secret_set: data/twentyq-validation-v3.json — an instrument
+#      with dynamic range, fixed BEFORE the run starts. Choosing it now is not
+#      the goalpost move a pre-registered criterion guards against; choosing it
+#      after seeing v9's answer would be. v3 is built by the same measured-band
+#      procedure as the bank but calibrated against the BASE model alone and
+#      never consulting a trained adapter, which is what separates selecting
+#      items for RESOLVABILITY from selecting them for the model under test.
+#      It holds out both validation-v2 and bank-v1.
+#
+#      Continuity with v1..v8 is not lost: v9's checkpoints get replayed
+#      against validation-v2 afterwards with scripts/rescore_checkpoints.py,
+#      the mirror image of what is being done to v8.
+#
+# Everything else is held at v8's values on purpose — N/K/T, lr, kl_beta,
+# adv_mode, credit: terminal, question_retries: 4, w_repeat: 0.05, iters: 60.
+# Two runs that differ in one axis each are readable; two that differ in six
+# are not, which is the mistake v5/v6/v7 made by moving reward design while the
+# gradient supply was the actual blocker.
+#
+# The frozen adapter A control stays. It cost ~2.9h in v8 and earned it: its
+# own spread across checkpoints (0.042) exceeded every B-A in the table, which
+# is what made the null readable rather than arguable. B rising while A stays
+# flat is the result; both drifting together is an instrument artifact.
+#
+# Read the run as a success only if adapter B's VALIDATION guess rate rises
+# beyond both its own confidence interval AND the frozen control's spread.
+# Training win rate on a bank selected to be winnable proves nothing by
+# construction — that is true of bank-v2 exactly as it was of bank-v1.
+#
+# Expect bank-v2 to decay during v9 as bank-v1 decayed during v8. That is
+# inherent to a static bank and is not a defect of this run; it is the
+# measurement that motivates priority two.
+#
+# PREREQUISITES, in order:
+#   1. v8 finished.
+#   2. scripts/run_validation_v3_build.sh          -> data/twentyq-validation-v3.json
+#   3. BANK_ADAPTER=checkpoints/twentyq-v8-bank/adapter_B_step60.safetensors \
+#      scripts/run_bank_build.sh \
+#        --rollouts-per-category 400 \
+#        --holdout data/twentyq-validation-v2.json data/twentyq-validation-v3.json \
+#        --output data/twentyq-bank-v2.json \
+#        --report tq-runs/bank-v2-calibration.json \
+#        --set-version 2                           -> data/twentyq-bank-v2.json
+#
+#      NOTE the holdout list. BOTH validation sets are excluded: v3 because v9
+#      is scored on it live, and v2 because v9's checkpoints get replayed
+#      against it afterwards — a set is contaminated by training on it whether
+#      the scoring happens during the run or after it.
+#
+#      bank-v1 is deliberately NOT excluded. Re-measuring a bank-v1 secret
+#      against the trained policy is exactly how a still-frontier entry earns
+#      its place in v2, and creator diversity (118 distinct in 750 draws) is
+#      the binding constraint on bank size, so discarding 61 known-good items
+#      would cost more than it buys. Report the carryover fraction when v2 is
+#      built: it is a direct read on how much of the frontier actually moved.
+#      Watch cumulative exposure — v8 ruled out instance memorisation at ~8
+#      exposures per secret, and carried-over entries enter v9 having already
+#      had those. Re-run the exposure regression on v9 rather than assuming it.
+#      WATCH: --adapter has never run against a real model. The smoke pass in
+#      run_bank_build.sh forwards BANK_ADAPTER for that reason. Do not skip it.
+#
+# Launch:
+# .venv/bin/python -u scripts/train_twentyq.py \
+#   --config configs/twentyq-v9-bank2-solver.yaml \
+#   --run-name q-v9-bank2-solver \
+#   --checkpoints-dir checkpoints/twentyq-v9-bank2
+
+compute:
+  backend: torch
+  device: cuda
+  dtype: bfloat16
+  attn_impl: sdpa
+  tf32: true
+  matmul_precision: high
+  compile: false
+  # Mandatory on the Spark: unified memory means a runaway GPU alloc takes the
+  # whole box down, and the trunk activations are what overflow.
+  grad_checkpointing: true
+
+model:
+  path: ~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/snapshots/9dbdf8a839e4e9e0eb56ed80cc8886661d3817cf
+  enable_thinking: false
+
+lora:
+  num_layers: 16
+  rank: 64
+  alpha: 128.0
+  dropout: 0.0
+
+gen:
+  creator_temp: 0.9
+  solver_temp: 0.8
+  oracle_temp: 0.2
+
+twentyq:
+  n_secrets: 8
+  episodes_per_secret: 16
+  max_turns: 21
+  categories: ["animal", "food", "household object"]
+  recent_secret_window: 128
+  repeat_handling: retry
+  repeat_gate_reward: 0.0
+
+  # --- the bank (DESIGN §9) ---
+  secret_source: bank
+  bank_path: data/twentyq-bank-v2.json
+  bank_balance_categories: true
+  freeze_creator: true      # required by bank mode: creator authors nothing
+  freeze_solver: false
+
+  # --- turn waste ---
+  question_retries: 4
+  w_repeat: 0.05
+
+  credit: terminal
+  gamma: 1.0
+  w_ensemble: 0.0
+
+  w_guess: 1.0
+  w_efficiency: 0.5
+  w_close: 0
+  w_format: 0.5
+  # FAIL-CLOSED, reversing v7 — but INERT under secret_source: bank, where the
+  # in-training gate is skipped entirely. That gate exists to police creator
+  # output; bank secrets were authored offline and already vetted fail-closed
+  # by Qwen3-8B with a terse-retry fallback, whereas the in-training judge is
+  # the small base model with no fallback. Re-judging could only delete vetted
+  # entries (an invalid verdict plays ZERO episodes), and v7 logged ~10%
+  # unparseable verdicts. Kept set so a --secret-source creator override keeps
+  # the strict posture rather than v7's fail_open, which passed 21/206
+  # unparseable verdicts as VALID, clustered on exactly the corrupted non-words
+  # that needed rejecting.
+  secret_validity: fail_closed
+
+  creator_thinking: false
+  guesser_thinking: false
+  answerer_thinking: false
+  judge_thinking: false
+  secret_max_tokens: 512
+  question_max_tokens: 512
+  answer_max_tokens: 512
+  generation_batch_size: 16
+  ensemble_batch_size: 4
+
+  # Validation evaluates BOTH adapters, and under freeze_creator adapter A
+  # never changes — which is the point, not waste. A is a frozen CONTROL arm
+  # measured on the same secrets, the same instrument and the same schedule as
+  # the solver. Pooled over the run that is 13 checkpoints x N_secrets x 8
+  # episodes of a policy known not to move — an EMPIRICAL noise floor for the
+  # metric the run is judged on, rather than a theoretical Wilson interval.
+  # Given that reading trends out of noise is exactly how v6 and v7 went wrong,
+  # and that in v8 the control's spread (0.042) turned out to exceed every
+  # single B-A it was compared against, it is worth what it costs — which
+  # scales with validation-v3's size, so roughly 2.9h x (N_v3 / 24).
+  # B rising while A stays flat is the result; both drifting
+  # together is an instrument artifact.
+  validation_every: 5
+  validation_secret_set: data/twentyq-validation-v3.json
+  validation_episodes: 8
+  validation_max_turns: 21
+  reward_log: true
+
+# Ignored under secret_source: bank (targets come from each entry's MEASURED
+# rate, not a dictated curve). Kept so a --secret-source creator override
+# reproduces the v7 band exactly.
+rewards:
+  target_hi: 0.9
+  target_lo: 0.1
+
+# No rotation: freezing is by ROLE, so a swap would hand the frozen role to the
+# other adapter and both would end up training. Must stay 0.
+roles:
+  swap_interval: 0
+  warmup_iterations: 0
+  injection_rate: 0.0
+
+train:
+  iters: 60
+  learning_rate: 1.0e-5
+  kl_beta: 0.02
+  adv_mode: mean
+  grpo_microbatch: 1
+  logit_chunk: 0
+  checkpoint_every: 5
+  log_every: 1
+
+paths:
+  checkpoints: checkpoints/twentyq
+  runs: tq-runs
