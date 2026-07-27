@@ -171,6 +171,13 @@ def load_validation_secret_set(path: str | Path) -> tuple[dict, list[Secret]]:
     return meta, secrets
 
 
+# Fixed sampler seed for common-random-numbers validation. Its value is
+# arbitrary; what matters is that it never varies by step or adapter, so every
+# policy is measured on the same games and any difference between two scores is
+# a difference between two policies.
+VALIDATION_CRN_SEED = 20260726
+
+
 def _wilson_ci(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
     """95% Wilson score interval for a binomial rate.
 
@@ -558,6 +565,18 @@ class TwentyQTrainer(BaseTrainer):
         )
         try:
             for adapter in self.adapters.NAMES:
+                # Common random numbers: every adapter at every step gets the
+                # SAME draws, so B - A reflects policy rather than sampler
+                # position, and B-at-step-40 vs B-at-step-0 does too. Two
+                # identical policies then score identically by construction,
+                # which is exactly what the frozen control is meant to show.
+                # The constant is deliberately step-independent — making it
+                # vary by step would restore the noise this removes from every
+                # across-checkpoint comparison.
+                crn = getattr(self, "backend", None) if (
+                    qcfg.validation_common_random_numbers) else None
+                if crn is not None:
+                    crn.seed(VALIDATION_CRN_SEED)
                 rows: list[dict] = []
                 adapter_tree_entries: list[dict] = []
                 for si, secret in enumerate(secrets):
@@ -652,6 +671,14 @@ class TwentyQTrainer(BaseTrainer):
         finally:
             if previous_adapter is not None:
                 self.adapters.activate(previous_adapter)
+            # Do not hand training back a stream that restarts from the same
+            # fixed point after every validation — that would make each
+            # training phase replay the same sampler sequence. The measurement
+            # wants a constant seed; training wants a moving one.
+            crn = getattr(self, "backend", None) if (
+                qcfg.validation_common_random_numbers) else None
+            if crn is not None:
+                crn.seed(VALIDATION_CRN_SEED + 1 + step)
 
         record = {
             "step": step,
@@ -663,6 +690,7 @@ class TwentyQTrainer(BaseTrainer):
             "max_turns": max_turns,
             "decoding": ("greedy" if qcfg.validation_episodes <= 1
                          else f"sampled@{self.cfg.gen.solver_temp}"),
+            "common_random_numbers": bool(qcfg.validation_common_random_numbers),
             "episodes_per_secret": max(1, int(qcfg.validation_episodes)),
             "answerer": "base",
             "adapters": by_adapter,

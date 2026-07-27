@@ -1066,3 +1066,80 @@ def test_bank_deck_survives_across_iterations(tmp_path):
     second = {s["secret"] for s in t.run_iteration(1)["secrets"]}
     assert first & second == set()          # disjoint within one epoch
     assert first | second == {e[0] for e in entries}
+
+
+# ----- common random numbers in validation ---------------------------------
+
+class _SeedRecordingBackend:
+    """Backend stub that records seed() calls made during validation."""
+
+    def __init__(self):
+        self.seeds: list[int] = []
+
+    def seed(self, n):
+        self.seeds.append(n)
+
+    def peak_memory_gb(self):
+        return None
+
+    def clear_cache(self):
+        pass
+
+    def reset_peak_memory(self):
+        pass
+
+
+def _crn_trainer(tmp_path, **twentyq):
+    cfg = _validation_cfg(tmp_path, validation_episodes=2, max_turns=1,
+                          **twentyq)
+    t = _make_trainer(cfg, [], ["GUESS: dog", "GUESS: cat"] * 8)
+    t.backend = _SeedRecordingBackend()
+    return t
+
+
+def test_validation_does_not_touch_the_sampler_by_default(tmp_path):
+    """The v1..v8 series was measured without reseeding, and reseeding changes
+    which games each adapter plays. Defaulting to on would silently make old
+    and new runs incomparable."""
+    t = _crn_trainer(tmp_path)
+    t.run_validation(3)
+    assert t.backend.seeds == []
+    assert t.run_validation(4)["common_random_numbers"] is False
+
+
+def test_crn_gives_every_adapter_the_same_draws(tmp_path):
+    """The quantity this project is judged on is B - A. Scoring the adapters
+    back to back off one advancing stream puts independent sampling noise on
+    both arms, and it does not cancel in the difference."""
+    t = _crn_trainer(tmp_path, validation_common_random_numbers=True)
+    rec = t.run_validation(3)
+    per_adapter = t.backend.seeds[:len(t.adapters.NAMES)]
+    assert len(per_adapter) == 2
+    assert per_adapter[0] == per_adapter[1]
+    assert rec["common_random_numbers"] is True
+
+
+def test_crn_seed_does_not_vary_with_step(tmp_path):
+    """Across-checkpoint comparisons need common draws too: a step-dependent
+    seed would restore exactly the noise this removes from B-at-40 vs
+    B-at-0."""
+    seeds = []
+    for step in (0, 40):
+        t = _crn_trainer(tmp_path, validation_common_random_numbers=True)
+        t.run_validation(step)
+        seeds.append(t.backend.seeds[:2])
+    assert seeds[0] == seeds[1]
+
+
+def test_crn_leaves_training_on_a_moving_stream(tmp_path):
+    """The measurement wants a constant seed; training does not. Without a
+    final reseed every training phase would replay the same sampler sequence
+    after each validation."""
+    last = []
+    for step in (5, 10):
+        t = _crn_trainer(tmp_path, validation_common_random_numbers=True)
+        t.run_validation(step)
+        assert len(t.backend.seeds) == 3        # A, B, then the hand-back
+        last.append(t.backend.seeds[-1])
+    assert last[0] != last[1]
+    assert last[0] not in (t.backend.seeds[0],)

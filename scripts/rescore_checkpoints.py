@@ -26,10 +26,15 @@ Design notes:
 * Adapter A in the v8 lineage is FROZEN, so its re-scored series is a control:
   it shows what this instrument's noise looks like across steps with no policy
   change at all. Any B movement smaller than A's spread is not a result.
-* The RNG is reseeded identically before every step, so all checkpoints face
-  the same sampled games (common random numbers). In-run validation cannot do
-  this — it must not disturb the training stream — which makes this replay
-  strictly more sensitive than the series it is re-scoring.
+* Common random numbers are forced on (`validation_common_random_numbers`), so
+  every adapter at every checkpoint faces the SAME sampled games. In-run
+  validation defaults this off because reseeding disturbs the training stream,
+  and because the v1..v8 series was measured without it. A replay has no
+  training stream to protect, so the noise is pure cost: measured on v8 at
+  step 0, where A and B hold identical weights and must be the same policy,
+  only 160 of 192 episodes matched on turns. That noise lands directly on B-A,
+  which is the quantity everything is judged on. This makes the replay
+  strictly more sensitive than the series it re-scores.
 * Step 0 needs no file: adapters are zero-init, so a freshly built adapter IS
   the base model, which is exactly the step-0 policy.
 
@@ -146,6 +151,12 @@ def main() -> int:
     cfg.twentyq.validation_secret_set = args.secret_set
     if args.episodes is not None:
         cfg.twentyq.validation_episodes = args.episodes
+    # Always on for a replay, whatever the run used. In-run validation scores
+    # the adapters back to back off one advancing sampler stream, so each arm
+    # carries independent noise and it lands directly on B - A. A replay has no
+    # training stream to respect, so there is no reason to pay that: identical
+    # policies should score identically, and any difference should be policy.
+    cfg.twentyq.validation_common_random_numbers = True
     ckpt_dir = args.checkpoints
 
     meta, secrets = load_validation_secret_set(args.secret_set)
@@ -204,8 +215,10 @@ def main() -> int:
             if step == 0 and not p.exists():
                 continue  # zero-init adapter == base == the step-0 policy
             adapters.load(name, str(p))
-        # Common random numbers: every step faces the same sampled games, so a
-        # step-to-step difference is policy, not draw.
+        # Common random numbers are applied inside run_validation, per adapter
+        # as well as per step (validation_common_random_numbers, set above).
+        # Seeding here too would be overridden immediately; it is kept only to
+        # pin anything that happens before the first adapter's first game.
         backend.seed(args.seed)
         record = trainer.run_validation(step)
         rates = {n: m["guess_rate"] for n, m in record["adapters"].items()}

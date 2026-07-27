@@ -344,6 +344,20 @@ class TwentyQConfig:
     # gen.solver_temp (greedy would just replay one game K times) and runs the
     # K games per secret in lockstep through the batched engine.
     validation_episodes: int = 1
+    # Reseed the sampler identically before EACH adapter's validation pass, so
+    # every adapter faces the same random draws (common random numbers).
+    #
+    # Without it the adapters are scored back to back off one advancing stream,
+    # so each arm carries independent sampling noise — and the quantity this
+    # project is judged on is the DIFFERENCE B-A, where that noise does not
+    # cancel. Measured on v8 at step 0, where A and B hold identical zero-init
+    # weights and must therefore be the same policy: only 160 of 192 episodes
+    # matched on turns and 178 of 192 on the outcome. That is pure instrument
+    # noise sitting directly on top of the headline metric.
+    #
+    # Defaults False so the v1..v8 series stays reproducible; it changes the
+    # variance of the estimate, not its expectation.
+    validation_common_random_numbers: bool = False
     # Write a compact <run>.rewards.jsonl sidecar containing terminal, dense
     # ensemble, combined-immediate, and turn-zero-return aggregates for every
     # training iteration and validation pass. The main JSONL remains complete.

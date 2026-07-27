@@ -213,6 +213,17 @@ twentyq:
   validation_every: 5
   validation_secret_set: data/twentyq-validation-v3.json
   validation_episodes: 8
+  # Common random numbers: every adapter at every checkpoint plays the SAME
+  # sampled games. Not a third experimental change — it alters the variance of
+  # the estimate, not its expectation. It is a better thermometer, and this
+  # project's binding constraint has repeatedly turned out to be measurement
+  # precision rather than the effect.
+  #
+  # v8 measured the cost of not having it: at step 0, where A and B hold
+  # identical zero-init weights and are therefore the SAME policy, only 160 of
+  # 192 episodes matched on turns and 178 of 192 on outcome. That noise sits
+  # directly on B - A, and B - A is what the success criterion is stated in.
+  validation_common_random_numbers: true
   validation_max_turns: 21
   reward_log: true
 
