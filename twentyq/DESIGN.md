@@ -1657,3 +1657,121 @@ whose live secrets sit mid-range, and a band-selected set concentrates
 everything mid-range where per-secret binomial variance is highest. The
 planning number is therefore mildly optimistic, which is a further argument for
 overshooting on size rather than hitting 30 exactly.
+
+### 9.9 v8 final: what the completed run says, and a correction to §9.8
+
+The run finished all 60 iterations cleanly (`Result=success`). Final numbers,
+with two corrections to what §9.7/§9.8 recorded mid-flight.
+
+**Correction 1: the effect size.** §9.7 quotes a within-secret gain of
++0.148 ±0.048. That was measured mid-run, splitting the ~28 iterations that had
+then completed at their midpoint. On the full run the same statistic is
+**+0.084 ±0.032** over 61 secrets — smaller, because a half-vs-half split of a
+longer run averages two halves that each already contain most of the learning.
+The end-to-end contrast is the larger number: comparing the FIRST TEN
+iterations with the LAST TEN, within-secret win rate rose **+0.204 ±0.066**
+over the 55 secrets appearing in both. Both statistics are correct and they
+answer different questions; the honest headline is +0.204 end-to-end, and any
+comparison against a detection threshold must say which one it means.
+
+**Correction 2, and it matters: §9.8's central claim no longer holds.** That
+section concluded "even PERFECT transfer would have produced a flat series."
+That was true of the instrument as it stood at nine checkpoints, where the MDE
+was +0.174 on the live subset and +0.066 pooled. The finished instrument is
+better on both counts, for two reasons: thirteen checkpoints instead of nine,
+and — less obviously — the live subset GREW from 9 secrets to 12 as the solver
+started occasionally winning giraffe, trivet, scissors and refrigerator. The
+instrument improved because the policy did.
+
+    13 checkpoints, 24 secrets, 12 live, 12 dead
+    paired sd (B - A)      ALL 0.1306     LIVE 0.1813
+    minimum detectable     ALL +0.0747    LIVE +0.1467
+
+    effect on live secrets   pooled equivalent   verdict
+      +0.204 (end-to-end)         +0.102         DETECTABLE
+      +0.150                      +0.075         DETECTABLE (marginal)
+      +0.100                      +0.050         INVISIBLE
+      +0.084 (half-vs-half)       +0.042         INVISIBLE
+
+So the correct reading is sharper than "uninformative", and it cuts both ways:
+
+- **Complete transfer is disfavoured.** If the +0.204 end-to-end training gain
+  had transferred in full, this instrument had roughly 80% power to see it. It
+  saw nothing: B rose +0.041 from step 0 against a frozen-control spread of
+  0.062, failing the pre-registered criterion.
+- **Partial transfer cannot be excluded.** Anything at or below about half the
+  training gain sits under the detection threshold. The honest conclusion is
+  that transfer is bounded above, not that it is zero.
+
+The full validation series, for the record:
+
+    step     0     5    10    15    20    25    30    35    40    45    50    55    60
+    B    .141  .141  .172  .141  .146  .188  .177  .146  .203  .193  .177  .151  .182
+    A    .141  .109  .120  .130  .151  .172  .130  .135  .151  .120  .146  .125  .167
+
+B peaked at step 40 and declined for three checkpoints afterwards. A post-hoc
+mean B-A of +0.029 reaches t=+4.2, but that test rose in significance purely
+because n grew while the estimate stood still, and it asks the weakest
+question — whether B sits above a frozen base on average, not whether B
+improved. Its slope on step never reached significance at any point in the run
+(peak |t| = 1.66 at step 40, falling to 1.30 by step 55). Treat it as an
+artifact until the replay says otherwise; part of it may simply be the sampler
+asymmetry documented in §9.10.
+
+**Bank decay, quantified over a full run.** This is the cleanest result of v8
+after the wall removal itself:
+
+    window      0-9   10-19  20-29  30-39  40-49  50-59
+    usable     .938    .912   .787   .812   .775   .713
+    train win  .395    .516   .559   .537   .610   .584
+
+`usable_group_rate` fell 24% relative while training win rate rose, exactly the
+non-monotonicity of §9.1 — improving the solver pushes secrets out of the band
+from the top. Mean bank drift is +0.138 and no secret has yet gone all-win or
+all-loss at K=16, so the bank was still teaching at iteration 60, but it was
+teaching measurably less than at iteration 0. A static bank has a shelf life,
+and this measures it: roughly 60 iterations to lose a quarter of the gradient.
+
+### 9.10 The adapters were never playing the same games (2026-07-27)
+
+Found while checking whether B's step-40 rise was real, and it is a defect in
+the measurement rather than in any run.
+
+`run_validation` scores the adapters in a loop, A then B, off a single
+advancing sampler stream. So the two arms never faced the same random draws.
+The evidence is unambiguous because step 0 provides a perfect control: both
+adapters are zero-init there, so they ARE the same policy and must score
+identically up to sampling noise. They did not:
+
+    step 0, identical weights:  160 of 192 episodes matched on turns
+                                178 of 192 matched on outcome
+                                totals tied at 27/192 by coincidence
+
+That coincidence in the totals is why this went unnoticed through v1..v8: the
+headline numbers agreed exactly while a third of the underlying games differed.
+
+This matters because every criterion in this project is stated in B - A, and
+independent sampling noise on the two arms does not cancel in a difference. It
+also produces a specific, recognisable artifact — a roughly CONSTANT offset
+between two adapters with no trend, which is exactly the pattern the post-hoc
+mean-difference test picked up in v8 (§9.9).
+
+`twentyq.validation_common_random_numbers` reseeds the sampler identically
+before each adapter's pass. Two properties are deliberate:
+
+- The seed does not depend on the adapter, so identical policies score
+  identically by construction — which is what a frozen control is supposed to
+  demonstrate, and now does.
+- The seed does not depend on the STEP either, so B-at-step-60 versus
+  B-at-step-0 is also a common-draw comparison. Varying it per step would
+  restore the noise this removes from every across-checkpoint comparison.
+
+Training gets a moving stream handed back afterwards (`seed + 1 + step`), so
+no training phase replays the same sampler sequence after each validation.
+
+Default is OFF. It changes which games are played, so enabling it by default
+would silently break comparability with the v1..v8 series. It is forced on in
+`scripts/rescore_checkpoints.py` — a replay has no training stream to protect —
+and enabled for v9, where it is a precision change and not a third
+experimental variable: it alters the variance of the estimate, not its
+expectation.

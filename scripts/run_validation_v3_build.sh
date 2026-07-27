@@ -41,12 +41,17 @@ REPORT=tq-runs/validation-v3-calibration.json
 # Unified memory: a second model loaded next to a live run is not merely slow,
 # it can OOM the box and kill the run. The build itself is resumable; the run
 # it would take down is not.
-BUSY=$(systemctl --user list-units --type=service --state=running --no-legend --plain \
-       | awk '{print $1}' | grep '^q-.*\.service$' || true)
-if [ -n "$BUSY" ]; then
-  echo "REFUSING: $BUSY is running. Wait for it to finish." >&2
-  exit 1
-fi
+# SELF_UNIT names the unit this script is itself running under, so a long build
+# can be launched via systemd-run (surviving the session, and visible to every
+# other script's q-* guard) without the guard tripping on itself.
+SELF_UNIT=${SELF_UNIT:-}
+for busy in $(systemctl --user list-units --type=service --state=running \
+                --no-legend --plain | awk '{print $1}' | grep '^q-' || true); do
+  if [ "$busy" != "${SELF_UNIT}.service" ]; then
+    echo "REFUSING: $busy is running. Wait for it to finish." >&2
+    exit 1
+  fi
+done
 
 for f in data/twentyq-validation-v2.json data/twentyq-bank-v1.json; do
   [ -f "$f" ] || { echo "missing holdout: $f" >&2; exit 1; }
