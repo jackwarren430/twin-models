@@ -1,0 +1,301 @@
+{
+  "name": "twentyq-validation-v3",
+  "version": 3,
+  "description": "Band-selected secret set: creator-generated candidates, judge-vetted fail-closed, then CALIBRATED by playing 16 real episodes each, guesser = the base model and answerer = base; kept only where the measured win rate is in [0.0625, 0.9375], i.e. that policy both wins and loses each secret. As a training bank that gives every GRPO group a win and a loss to compare; as an evaluation set it is what gives the metric dynamic range, since a secret no checkpoint ever wins cannot register that a checkpoint improved. Disjoint from twentyq-validation-v2 + twentyq-bank-v1. Rates measured at max_turns=21, question_retries=4; they drift as the solver improves and must be re-measured.",
+  "source_model": "~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/snapshots/9dbdf8a839e4e9e0eb56ed80cc8886661d3817cf",
+  "solver_adapter": null,
+  "band": [
+    0.0625,
+    0.9375
+  ],
+  "secrets": [
+    {
+      "secret_id": "twentyq-validation-v3-animal-000",
+      "secret": "Elephant",
+      "category": "animal",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common and instantly recognizable large animal."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-animal-001",
+      "secret": "Cat",
+      "category": "animal",
+      "difficulty": 0.125,
+      "measured_guess_rate": 0.875,
+      "notes": "Extremely common and instantly recognizable, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-animal-002",
+      "secret": "Spider",
+      "category": "animal",
+      "difficulty": 0.062,
+      "measured_guess_rate": 0.9375,
+      "notes": "A common, recognizable animal that is not one of the excluded major mammals or large predators."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-animal-003",
+      "secret": "Wolf",
+      "category": "animal",
+      "difficulty": 0.062,
+      "measured_guess_rate": 0.9375,
+      "notes": "A very common, recognizable predator that is distinct from the listed large mammals."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-animal-004",
+      "secret": "Horse",
+      "category": "animal",
+      "difficulty": 0.125,
+      "measured_guess_rate": 0.875,
+      "notes": "A very common, instantly recognizable mammal that fits the familiar target profile."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-animal-005",
+      "secret": "Sheep",
+      "category": "animal",
+      "difficulty": 0.062,
+      "measured_guess_rate": 0.9375,
+      "notes": "Sheep is a very common, instantly recognizable farm animal, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-animal-006",
+      "secret": "Bat",
+      "category": "animal",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A common, recognizable mammal that is distinct from the larger/more common animals listed."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-animal-007",
+      "secret": "Frog",
+      "category": "animal",
+      "difficulty": 0.562,
+      "measured_guess_rate": 0.4375,
+      "notes": "A very common, instantly recognizable amphibian."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-animal-008",
+      "secret": "Mouse",
+      "category": "animal",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common, instantly recognizable rodent."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-animal-009",
+      "secret": "Rhinoceros",
+      "category": "animal",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A well-known, singular, large mammal that is familiar but less common than a lion or elephant."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-animal-010",
+      "secret": "Fox",
+      "category": "animal",
+      "difficulty": 0.188,
+      "measured_guess_rate": 0.8125,
+      "notes": "A very common and instantly recognizable wild animal."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-food-000",
+      "secret": "Apple",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "Apple is extremely common and instantly recognizable, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-food-001",
+      "secret": "Salmon",
+      "category": "food",
+      "difficulty": 0.5,
+      "measured_guess_rate": 0.5,
+      "notes": "A very common, recognizable type of fish that most people know."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-food-002",
+      "secret": "Potato",
+      "category": "food",
+      "difficulty": 0.125,
+      "measured_guess_rate": 0.875,
+      "notes": "A very common, instantly recognizable starchy vegetable."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-food-003",
+      "secret": "Tomato",
+      "category": "food",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common, instantly recognizable vegetable/fruit."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-food-004",
+      "secret": "Avocado",
+      "category": "food",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "It is a common, recognizable fruit that fits the familiar target."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-food-005",
+      "secret": "Lemon",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common, instantly recognizable citrus fruit, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-food-006",
+      "secret": "Ice Cream",
+      "category": "food",
+      "difficulty": 0.188,
+      "measured_guess_rate": 0.8125,
+      "notes": "Very familiar and instantly recognizable, fitting the target of a common, instantly recognizable item."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-food-007",
+      "secret": "Strawberry",
+      "category": "food",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "A very common, recognizable fruit, fitting the target of being instantly recognizable."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-food-008",
+      "secret": "Muffin",
+      "category": "food",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A common, recognizable baked good that fits the familiar target."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-food-009",
+      "secret": "Tuna",
+      "category": "food",
+      "difficulty": 0.5,
+      "measured_guess_rate": 0.5,
+      "notes": "Tuna is a common, instantly recognizable fish, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-000",
+      "secret": "Spoon",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A spoon is extremely common and instantly recognizable within the category."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-001",
+      "secret": "Bed",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common, instantly recognizable household object."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-002",
+      "secret": "Fork",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A common utensil, easily recognizable in a household context."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-003",
+      "secret": "DISHWASHER",
+      "category": "household object",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A common, recognizable modern household appliance."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-004",
+      "secret": "Shower curtain",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A common, instantly recognizable item that fits the target of being familiar."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-005",
+      "secret": "Wrench",
+      "category": "household object",
+      "difficulty": 0.688,
+      "measured_guess_rate": 0.3125,
+      "notes": "A common tool, but not one of the very basic kitchen/furniture/appliance items already excluded, fitting the familiar/common criteria."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-006",
+      "secret": "Light bulb",
+      "category": "household object",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "A very common, instantly recognizable household item."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-007",
+      "secret": "Screwdriver",
+      "category": "household object",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "A common tool, familiar to most people."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-008",
+      "secret": "Paper towel",
+      "category": "household object",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "Very common household item, high familiarity."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-009",
+      "secret": "Blanket",
+      "category": "household object",
+      "difficulty": 0.562,
+      "measured_guess_rate": 0.4375,
+      "notes": "A very common household item that is instantly recognizable."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-010",
+      "secret": "Towel rack",
+      "category": "household object",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "A common, instantly recognizable item found in many households."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-011",
+      "secret": "Laundry basket",
+      "category": "household object",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "It is a common household object, familiar to most people."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-012",
+      "secret": "Broom",
+      "category": "household object",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "A very common household cleaning tool, likely to be guessed early."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-013",
+      "secret": "Cabinet",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, instantly recognizable piece of furniture found in most households."
+    },
+    {
+      "secret_id": "twentyq-validation-v3-household-014",
+      "secret": "Showerhead",
+      "category": "household object",
+      "difficulty": 0.688,
+      "measured_guess_rate": 0.3125,
+      "notes": "A common fixture in the bathroom, instantly recognizable."
+    }
+  ]
+}
