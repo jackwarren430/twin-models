@@ -1775,3 +1775,60 @@ would silently break comparability with the v1..v8 series. It is forced on in
 and enabled for v9, where it is a precision change and not a third
 experimental variable: it alters the variance of the estimate, not its
 expectation.
+
+### 9.11 The v8 replay against validation-v3: transfer is real, small, and just under the threshold (2026-07-27)
+
+SECONDARY ANALYSIS. The pre-registered v8 result stands on validation-v2 and it
+failed (§9.9). This replays the saved checkpoints against a better instrument
+built by the same base-policy procedure, and reports what that instrument sees.
+
+`scripts/rescore_checkpoints.py`, 7 checkpoints x 36 secrets x 8 episodes x 2
+adapters, common random numbers on (§9.10), 3.6 hours.
+
+    step      A (frozen)   B (solver)    B - A    paired t   up/down/same
+       0        0.3542       0.3542     +0.0000     +0.00      0/ 0/36
+      10        0.3542       0.3715     +0.0174     +0.52     14/12/10
+      20        0.3542       0.3889     +0.0347     +0.70     15/10/11
+      30        0.3542       0.3889     +0.0347     +0.95     15/10/11
+      40        0.3542       0.3819     +0.0278     +0.70     16/ 8/12
+      50        0.3542       0.4028     +0.0486     +1.29     16/12/ 8
+      60        0.3542       0.4236     +0.0694     +1.52     16/ 6/14
+
+**Common random numbers works, and the step-0 row proves it.** A and B hold
+identical zero-init weights there, so they are the same policy; with common
+draws they now score identically on all 36 secrets, not merely in aggregate.
+The frozen control's spread across seven checkpoints is exactly **0.0000**,
+against 0.062 for the same control in-run. That 0.062 was never a noise floor
+of the task — it was the sampler asymmetry of §9.10, and it is gone.
+
+**The verdict: suggestive, not significant.**
+
+    paired t-test    +0.0694, sd 0.2746, t = +1.52   (need 2.03; p ~ 0.14)
+    sign test        16 up vs 6 down of 22 changed   (two-sided p = 0.0525)
+
+Neither clears the bar, and the two tests disagreeing about how close it is
+(p 0.14 vs 0.053) is itself informative: the difference distribution is
+zero-inflated — 14 of 36 secrets are untouched — so a few large per-secret
+swings inflate the t-test's denominator. Report both; claim neither.
+
+**What makes this credible rather than another forking path is that it
+reconciles with the primary result instead of overturning it.** §9.9 concluded
+from validation-v2 that complete transfer (+0.204) would have been detectable
+and was not, while anything at or below +0.10 was invisible. The replay's point
+estimate is **+0.069 — about 34% of the training gain — which sits just under
+validation-v2's pooled MDE of +0.0747.** The two instruments agree: a true
+effect of this size is exactly what produces a flat v2 series and a
+just-short-of-significant v3 series. That is a consistency check, not a
+contradiction, and it was predicted before the replay ran.
+
+The honest summary of v8: the solver learned +0.204 within-secret on the bank,
+roughly a third of that appears on held-out secrets, and no instrument this
+project has yet built can resolve an effect that size to significance.
+
+**What it would take.** At the observed paired sd of 0.2746, resolving +0.069
+needs about **123 secrets** — and validation-v3 has 36, capped by the creator
+diversity ceiling of §9.12. Raising validation K would help less than it looks:
+most of that sd is genuine per-secret heterogeneity (the policy really does
+improve some secrets and degrade others), not sampling noise, and K does not
+touch it. **So diversity now binds measurement as well as training** — the same
+constraint, arriving from two directions, and both roads lead to the creator.
