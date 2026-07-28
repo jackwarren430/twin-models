@@ -71,6 +71,7 @@ from twin.games.twentyq.prompts import (  # noqa: E402
     answerer_user,
     creator_secret_user,
     guesser_user,
+    hinted_category,
 )
 from twin.games.twentyq.schema import (  # noqa: E402
     Secret,
@@ -165,6 +166,9 @@ def signature_of(args, cfg) -> dict:
         "judge_model": str(args.judge_model),
         "categories": list(qcfg.categories),
         "rollouts_per_category": args.rollouts_per_category,
+        # Changes which candidates exist at all: hinted generation
+        # yields 2.23x more novel names (probe_creator_diversity.py).
+        "hints": bool(getattr(args, "hints", True)),
         "exclusion_cap": args.exclusion_cap,
         "targets": [float(t) for t in args.targets],
         "episodes_per_candidate": args.episodes_per_candidate,
@@ -213,8 +217,12 @@ def generate_candidates(base, cfg, args) -> tuple[list[Secret], int]:
             # "not so obvious ... not so obscure" clause that contradicted its
             # own target. It is fixed, so treat 9.2% as a floor on yield.)
             target_rate = args.targets[i % len(args.targets)]
+            # Hint steers GENERATION only; secret.category is forced back to
+            # the plain category below, because the stored field drives
+            # category-balanced drawing and per-category reporting.
             user = creator_secret_user(
-                category, rank=i % max(1, qcfg.n_secrets),
+                hinted_category(category, i, args.hints),
+                rank=i % max(1, qcfg.n_secrets),
                 n_secrets=qcfg.n_secrets,
                 difficulty=round(1.0 - target_rate, 2), target_rate=target_rate,
                 recent=seen_names[-args.exclusion_cap:],
@@ -337,6 +345,15 @@ def main() -> None:
     # for the policy that will actually train on it. Measured on v8: 61 of 61
     # bank-v1 secrets drifted +0.074 mean within 24 iterations, so a rebuild
     # against the base model would re-deal secrets the solver has outgrown.
+    # Serial generation produced SEVEN distinct animals from sixty draws; the
+    # same budget with a rotating subcategory hint produced thirty-seven, and
+    # 2.23x more novel names overall (scripts/probe_creator_diversity.py). The
+    # bottleneck was the prompt, not the model's vocabulary. On by default
+    # because the unhinted generator is measurably broken; --no-hints is kept so
+    # the bank-v1 population can be reproduced.
+    ap.add_argument("--hints", action=argparse.BooleanOptionalAction,
+                    default=True,
+                    help="rotate subcategory hints through generation prompts")
     ap.add_argument("--adapter", type=Path, default=None,
                     help="solver LoRA checkpoint to calibrate against; "
                          "omit to measure with the base model")

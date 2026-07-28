@@ -10,6 +10,50 @@ reuses the plain single-turn ``BaseTrainer._generate`` path unchanged.
 
 import json
 
+# Subcategory hints appended to the category when generating candidates in bulk.
+#
+# Asking for one secret at a time with a growing "do not repeat these" list does
+# not reach the model's vocabulary: measured 2026-07-27, serial generation
+# produced SEVEN distinct animals from sixty draws, while the same budget with a
+# rotating hint produced thirty-seven — 2.23x more novel names overall
+# (scripts/probe_creator_diversity.py). The model knows the entities; the prompt
+# was the bottleneck. Hints partition the space so consecutive draws are not
+# competing for the same few high-probability answers.
+#
+# These steer GENERATION only. The stored `category` must remain the plain
+# category, because it drives category-balanced drawing and per-category
+# reporting downstream.
+SUBCATEGORY_HINTS: dict[str, list[str]] = {
+    "animal": ["that lives in water", "that can fly", "found in a rainforest",
+               "kept as a pet", "from Africa", "that is an insect",
+               "from the Arctic", "that is a reptile", "that lives underground",
+               "found on a farm"],
+    "food": ["eaten for breakfast", "that is a vegetable", "from Asia",
+             "that is a dessert", "eaten at a restaurant", "that is a fruit",
+             "from Mexico", "that is a drink", "made from grain",
+             "eaten with the hands"],
+    "household object": ["found in a kitchen", "found in a bathroom",
+                         "used for cleaning", "made of metal",
+                         "found in a garage", "that uses electricity",
+                         "found in a bedroom", "used for writing",
+                         "found in a garden", "that is furniture"],
+}
+
+
+def hinted_category(category: str, index: int, enabled: bool = True) -> str:
+    """``category`` with a rotating subcategory hint for generation prompts.
+
+    Deterministic in ``index`` so a seeded build is reproducible and every hint
+    gets even coverage. Categories without hints pass through unchanged, so
+    adding a category never breaks generation — it just does not get the 2.23x
+    until hints are written for it.
+    """
+    hints = SUBCATEGORY_HINTS.get(category) if enabled else None
+    if not hints:
+        return category
+    return f"{category} {hints[index % len(hints)]}"
+
+
 CREATOR_SYSTEM = """You are the secret-setter in a game of 20 questions. You pick \
 a secret; an opponent of about your own ability then tries to identify it with \
 yes/no questions. Your goal is CALIBRATION, not maximum difficulty: each secret \

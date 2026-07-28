@@ -25,7 +25,7 @@ _spec.loader.exec_module(btb)
 def _args(**over):
     base = dict(judge_model="Qwen/Qwen3-8B", rollouts_per_category=170,
                 targets=[0.95, 0.9, 0.8], episodes_per_candidate=8,
-                exclusion_cap=250, adapter=None, adapter_name="B",
+                exclusion_cap=250, adapter=None, adapter_name="B", hints=True,
                 holdout=[Path("data/twentyq-validation-v2.json")], seed=1)
     base.update(over)
     return SimpleNamespace(**base)
@@ -269,3 +269,47 @@ def test_dedup_does_not_mutate_its_input():
     before = deepcopy([s.to_dict() for s in cands])
     btb.dedup(cands, reserved=[])
     assert [s.to_dict() for s in cands] == before
+
+
+# ----- subcategory hints ---------------------------------------------------
+def test_hints_rotate_deterministically_and_cover_evenly():
+    """Deterministic in the draw index so a seeded build is reproducible and
+    every hint gets equal budget. Measured payoff: serial generation yielded 7
+    distinct animals from 60 draws, hinted yielded 37."""
+    from twin.games.twentyq.prompts import SUBCATEGORY_HINTS, hinted_category
+    n = len(SUBCATEGORY_HINTS["animal"])
+    got = [hinted_category("animal", i) for i in range(n)]
+    assert len(set(got)) == n
+    assert hinted_category("animal", 0) == hinted_category("animal", n)
+    assert all(g.startswith("animal ") for g in got)
+
+
+def test_hints_can_be_disabled_to_reproduce_bank_v1():
+    from twin.games.twentyq.prompts import hinted_category
+    assert hinted_category("animal", 3, enabled=False) == "animal"
+
+
+def test_unhinted_category_passes_through_unchanged():
+    """Adding a new category must never break generation — it just does not get
+    the diversity multiplier until hints are written for it."""
+    from twin.games.twentyq.prompts import hinted_category
+    assert hinted_category("vehicle", 5) == "vehicle"
+
+
+def test_hints_enter_the_signature():
+    """Hints change which candidates exist at all, so a hinted and an unhinted
+    population must never be merged into one checkpoint claiming a single set
+    of generation conditions."""
+    assert (btb.signature_of(_args(hints=True), _cfg())
+            != btb.signature_of(_args(hints=False), _cfg()))
+
+
+def test_stored_category_never_carries_the_hint():
+    """The hint steers generation only. The stored category drives
+    category-balanced drawing and per-category reporting, so a secret tagged
+    'animal that lives in water' would fragment both."""
+    rows = btb.build_secret_rows(
+        [{"secret": "Otter", "category": "animal", "notes": "",
+          "measured_guess_rate": 0.5}], "bank-v2")
+    assert rows[0]["category"] == "animal"
+    assert rows[0]["secret_id"] == "bank-v2-animal-000"
