@@ -1,0 +1,1117 @@
+{
+  "name": "twentyq-bank-v2",
+  "version": 2,
+  "description": "Band-selected secret set: creator-generated candidates, judge-vetted fail-closed, then CALIBRATED by playing 16 real episodes each, guesser = solver adapter B from checkpoints/twentyq-v8-bank/adapter_B_step60.safetensors and answerer = base; kept only where the measured win rate is in [0.0625, 0.9375], i.e. that policy both wins and loses each secret. As a training bank that gives every GRPO group a win and a loss to compare; as an evaluation set it is what gives the metric dynamic range, since a secret no checkpoint ever wins cannot register that a checkpoint improved. Disjoint from twentyq-validation-v2 + twentyq-validation-v3. Rates measured at max_turns=21, question_retries=4; they drift as the solver improves and must be re-measured.",
+  "source_model": "~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/snapshots/9dbdf8a839e4e9e0eb56ed80cc8886661d3817cf",
+  "solver_adapter": "checkpoints/twentyq-v8-bank/adapter_B_step60.safetensors",
+  "band": [
+    0.0625,
+    0.9375
+  ],
+  "secrets": [
+    {
+      "secret_id": "twentyq-bank-v2-animal-000",
+      "secret": "Eagle",
+      "category": "animal",
+      "difficulty": 0.062,
+      "measured_guess_rate": 0.9375,
+      "notes": "An eagle is a very common and instantly recognizable flying animal."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-001",
+      "secret": "Jaguar",
+      "category": "animal",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "A well-known, iconic predator of rainforests, fitting the familiar target profile."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-002",
+      "secret": "Dog",
+      "category": "animal",
+      "difficulty": 0.125,
+      "measured_guess_rate": 0.875,
+      "notes": "Extremely familiar and a common pet."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-003",
+      "secret": "Lion",
+      "category": "animal",
+      "difficulty": 0.25,
+      "measured_guess_rate": 0.75,
+      "notes": "Lion is a very common and instantly recognizable African animal, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-004",
+      "secret": "Ant",
+      "category": "animal",
+      "difficulty": 0.25,
+      "measured_guess_rate": 0.75,
+      "notes": "Ant is a very common and instantly recognizable insect, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-005",
+      "secret": "Polar Bear",
+      "category": "animal",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A very common and instantly recognizable animal from the Arctic, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-006",
+      "secret": "Snake",
+      "category": "animal",
+      "difficulty": 0.125,
+      "measured_guess_rate": 0.875,
+      "notes": "Snake is a very common, instantly recognizable reptile, fitting the target of familiarity."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-007",
+      "secret": "Chicken",
+      "category": "animal",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "Chicken is a very common, instantly recognizable farm animal."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-008",
+      "secret": "Dolphin",
+      "category": "animal",
+      "difficulty": 0.062,
+      "measured_guess_rate": 0.9375,
+      "notes": "Dolphins are very familiar and commonly known aquatic animals."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-009",
+      "secret": "Butterfly",
+      "category": "animal",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A common, recognizable flying animal that is distinct from large birds or mammals."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-010",
+      "secret": "Hamster",
+      "category": "animal",
+      "difficulty": 0.062,
+      "measured_guess_rate": 0.9375,
+      "notes": "A very common, instantly recognizable small pet that fits the familiar target profile."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-011",
+      "secret": "Walrus",
+      "category": "animal",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very recognizable Arctic marine mammal, fitting the familiar target profile."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-012",
+      "secret": "Worm",
+      "category": "animal",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "Worms are a very common and instantly recognizable underground animal, fitting the target of familiarity."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-013",
+      "secret": "Pig",
+      "category": "animal",
+      "difficulty": 0.562,
+      "measured_guess_rate": 0.4375,
+      "notes": "Pig is a very common, instantly recognizable farm animal, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-014",
+      "secret": "Sparrow",
+      "category": "animal",
+      "difficulty": 0.562,
+      "measured_guess_rate": 0.4375,
+      "notes": "Sparrow is a very common and instantly recognizable small flying bird, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-015",
+      "secret": "Zebra",
+      "category": "animal",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A very common and instantly recognizable African animal."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-016",
+      "secret": "Grasshopper",
+      "category": "animal",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common and instantly recognizable insect."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-017",
+      "secret": "Alligator",
+      "category": "animal",
+      "difficulty": 0.188,
+      "measured_guess_rate": 0.8125,
+      "notes": "A very common and recognizable large reptile, fitting the 'familiar' target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-018",
+      "secret": "Earthworm",
+      "category": "animal",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common, recognizable earthworm that fits the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-019",
+      "secret": "Fish",
+      "category": "animal",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "Fish is a very common and instantly recognizable animal in the water category, fitting the target of a familiar concept."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-020",
+      "secret": "Goat",
+      "category": "animal",
+      "difficulty": 0.25,
+      "measured_guess_rate": 0.75,
+      "notes": "A common farm animal, recognizable to most."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-021",
+      "secret": "Albatross",
+      "category": "animal",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A large, well-known seabird, recognizable enough for a familiar guesser."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-022",
+      "secret": "Duck",
+      "category": "animal",
+      "difficulty": 0.188,
+      "measured_guess_rate": 0.8125,
+      "notes": "A very common farm animal, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-023",
+      "secret": "Octopus",
+      "category": "animal",
+      "difficulty": 0.062,
+      "measured_guess_rate": 0.9375,
+      "notes": "A well-known, intelligent cephalopod, recognizable but slightly less common than 'fish' or 'whale'."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-024",
+      "secret": "Goldfish",
+      "category": "animal",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "Very common and instantly recognizable pet."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-025",
+      "secret": "Gecko",
+      "category": "animal",
+      "difficulty": 0.312,
+      "measured_guess_rate": 0.6875,
+      "notes": "A common, instantly recognizable reptile, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-026",
+      "secret": "Turkey",
+      "category": "animal",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common farm bird, highly familiar to the average person."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-027",
+      "secret": "Hyena",
+      "category": "animal",
+      "difficulty": 0.438,
+      "measured_guess_rate": 0.5625,
+      "notes": "A common and instantly recognizable African predator."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-028",
+      "secret": "Goose",
+      "category": "animal",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "A common farm bird, highly recognizable."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-029",
+      "secret": "Guinea Pig",
+      "category": "animal",
+      "difficulty": 0.188,
+      "measured_guess_rate": 0.8125,
+      "notes": "A relatively common small pet that fits the familiar target profile."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-030",
+      "secret": "Iguana",
+      "category": "animal",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A common, recognizable reptile that is not a snake or turtle."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-animal-031",
+      "secret": "Crow",
+      "category": "animal",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common, instantly recognizable bird that fits the target of a familiar flying animal."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-000",
+      "secret": "Cereal",
+      "category": "food",
+      "difficulty": 0.312,
+      "measured_guess_rate": 0.6875,
+      "notes": "Cereal is a very common and instantly recognizable breakfast food, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-001",
+      "secret": "Sushi",
+      "category": "food",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "Sushi is a very common and instantly recognizable food from Asia."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-002",
+      "secret": "Steak",
+      "category": "food",
+      "difficulty": 0.062,
+      "measured_guess_rate": 0.9375,
+      "notes": "Steak is a very common, instantly recognizable main course in many restaurants."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-003",
+      "secret": "Coffee",
+      "category": "food",
+      "difficulty": 0.438,
+      "measured_guess_rate": 0.5625,
+      "notes": "Coffee is an extremely common, instantly recognizable drink."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-004",
+      "secret": "Oatmeal",
+      "category": "food",
+      "difficulty": 0.688,
+      "measured_guess_rate": 0.3125,
+      "notes": "Very common and instantly recognizable breakfast food."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-005",
+      "secret": "Broccoli",
+      "category": "food",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "Broccoli is a very common, instantly recognizable green vegetable."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-006",
+      "secret": "Pasta",
+      "category": "food",
+      "difficulty": 0.125,
+      "measured_guess_rate": 0.875,
+      "notes": "Pasta is a very common, instantly recognizable dish served at many restaurants."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-007",
+      "secret": "Orange",
+      "category": "food",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "Orange is a very common, instantly recognizable fruit, fitting the target for high guesser success."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-008",
+      "secret": "Tea",
+      "category": "food",
+      "difficulty": 0.438,
+      "measured_guess_rate": 0.5625,
+      "notes": "Tea is a very common, instantly recognizable beverage, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-009",
+      "secret": "Rice",
+      "category": "food",
+      "difficulty": 0.062,
+      "measured_guess_rate": 0.9375,
+      "notes": "Rice is a fundamental and instantly recognizable grain-based food."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-010",
+      "secret": "Eggs",
+      "category": "food",
+      "difficulty": 0.688,
+      "measured_guess_rate": 0.3125,
+      "notes": "Eggs are a very common, instantly recognizable breakfast food, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-011",
+      "secret": "Spinach",
+      "category": "food",
+      "difficulty": 0.062,
+      "measured_guess_rate": 0.9375,
+      "notes": "Spinach is a very common, instantly recognizable leafy green vegetable."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-012",
+      "secret": "Brownie",
+      "category": "food",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "Brownie is a common, instantly recognizable dessert that fits the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-013",
+      "secret": "Mango",
+      "category": "food",
+      "difficulty": 0.688,
+      "measured_guess_rate": 0.3125,
+      "notes": "Mango is a very common, recognizable tropical fruit, fitting the 'familiar' target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-014",
+      "secret": "Milk",
+      "category": "food",
+      "difficulty": 0.062,
+      "measured_guess_rate": 0.9375,
+      "notes": "Milk is a universally known, common beverage that fits the target of being instantly recognizable."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-015",
+      "secret": "Quinoa",
+      "category": "food",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "Quinoa is a common, recognizable grain/seed that fits the familiar target profile."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-016",
+      "secret": "French Fries",
+      "category": "food",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common, instantly recognizable food item eaten with the hands."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-017",
+      "secret": "Pancakes",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "Pancakes are a very common, instantly recognizable breakfast food, fitting the target of the familiar."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-018",
+      "secret": "Grapefruit",
+      "category": "food",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A common citrus fruit that is recognizable but less common than apple or banana."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-019",
+      "secret": "Chili",
+      "category": "food",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common, instantly recognizable staple food in Mexican cuisine."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-020",
+      "secret": "Whiskey",
+      "category": "food",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A common, recognizable spirit that fits the 'drink' category but is less ubiquitous than plain water or coffee."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-021",
+      "secret": "Peanut",
+      "category": "food",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A very common, instantly recognizable food eaten directly with the hands."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-022",
+      "secret": "Yogurt",
+      "category": "food",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "Yogurt is a very common breakfast item, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-023",
+      "secret": "Zucchini",
+      "category": "food",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A common, recognizable summer squash, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-024",
+      "secret": "Nuts",
+      "category": "food",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "Nuts are a very common, instantly recognizable food eaten directly with the hands."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-025",
+      "secret": "Pineapple",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common, distinct tropical fruit, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-026",
+      "secret": "Toast",
+      "category": "food",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "Toast is a very common, instantly recognizable breakfast food."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-027",
+      "secret": "Onion",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "Onion is a very common, instantly recognizable vegetable, fitting the target of familiarity."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-028",
+      "secret": "Kiwi",
+      "category": "food",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A common but slightly less ubiquitous fruit than apple or banana, fitting the familiar but not instantly obvious target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-029",
+      "secret": "Water",
+      "category": "food",
+      "difficulty": 0.188,
+      "measured_guess_rate": 0.8125,
+      "notes": "Water is a fundamental, instantly recognizable drink, fitting the target for high guessability."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-030",
+      "secret": "Juice",
+      "category": "food",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "Very common drink, highly familiar, fits the target of a common item."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-031",
+      "secret": "Raspberry",
+      "category": "food",
+      "difficulty": 0.688,
+      "measured_guess_rate": 0.3125,
+      "notes": "A common, instantly recognizable berry, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-032",
+      "secret": "Soda",
+      "category": "food",
+      "difficulty": 0.188,
+      "measured_guess_rate": 0.8125,
+      "notes": "Soda is a very common, instantly recognizable, non-alcoholic beverage that fits the familiar target well."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-033",
+      "secret": "Cherry",
+      "category": "food",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "Cherry is a very common, instantly recognizable fruit."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-034",
+      "secret": "Cucumber",
+      "category": "food",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "A very common, instantly recognizable vegetable."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-035",
+      "secret": "Green Bean",
+      "category": "food",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A very common, instantly recognizable green vegetable."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-036",
+      "secret": "Green Tea",
+      "category": "food",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "Very common and instantly recognizable, fitting the target of familiar items."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-037",
+      "secret": "Beer",
+      "category": "food",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "Very common alcoholic beverage, easily guessable."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-038",
+      "secret": "Lime",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "Common citrus fruit, easily guessable."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-039",
+      "secret": "Blueberry",
+      "category": "food",
+      "difficulty": 0.312,
+      "measured_guess_rate": 0.6875,
+      "notes": "A common, instantly recognizable berry, fitting the familiar target for a 95% success rate."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-040",
+      "secret": "Watermelon",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "Highly familiar summer fruit, aiming for high recognition."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-041",
+      "secret": "Milkshake",
+      "category": "food",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A familiar, common blended drink, fitting the target for high guesser success."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-042",
+      "secret": "Pork Belly",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, recognizable cut of meat often used in Mexican cuisine."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-043",
+      "secret": "Mussels",
+      "category": "food",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A recognizable seafood item often served in restaurants, fitting the familiar category."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-food-044",
+      "secret": "Smoothie",
+      "category": "food",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "It is a very common, recognizable drink made from blended ingredients."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-000",
+      "secret": "Spatula",
+      "category": "household object",
+      "difficulty": 0.5,
+      "measured_guess_rate": 0.5,
+      "notes": "A very common, instantly recognizable kitchen tool."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-001",
+      "secret": "Toothbrush",
+      "category": "household object",
+      "difficulty": 0.062,
+      "measured_guess_rate": 0.9375,
+      "notes": "Highly familiar and common item, fitting the target of a high success rate."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-002",
+      "secret": "Frying pan",
+      "category": "household object",
+      "difficulty": 0.062,
+      "measured_guess_rate": 0.9375,
+      "notes": "Very common metal cooking utensil, highly familiar to the average person."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-003",
+      "secret": "Sofa",
+      "category": "household object",
+      "difficulty": 0.188,
+      "measured_guess_rate": 0.8125,
+      "notes": "A very common and instantly recognizable piece of furniture."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-004",
+      "secret": "Microwave",
+      "category": "household object",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A very common, instantly recognizable appliance in a modern kitchen."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-005",
+      "secret": "Sponge",
+      "category": "household object",
+      "difficulty": 0.125,
+      "measured_guess_rate": 0.875,
+      "notes": "A very common, instantly recognizable cleaning tool."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-006",
+      "secret": "Wheelbarrow",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, recognizable tool often stored in a garage."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-007",
+      "secret": "Alarm clock",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "It is a very common, instantly recognizable object found in a bedroom."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-008",
+      "secret": "Chair",
+      "category": "household object",
+      "difficulty": 0.562,
+      "measured_guess_rate": 0.4375,
+      "notes": "A very common and instantly recognizable piece of furniture, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-009",
+      "secret": "Cutting board",
+      "category": "household object",
+      "difficulty": 0.438,
+      "measured_guess_rate": 0.5625,
+      "notes": "A very common kitchen item, highly familiar to most people."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-010",
+      "secret": "Mirror",
+      "category": "household object",
+      "difficulty": 0.312,
+      "measured_guess_rate": 0.6875,
+      "notes": "A very common, instantly recognizable bathroom object."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-011",
+      "secret": "Dustpan",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common, instantly recognizable cleaning tool."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-012",
+      "secret": "Pillow",
+      "category": "household object",
+      "difficulty": 0.312,
+      "measured_guess_rate": 0.6875,
+      "notes": "A very common, instantly recognizable item in a bedroom, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-013",
+      "secret": "Notebook",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common, instantly recognizable item used for writing."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-014",
+      "secret": "Blender",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A common, instantly recognizable kitchen appliance."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-015",
+      "secret": "Shampoo",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "Very common and instantly recognizable item in a bathroom."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-016",
+      "secret": "Vacuum cleaner",
+      "category": "household object",
+      "difficulty": 0.438,
+      "measured_guess_rate": 0.5625,
+      "notes": "A very common, instantly recognizable cleaning appliance."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-017",
+      "secret": "Shovel",
+      "category": "household object",
+      "difficulty": 0.125,
+      "measured_guess_rate": 0.875,
+      "notes": "A very common and instantly recognizable tool found in a garage."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-018",
+      "secret": "Electric kettle",
+      "category": "household object",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "Common appliance, easily recognizable, fits the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-019",
+      "secret": "Closet",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A common, large fixture in a bedroom that is easily recognized."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-020",
+      "secret": "Garden gnome",
+      "category": "household object",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "A very common and instantly recognizable item in a garden setting."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-021",
+      "secret": "Mop",
+      "category": "household object",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A very common, instantly recognizable cleaning tool."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-022",
+      "secret": "Can opener",
+      "category": "household object",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "A common kitchen item made of metal that is instantly recognizable."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-023",
+      "secret": "Workbench",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A workbench is a common, instantly recognizable piece of furniture found in a garage."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-024",
+      "secret": "Nightstand",
+      "category": "household object",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "A very common, instantly recognizable piece of furniture in a bedroom."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-025",
+      "secret": "Wardrobe",
+      "category": "household object",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A common, instantly recognizable piece of furniture, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-026",
+      "secret": "Soap dish",
+      "category": "household object",
+      "difficulty": 0.688,
+      "measured_guess_rate": 0.3125,
+      "notes": "A very common, instantly recognizable item found in a bathroom, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-027",
+      "secret": "Electric toothbrush",
+      "category": "household object",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "A common, recognizable electric appliance."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-028",
+      "secret": "Hanger",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common item in a bedroom, easily guessable."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-029",
+      "secret": "Bookshelf",
+      "category": "household object",
+      "difficulty": 0.25,
+      "measured_guess_rate": 0.75,
+      "notes": "A common, instantly recognizable piece of furniture often named early on."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-030",
+      "secret": "Comb",
+      "category": "household object",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "A very common, instantly recognizable item found in a bathroom that is not a toothbrush or sponge."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-031",
+      "secret": "Electric fan",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common household item that uses electricity and is easily recognizable."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-032",
+      "secret": "Armchair",
+      "category": "household object",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "A very common piece of furniture that is distinct from a simple 'chair' or 'sofa'."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-033",
+      "secret": "Electric blanket",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A common, recognizable appliance that fits the category."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-034",
+      "secret": "Cotton swab",
+      "category": "household object",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "A common, instantly recognizable item used in a bathroom."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-035",
+      "secret": "Rag",
+      "category": "household object",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "Very common, instantly recognizable cleaning item."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-036",
+      "secret": "Cotton balls",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common, recognizable item in a bathroom that fits the familiar/common target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-037",
+      "secret": "Buckets",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common metal household object, fitting the familiar target for a 95% success rate."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-038",
+      "secret": "Patio umbrella",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A common, instantly recognizable item found in a garden setting."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-039",
+      "secret": "Dishcloth",
+      "category": "household object",
+      "difficulty": 0.688,
+      "measured_guess_rate": 0.3125,
+      "notes": "Very common cleaning item, highly familiar."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-040",
+      "secret": "Dining table",
+      "category": "household object",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "A very common and instantly recognizable piece of furniture."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-041",
+      "secret": "Shaving razor",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common item, expected to be guessed early."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-042",
+      "secret": "Garden fork",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, recognizable digging tool found in a garden."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-043",
+      "secret": "Armoire",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A common, though slightly less ubiquitous, piece of large furniture."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-044",
+      "secret": "Clothes hanger",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common item found in a bedroom, fitting the familiar target for an 80% success rate."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-045",
+      "secret": "Shaving mirror",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common, instantly recognizable item in a bathroom, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-046",
+      "secret": "Plates",
+      "category": "household object",
+      "difficulty": 0.312,
+      "measured_guess_rate": 0.6875,
+      "notes": "Very common kitchen item, highly familiar."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-047",
+      "secret": "Pot",
+      "category": "household object",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A very common, recognizable metal household object."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-048",
+      "secret": "Electric shaver",
+      "category": "household object",
+      "difficulty": 0.688,
+      "measured_guess_rate": 0.3125,
+      "notes": "A common, instantly recognizable personal grooming item that uses electricity."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-049",
+      "secret": "Desk",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A common, instantly recognizable piece of furniture often guessed early on."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-050",
+      "secret": "Soap",
+      "category": "household object",
+      "difficulty": 0.5,
+      "measured_guess_rate": 0.5,
+      "notes": "Very common and instantly recognizable in a bathroom."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-051",
+      "secret": "Dish soap dispenser",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common and instantly recognizable item used for cleaning dishes."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-052",
+      "secret": "Trash can",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common, instantly recognizable receptacle for waste."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-053",
+      "secret": "Razor",
+      "category": "household object",
+      "difficulty": 0.312,
+      "measured_guess_rate": 0.6875,
+      "notes": "A common, instantly recognizable item found in a bathroom."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-054",
+      "secret": "Kettle",
+      "category": "household object",
+      "difficulty": 0.375,
+      "measured_guess_rate": 0.625,
+      "notes": "A common kitchen item made of metal, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-055",
+      "secret": "Soap dispenser",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common and instantly recognizable object in a bathroom."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-056",
+      "secret": "Garden spade",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A spade is a very common, recognizable gardening tool."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-057",
+      "secret": "Pencil",
+      "category": "household object",
+      "difficulty": 0.938,
+      "measured_guess_rate": 0.0625,
+      "notes": "A very common, singular item used for writing, fitting the familiar target well."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-058",
+      "secret": "Colander",
+      "category": "household object",
+      "difficulty": 0.25,
+      "measured_guess_rate": 0.75,
+      "notes": "A common kitchen item, easily recognizable, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-059",
+      "secret": "Hair dryer",
+      "category": "household object",
+      "difficulty": 0.562,
+      "measured_guess_rate": 0.4375,
+      "notes": "A common, instantly recognizable household object that uses electricity, and is not on the excluded list."
+    },
+    {
+      "secret_id": "twentyq-bank-v2-household-060",
+      "secret": "Toaster oven",
+      "category": "household object",
+      "difficulty": 0.812,
+      "measured_guess_rate": 0.1875,
+      "notes": "A common kitchen appliance that uses electricity, fitting the familiar target."
+    }
+  ]
+}
