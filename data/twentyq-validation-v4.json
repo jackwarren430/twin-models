@@ -1,0 +1,165 @@
+{
+  "name": "twentyq-validation-v4",
+  "version": 4,
+  "description": "Band-selected secret set: creator-generated candidates, judge-vetted fail-closed, then CALIBRATED by playing 8 real episodes each, guesser = the base model and answerer = base; kept only where the measured win rate is in [0.125, 0.875], i.e. that policy both wins and loses each secret. As a training bank that gives every GRPO group a win and a loss to compare; as an evaluation set it is what gives the metric dynamic range, since a secret no checkpoint ever wins cannot register that a checkpoint improved. Disjoint from twentyq-validation-v2 + twentyq-validation-v3 + twentyq-bank-v1 + twentyq-bank-v2. Rates measured at max_turns=21, question_retries=4; they drift as the solver improves and must be re-measured.",
+  "source_model": "~/.cache/huggingface/hub/models--google--gemma-4-E2B-it/snapshots/9dbdf8a839e4e9e0eb56ed80cc8886661d3817cf",
+  "solver_adapter": null,
+  "band": [
+    0.125,
+    0.875
+  ],
+  "secrets": [
+    {
+      "secret_id": "twentyq-validation-v4-animal-000",
+      "secret": "Lizard",
+      "category": "animal",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A very common, instantly recognizable reptile."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-animal-001",
+      "secret": "Ferret",
+      "category": "animal",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, recognized small pet that is distinct from the larger mammals and birds listed."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-animal-002",
+      "secret": "Baboon",
+      "category": "animal",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, recognizable primate from Africa that is familiar but less common than a lion or elephant."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-animal-003",
+      "secret": "Crab",
+      "category": "animal",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "Crabs are a common, instantly recognizable aquatic animal, fitting the familiar target rate."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-food-000",
+      "secret": "Lemonade",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common, recognizable, non-alcoholic beverage."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-food-001",
+      "secret": "Wine",
+      "category": "food",
+      "difficulty": 0.75,
+      "measured_guess_rate": 0.25,
+      "notes": "A common, instantly recognizable alcoholic beverage that fits the familiar target well."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-food-002",
+      "secret": "Bacon",
+      "category": "food",
+      "difficulty": 0.125,
+      "measured_guess_rate": 0.875,
+      "notes": "A very common, instantly recognizable breakfast item."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-food-003",
+      "secret": "Wheat",
+      "category": "food",
+      "difficulty": 0.625,
+      "measured_guess_rate": 0.375,
+      "notes": "A fundamental grain used to make many common foods, making it familiar yet specific."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-food-004",
+      "secret": "Vodka",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "Vodka is a very common, instantly recognizable spirit/drink."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-food-005",
+      "secret": "Lobster",
+      "category": "food",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, recognizable seafood item often featured in upscale restaurants."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-household-000",
+      "secret": "Toilet brush",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, but slightly less obvious item than toothbrush or soap dish."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-household-001",
+      "secret": "Dresser",
+      "category": "household object",
+      "difficulty": 0.5,
+      "measured_guess_rate": 0.5,
+      "notes": "A very common, large piece of furniture found in a bedroom."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-household-002",
+      "secret": "Garden trowel",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, recognizable hand tool used in gardening, fitting the familiar target."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-household-003",
+      "secret": "Mixing bowl",
+      "category": "household object",
+      "difficulty": 0.25,
+      "measured_guess_rate": 0.75,
+      "notes": "A very common, instantly recognizable item for food preparation."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-household-004",
+      "secret": "Scrub brush",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, recognizable cleaning tool, fitting the target of familiar household objects."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-household-005",
+      "secret": "Toilet paper holder",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common, instantly recognizable fixture found in most bathrooms."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-household-006",
+      "secret": "Coffee mug",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A very common, instantly recognizable item in a kitchen."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-household-007",
+      "secret": "Electric heater",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common household item that uses electricity, fitting the familiar category well."
+    },
+    {
+      "secret_id": "twentyq-validation-v4-household-008",
+      "secret": "Squeegee",
+      "category": "household object",
+      "difficulty": 0.875,
+      "measured_guess_rate": 0.125,
+      "notes": "A common tool for cleaning windows and surfaces."
+    }
+  ]
+}

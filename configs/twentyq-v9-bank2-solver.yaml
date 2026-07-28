@@ -1,125 +1,101 @@
 # 21-questions v9 — solver on a RE-MATCHED frontier bank (bank-v2).
 #
-# PROVISIONAL until v8 finishes and its checkpoints are replayed against
-# validation-v3. The design decisions below are robust to either replay
-# outcome; the numbers quoted from v8 are as of iteration 25 of 60.
+# WHAT v8 SETTLED (final, 60 iterations, DESIGN §9.7-§9.11)
 #
-# What v8 established, and what it could not.
+# The group-variance wall was real and a measured bank removes it:
+# usable_group_rate 0.125 -> 0.823 mean, and within-secret win rate rose
+# +0.204 +-0.066 end-to-end (first ten iterations vs last ten, 55 secrets in
+# both). Instance memorisation ruled out by two exposure tests. The solver
+# learns.
 #
-# Established. The group-variance wall was real and a measured frontier bank
-# removes it: usable_group_rate 0.125 -> 0.896 mean, and within-secret training
-# win rate rose +0.148 +-0.048 (95%) over 59 secrets played in both halves of
-# the run — same secrets on both sides, so neither the category draw nor
-# regression to the mean applies. Instance memorisation is ruled out by two
-# independent exposure tests (DESIGN §9.7). The solver learns.
+# Transfer is real but small. Replaying v8's checkpoints against a resolvable
+# instrument under common random numbers gave B 0.3542 -> 0.4236, i.e. +0.069,
+# about 34% of the training gain — suggestive but not significant (paired
+# t=1.52, sign test p=0.053). On the pre-registered validation-v2 the criterion
+# failed outright. Both instruments agree, because +0.069 sits just under
+# validation-v2's pooled MDE of +0.0747.
 #
-# Not established. Whether that transfers. The pre-registered validation
-# criterion came back inside the frozen control's own spread (B-A across steps
-# 0..20: +0.000, +0.031, +0.052, +0.010, -0.005; control spread 0.042). But
-# validation-v2 could not have answered the question either way: 15 of its 24
-# secrets are 0/8 for the trained adapter at EVERY checkpoint and cow is pinned
-# at 8/8, so its dynamic range is about seven secrets. That is the same
-# zero-variance argument as the wall itself, applied to the instrument.
+# A static bank has a measurable shelf life. usable_group_rate fell 0.938 ->
+# 0.713 across the run while training win rate rose, and building bank-v2
+# showed only 34 of bank-v1's 61 secrets still on the frontier — 44% left it in
+# one run. That is what v9 is for.
 #
-# So v9 changes exactly two things, and both are about making the run readable.
+# TWO CHANGES, both deliberate.
 #
 #   1. bank_path: data/twentyq-bank-v2.json — the frontier RE-MATCHED to the
-#      trained policy. This is the point of the run. A frontier bank is defined
-#      relative to one solver, and v8 drifted all 61 bank-v1 entries +0.074
-#      mean within 24 iterations, with usable_group_rate in the last window
-#      already down to 0.750 from 0.938. bank-v2 is calibrated by playing the
-#      v8-final adapter B, not the base model (build_twentyq_bank.py --adapter),
-#      so it is a frontier for the policy that will actually train on it.
+#      trained policy, calibrated by PLAYING adapter_B_step60 rather than the
+#      base model. 138 secrets against bank-v1's 61, because hinted generation
+#      (DESIGN §9.12) gave 3.7x more distinct candidates from the same budget.
 #
 #      This is the direct test of the DECAY HYPOTHESIS: do solver gains
 #      continue once the frontier is re-matched, or was v8 a one-off harvest
 #      from a bank that has now been learned? The answer decides whether the
-#      creator (priority two) is polish or is load-bearing — a static bank that
-#      must be rebuilt by hand every run is precisely the job the creator
-#      exists to automate.
+#      creator is polish or load-bearing.
 #
-#   2. validation_secret_set: data/twentyq-validation-v3.json — an instrument
-#      with dynamic range, fixed BEFORE the run starts. Choosing it now is not
-#      the goalpost move a pre-registered criterion guards against; choosing it
-#      after seeing v9's answer would be. v3 is built by the same measured-band
-#      procedure as the bank but calibrated against the BASE model alone and
-#      never consulting a trained adapter, which is what separates selecting
-#      items for RESOLVABILITY from selecting them for the model under test.
-#      It holds out both validation-v2 and bank-v1.
+#   2. validation_secret_set: data/twentyq-validation-v5.json — an instrument
+#      SIZED to the effect, fixed before the run starts. 82 secrets, every one
+#      selected by playing the BASE policy and keeping only what it wins
+#      sometimes and loses sometimes. Composed rather than generated because
+#      generation is exhausted: validation-v4 drew 2400 rollouts and 88% of the
+#      distinct novel candidates were 0/8 for the base model.
 #
-#      Continuity with v1..v8 is not lost: v9's checkpoints get replayed
-#      against validation-v2 afterwards with scripts/rescore_checkpoints.py,
-#      the mirror image of what is being done to v8.
+#      v5 is VALID FOR v9 AND NOT FOR v8. It includes the 27 bank-v1 secrets
+#      absent from bank-v2, which v8 trained on and v9 never sees (v9's
+#      adapters are zero-init, so it starts from base and trains only on
+#      bank-v2). v8's numbers stay on validation-v2 and validation-v3.
+#
+# THE PRE-REGISTERED CRITERION, fixed here before the run.
+#
+# Primary: the slope of (B - A) on step, across the 13 validation checkpoints,
+# is significantly positive at p<0.05. Secondary: B - A at step 60 exceeds
+# zero. Not "B beat its step-0 value", because with common random numbers the
+# frozen control is exactly constant and a trend across 13 paired checkpoints
+# uses far more of the data than a two-point comparison.
+#
+# This criterion is POWERED, which none of v1..v8 were. At the paired
+# per-secret sd of 0.2746 measured under CRN, and n=82:
+#
+#     per-checkpoint SE           0.0303
+#     SE of total change over 60  0.0270
+#     effect +0.050 -> t=1.85     (below threshold)
+#     effect +0.069 -> t=2.56     (detectable; need ~2.20 at dof=11)
+#     effect +0.100 -> t=3.71     (comfortably detectable)
+#
+# So a null here MEANS something, unlike v8's. Still run
+#     .venv/bin/python scripts/validation_power.py \
+#       tq-runs/q-v9-bank2-solver.jsonl --effect <v9's within-secret gain>
+# before interpreting, because the sd is an estimate from one run and the
+# realised value governs what the null is worth.
 #
 # Everything else is held at v8's values on purpose — N/K/T, lr, kl_beta,
 # adv_mode, credit: terminal, question_retries: 4, w_repeat: 0.05, iters: 60.
-# Two runs that differ in one axis each are readable; two that differ in six
-# are not, which is the mistake v5/v6/v7 made by moving reward design while the
-# gradient supply was the actual blocker.
+# Two runs differing in one axis each are readable; two differing in six are
+# not, which is what v5/v6/v7 did by moving reward design while gradient supply
+# was the actual blocker.
 #
-# The frozen adapter A control stays. It cost ~2.9h in v8 and earned it: its
-# own spread across checkpoints (0.042) exceeded every B-A in the table, which
-# is what made the null readable rather than arguable. B rising while A stays
-# flat is the result; both drifting together is an instrument artifact.
+# The frozen adapter A control stays, and under CRN it earns its keep twice
+# over: it is the noise floor, and because it is deterministic it is also an
+# integrity canary. In the v8 replay it scored EXACTLY 0.3542 at all seven
+# checkpoints. Any deviation in v9 means something in the pipeline changed, and
+# that is worth catching more than the ~8h it costs to keep measuring it.
 #
-# Read the run as a success only if adapter B's VALIDATION guess rate rises
-# beyond both its own confidence interval AND the frozen control's spread.
-# Training win rate on a bank selected to be winnable proves nothing by
-# construction — that is true of bank-v2 exactly as it was of bank-v1.
+# Expect bank-v2 to decay during v9 as bank-v1 did during v8. That is inherent
+# to a static bank, not a defect of this run, and it is the measurement that
+# motivates priority two.
 #
-# But note what v8 taught about reading a NULL, because v9 can repeat the
-# mistake (DESIGN §9.8). v8's instrument had a minimum detectable effect of
-# +0.174 on live secrets and +0.066 pooled, against a training gain of +0.148:
-# even perfect transfer would have produced a flat series, so its null was
-# uninformative rather than negative. Before concluding anything from v9's
-# validation, run
+# Runtime ~39h: ~22h training (60 iterations) plus ~17h validation (13 x 82
+# secrets x 8 episodes x 2 adapters).
 #
-#     .venv/bin/python scripts/validation_power.py \
-#       tq-runs/q-v9-bank2-solver.jsonl --effect <v9's within-secret gain>
-#
-# A null only means "no transfer" if the MDE is below the effect in play. With
-# validation-v3 all-live by construction and paired sd ~0.187, that needs ~27
-# secrets for +0.10 and ~56 for +0.07; run_validation_v3_build.sh hard-fails
-# below 30. If v3 lands near the floor, treat a null as inconclusive and say so
-# rather than reporting it as a negative result.
-#
-# Expect bank-v2 to decay during v9 as bank-v1 decayed during v8. That is
-# inherent to a static bank and is not a defect of this run; it is the
-# measurement that motivates priority two.
-#
-# PREREQUISITES, in order:
-#   1. v8 finished.
-#   2. scripts/run_validation_v3_build.sh          -> data/twentyq-validation-v3.json
-#   3. BANK_ADAPTER=checkpoints/twentyq-v8-bank/adapter_B_step60.safetensors \
-#      scripts/run_bank_build.sh \
-#        --rollouts-per-category 400 \
-#        --holdout data/twentyq-validation-v2.json data/twentyq-validation-v3.json \
-#        --output data/twentyq-bank-v2.json \
-#        --report tq-runs/bank-v2-calibration.json \
-#        --set-version 2                           -> data/twentyq-bank-v2.json
-#
-#      NOTE the holdout list. BOTH validation sets are excluded: v3 because v9
-#      is scored on it live, and v2 because v9's checkpoints get replayed
-#      against it afterwards — a set is contaminated by training on it whether
-#      the scoring happens during the run or after it.
-#
-#      bank-v1 is deliberately NOT excluded. Re-measuring a bank-v1 secret
-#      against the trained policy is exactly how a still-frontier entry earns
-#      its place in v2, and creator diversity (118 distinct in 750 draws) is
-#      the binding constraint on bank size, so discarding 61 known-good items
-#      would cost more than it buys. Report the carryover fraction when v2 is
-#      built: it is a direct read on how much of the frontier actually moved.
-#      Watch cumulative exposure — v8 ruled out instance memorisation at ~8
-#      exposures per secret, and carried-over entries enter v9 having already
-#      had those. Re-run the exposure regression on v9 rather than assuming it.
-#      WATCH: --adapter has never run against a real model. The smoke pass in
-#      run_bank_build.sh forwards BANK_ADAPTER for that reason. Do not skip it.
+# PREREQUISITES — all satisfied 2026-07-28:
+#   data/twentyq-bank-v2.json          138 secrets, calibrated vs step60
+#   data/twentyq-validation-v5.json     82 secrets, base-calibrated
+#   verified disjoint under edit-distance-1 matching
 #
 # Launch:
-# .venv/bin/python -u scripts/train_twentyq.py \
-#   --config configs/twentyq-v9-bank2-solver.yaml \
-#   --run-name q-v9-bank2-solver \
-#   --checkpoints-dir checkpoints/twentyq-v9-bank2
+# scripts/run_twentyq_training.sh configs/twentyq-v9-bank2-solver.yaml \
+#   UNIT=q-v9-bank2 RUN_NAME=q-v9-bank2-solver \
+#   CKPT_DIR=checkpoints/twentyq-v9-bank2 \
+#   EXTRA_HOLDOUT="data/twentyq-validation-v2.json data/twentyq-validation-v3.json"
 
 compute:
   backend: torch
@@ -207,11 +183,11 @@ twentyq:
   # Given that reading trends out of noise is exactly how v6 and v7 went wrong,
   # and that in v8 the control's spread (0.042) turned out to exceed every
   # single B-A it was compared against, it is worth what it costs — which
-  # scales with validation-v3's size, so roughly 2.9h x (N_v3 / 24).
+  # scales with the set size: ~2.9h x (82 / 24) over the run.
   # B rising while A stays flat is the result; both drifting
   # together is an instrument artifact.
   validation_every: 5
-  validation_secret_set: data/twentyq-validation-v3.json
+  validation_secret_set: data/twentyq-validation-v5.json
   validation_episodes: 8
   # Common random numbers: every adapter at every checkpoint plays the SAME
   # sampled games. Not a third experimental change — it alters the variance of
