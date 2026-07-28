@@ -27,10 +27,33 @@
 #      base model. 138 secrets against bank-v1's 61, because hinted generation
 #      (DESIGN §9.12) gave 3.7x more distinct candidates from the same budget.
 #
-#      This is the direct test of the DECAY HYPOTHESIS: do solver gains
-#      continue once the frontier is re-matched, or was v8 a one-off harvest
-#      from a bank that has now been learned? The answer decides whether the
-#      creator is polish or load-bearing.
+#      CORRECTION, made at iteration 0 of the live run. The line above this
+#      block originally claimed bank-v2 is "a frontier for the policy that will
+#      actually train on it". That is FALSE as configured: v9's adapters are
+#      zero-init, so it starts from the BASE policy, while bank-v2 was
+#      calibrated by playing adapter_B_step60. Measured at iteration 0:
+#
+#          v8 iter 0 (base policy, base-calibrated bank-v1):  guess% 0.29, rgrad 0.86
+#          v9 iter 0 (base policy, step60-calibrated bank-v2): guess% 0.12, rgrad 0.70
+#
+#      The run was NOT restarted, deliberately. Resuming from step60 would fix
+#      the mismatch but contaminate the 27 bank-v1 secrets inside
+#      validation-v5, cutting it to 55 and dropping the criterion's power to
+#      t=2.10 against a 2.20 threshold — trading a powered criterion for a
+#      tidier rationale, which is the exact mistake this project keeps making.
+#
+#      What v9 therefore tests is BETTER than the original design. v8 showed a
+#      base-calibrated bank DECAYS as the solver improves (usable_group_rate
+#      0.938 -> 0.713). A bank calibrated for a STRONGER policy starts hard and
+#      becomes better matched as training proceeds — it drifts INTO the band
+#      rather than out of it. So the question is now: does forward-calibration
+#      solve the decay problem? Watch usable_group_rate rise or hold flat,
+#      against v8's fall.
+#
+#      STOPPING CONDITION, fixed in advance: if usable_group_rate sits below
+#      0.5 sustained over the first ten iterations, the bank is genuinely too
+#      hard — rebuild it base-calibrated and restart. rgrad 0.70 at iteration 0
+#      is healthy (v1..v7 ran at 0.125), so this is a guardrail, not a warning.
 #
 #   2. validation_secret_set: data/twentyq-validation-v5.json — an instrument
 #      SIZED to the effect, fixed before the run starts. 82 secrets, every one
