@@ -1832,3 +1832,93 @@ most of that sd is genuine per-secret heterogeneity (the policy really does
 improve some secrets and degrade others), not sampling noise, and K does not
 touch it. **So diversity now binds measurement as well as training** — the same
 constraint, arriving from two directions, and both roads lead to the creator.
+
+## 10. v9: the criterion is met (2026-08-02)
+
+The first pre-registered criterion this project has passed. Full run, 60
+iterations, 39.4h, `Result=success`, peak memory 15.4GB.
+
+### 10.1 The result
+
+    step        A (frozen)   B (solver)    B - A
+       0          0.3350       0.3350     +0.0000
+      15          0.3350       0.3516     +0.0166
+      30          0.3350       0.3733     +0.0383
+      45          0.3350       0.3872     +0.0522
+      60          0.3350       0.3945     +0.0595
+
+PRIMARY, fixed before the run: the slope of (B - A) on step across the 13
+checkpoints, significantly positive.
+
+    slope   +0.113 pts/step   (+0.0679 over 60 steps)
+    t       +4.505             (dof 11, two-sided critical 2.201)   MET
+
+SECONDARY: B - A at step 60 > 0. +0.0595, paired per-secret t = +2.21 against a
+critical 1.99 at n=82.   MET
+
+Within-secret training gain end-to-end was +0.148 ±0.060, so validation
+captured about **46% of it** — against v8's ~34%, and this time significant
+rather than suggestive.
+
+### 10.2 Three attempts to break it
+
+A first positive result is exactly when to attack one's own finding.
+
+**Leave-one-out.** Dropping any single checkpoint leaves the slope t between
++3.82 and +5.48. Never near threshold; not carried by one point.
+
+**By source.** validation-v5 is composed of three components, and the bank-v1
+leftovers are the contamination risk (v8 trained on them; v9 never did).
+
+    validation-v3  never trained on by anyone   n=36   +0.0556   t=+1.51
+    validation-v4  never trained on by anyone   n=19   +0.0987   t=+1.60
+    bank-v1 rest   v8 trained on, v9 did NOT    n=27   +0.0370   t=+0.74
+
+All three positive, and the effect is SMALLEST exactly where an artifact would
+have to be largest. The two components no run has ever trained on carry the
+biggest effects; bank-v1 dilutes the estimate rather than creating it.
+
+**The control.** Adapter A scored EXACTLY 0.3350 at all thirteen checkpoints.
+Under common random numbers (§9.10) a frozen policy is deterministic, so this
+is both the noise floor and a 39-hour integrity canary: any pipeline drift
+would have shown up as a deviation. Contrast v8's in-run control spread of
+0.062, which was sampler asymmetry masquerading as task noise.
+
+### 10.3 Forward calibration solves bank decay
+
+Found at iteration 0: bank-v2 was calibrated by playing `adapter_B_step60`,
+while v9's adapters are zero-init and start from BASE. The run was NOT
+restarted — resuming from step60 would have contaminated the 27 bank-v1 secrets
+in validation-v5, cutting n to 55 and dropping criterion power to t=2.10
+against a 2.20 threshold, i.e. trading a powered criterion for a tidier
+rationale. The reasoning was recorded in the config header at the time rather
+than reconstructed afterwards.
+
+The accident turned into the more useful experiment:
+
+    gradient supply, first 10 iterations -> last 10
+      v8, base-calibrated bank      0.938 -> 0.713    (-0.225)
+      v9, forward-calibrated bank   0.688 -> 0.812    (+0.125)
+
+A base-calibrated bank decays because improving the solver pushes secrets out
+of the band from the top (§9.1). A bank calibrated for a STRONGER policy starts
+hard and drifts INTO the band as the solver climbs. That is a structural fix
+for decay, and it costs nothing but calibrating against the previous run's
+final adapter. **Standing recommendation: calibrate every future bank against
+the strongest available policy, not the one that will start training.**
+
+### 10.4 What is NOT established
+
+- The sign test at step 60 is p=0.058 — marginally short. 27 of 82 secrets are
+  unchanged. The slope test is the pre-registered one and it passes clearly,
+  but the effect is modest: roughly six points of validation win rate.
+- This shows solver training TRANSFERS. It does not show the solver is good.
+  Absolute validation win rate is 0.395.
+- Forward calibration is supported by a single paired comparison (v8 vs v9),
+  and those runs also differ in bank size (61 vs 138) and generation method
+  (unhinted vs hinted). The decay direction reversing is strong evidence; the
+  attribution to forward calibration specifically is not isolated.
+- Generation is exhausted in these three categories: validation-v4 drew 2400
+  rollouts against 259 reserved names and 88% of the distinct novel candidates
+  were 0/8 for the base model. Growing any future evaluation set means new
+  categories or a trained creator (§9.12).
