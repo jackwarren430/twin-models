@@ -1214,3 +1214,81 @@ all-live set needs ~27 secrets to resolve +0.10 and ~56 for +0.07, so
 `run_validation_v3_build.sh` hard-fails below 30 (MIN_V3). The sd is estimated
 from v2's live secrets, which sit mid-range where per-secret variance is
 highest, so that planning number is mildly optimistic — overshoot on size.
+
+## exp-v9 — bank-v2 solver, CRITERION MET (2026-07-28 → 08-02)
+
+Config `configs/twentyq-v9-bank2-solver.yaml` (its header is the document of
+record), records `tq-runs/q-v9-bank2-solver.jsonl`, checkpoints
+`checkpoints/twentyq-v9-bank2/`. 60 iterations, 39.4h, exit success.
+
+Inputs: `data/twentyq-bank-v2.json` (138 secrets, calibrated by playing
+adapter_B_step60, hinted generation) and `data/twentyq-validation-v5.json`
+(82 secrets, base-calibrated, composed — see below). Verified disjoint under
+edit-distance-1.
+
+### Result
+
+    step        A (frozen)   B (solver)    B - A
+       0          0.3350       0.3350     +0.0000
+      15          0.3350       0.3516     +0.0166
+      30          0.3350       0.3733     +0.0383
+      45          0.3350       0.3872     +0.0522
+      60          0.3350       0.3945     +0.0595
+
+    PRIMARY (pre-registered): slope of B-A on step
+      +0.113 pts/step, t=+4.505, dof 11, crit 2.201          MET
+    SECONDARY: B-A at step 60 > 0
+      +0.0595, paired per-secret t=+2.21, crit 1.99, n=82     MET
+
+    within-secret training, first 10 iters vs last 10: +0.148 ±0.060
+    transfer ratio: ~46%  (v8 was ~34% and not significant)
+
+Robustness: leave-one-out slope t stays in [+3.82, +5.48]; effect by source is
++0.056 (v3) / +0.099 (v4) / +0.037 (bank-v1 leftovers), so it is SMALLEST in
+the only component carrying contamination risk; frozen control identical to
+four decimals at all 13 checkpoints.
+
+Not established: sign test p=0.058, 27 of 82 secrets unchanged, absolute win
+rate 0.395. See DESIGN §10.4.
+
+### Gradient supply reversed direction
+
+    first 10 iterations -> last 10
+      v8, base-calibrated bank     0.938 -> 0.713   (-0.225)
+      v9, forward-calibrated bank  0.688 -> 0.812   (+0.125)
+
+Calibrating the bank against a STRONGER policy than the one that will train on
+it makes secrets drift INTO the band instead of out of it. Discovered by
+accident — the mismatch was found at iteration 0 and the run deliberately not
+restarted, because resuming from step60 would have contaminated 27 of
+validation-v5's secrets and dropped criterion power below threshold.
+
+### Supporting work in this block
+
+- **Common random numbers** (DESIGN §9.10). A and B never faced the same draws:
+  at step 0, where the adapters are provably identical, 160 of 192 episodes
+  differed on turns while the totals coincidentally tied at 27/192. Fixed by
+  reseeding per adapter and per step; control spread went 0.062 → 0.000.
+- **Hinted generation** (DESIGN §9.12). Serial generation gave 7 distinct
+  animals from 60 draws; rotating subcategory hints gave 37. Measured 3.7x in
+  production. Bank size 61 → 138. The ceiling is PROMPTING-limited, not
+  knowledge-limited — which is the enabling fact for training the creator.
+- **validation-v5 composed, not generated.** validation-v4 drew 2400 rollouts
+  against 259 reserved names and 88% of the distinct novel candidates were 0/8
+  for the base model; only 19 landed in band. v5 = v3 (36) + v4 (19) + bank-v1
+  minus the bank-v2 carryover (27) = 82. Valid for v9 ONLY: it contains
+  bank-v1 secrets v8 trained on.
+- **MDE discipline** (`scripts/validation_power.py`, DESIGN §9.8). v8's null
+  was uninformative rather than negative; v9's criterion was sized in advance
+  to t=2.56 at the effect v8 actually produced.
+
+### Next
+
+Solver transfer is established. The open items, in the order they now matter:
+
+1. **Train the creator (dual-RL).** Reward on measured band membership, not the
+   validity judge (which false-accepts 4/8). The diversity ceiling being
+   prompting-limited means there is real headroom for a policy to find.
+2. **Bank-v3 forward-calibrated from v9's final adapter**, per §10.3.
+3. **New categories.** Three categories are mined out; this bounds both bank
+   and validation growth independently of anything else.
